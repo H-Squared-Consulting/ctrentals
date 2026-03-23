@@ -17,6 +17,7 @@ interface Proposal extends DataRow {
   check_in: string;
   check_out: string;
   status: string;
+  is_agent: boolean;
   sent_at: string | null;
   viewed_at: string | null;
   accepted_at: string | null;
@@ -116,7 +117,13 @@ export default function ProposalsPage() {
       key: 'status', label: 'Status', align: 'center' as const, sortable: true, width: '100px',
       render: (row: DataRow) => <StatusBadge status={(row as Proposal).status} config={STATUS_CONFIG} />,
     },
-    { key: 'guest_name', label: 'Guest', sortable: true },
+    {
+      key: 'guest_name', label: 'Recipient', sortable: true,
+      render: (row: DataRow) => {
+        const p = row as Proposal;
+        return <span>{p.guest_name}{p.is_agent ? <span className="status-badge" style={{ background: '#E0E7FF', color: '#3730A3', marginLeft: '6px', fontSize: '0.5625rem' }}>Agent</span> : ''}</span>;
+      },
+    },
     { key: 'property_name', label: 'Property', sortable: true },
     {
       key: 'check_in', label: 'Dates', sortable: true, hideOnMobile: true,

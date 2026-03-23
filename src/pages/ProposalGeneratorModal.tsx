@@ -30,6 +30,7 @@ export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supab
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [generating, setGenerating] = useState(false);
+  const [isAgent, setIsAgent] = useState(false);
   const [generatedProposals, setGeneratedProposals] = useState(null);
   const [sendingStatus, setSendingStatus] = useState({});
   const [copied, setCopied] = useState(null);
@@ -115,6 +116,7 @@ export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supab
         budget_min: enquiry.budget_min || null,
         budget_max: enquiry.budget_max || null,
         status: 'draft',
+        is_agent: isAgent,
         notes: enquiry.notes || null,
       });
     }
@@ -315,6 +317,10 @@ export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supab
         <div className="modal-footer">
           {!generatedProposals ? (
             <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                <input type="checkbox" checked={isAgent} onChange={(e) => setIsAgent(e.target.checked)} />
+                Sending to an agent (remove CT Rentals branding)
+              </label>
               <div style={{ flex: 1 }} />
               <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
               <button className="btn btn-primary" onClick={handleGenerate} disabled={generating || selectedIds.size === 0}>
