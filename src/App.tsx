@@ -6,6 +6,7 @@ import PropertiesPage from './pages/PropertiesPage';
 import EnquiriesPage from './pages/EnquiriesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
 import BookingCalendarPage from './pages/BookingCalendarPage';
+import ProposalsPage from './pages/ProposalsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -33,6 +34,9 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             </NavLink>
             <NavLink to="/enquiries" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
               Enquiries
+            </NavLink>
+            <NavLink to="/proposals" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
+              Proposals
             </NavLink>
             <NavLink to="/enquiry/new" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
               New Enquiry
@@ -68,6 +72,7 @@ export function App() {
       <Route path="/properties" element={<ProtectedRoute><AppLayout><PropertiesPage /></AppLayout></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><AppLayout><BookingCalendarPage /></AppLayout></ProtectedRoute>} />
       <Route path="/enquiries" element={<ProtectedRoute><AppLayout><EnquiriesPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/proposals" element={<ProtectedRoute><AppLayout><ProposalsPage /></AppLayout></ProtectedRoute>} />
       <Route path="/enquiry/new" element={<ProtectedRoute><AppLayout><EnquiryForm /></AppLayout></ProtectedRoute>} />
       <Route path="*" element={<Navigate to={user ? '/properties' : '/login'} replace />} />
     </Routes>
