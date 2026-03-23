@@ -147,7 +147,11 @@ export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supab
     const msg = encodeURIComponent(
       `Hi ${enquiry.client_name},\n\nThank you for your enquiry with CT Rentals.\n\nWe've put together a proposal for ${propName} for your stay from ${fmtDate(enquiry.check_in)} to ${fmtDate(enquiry.check_out)}.\n\nView your proposal here:\n${url}\n\nLet us know if you have any questions!`
     );
-    const phone = (enquiry.client_phone || '').replace(/[^0-9+]/g, '');
+    let phone = (enquiry.client_phone || '').replace(/[^0-9]/g, '');
+    // Convert local SA number (0xx) to international (27xx)
+    if (phone.startsWith('0')) phone = '27' + phone.slice(1);
+    // Strip leading + if present
+    if (phone.startsWith('+')) phone = phone.slice(1);
     window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
 
     // Mark as sent
