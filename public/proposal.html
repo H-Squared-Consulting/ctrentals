@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CT Rentals - Property Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="loading-screen"></div>
+<div id="error-screen" style="display:none;"></div>
+<div id="scroll-progress"></div>
+<div id="canvas" style="display:none;"></div>
+<div id="toast"></div>
+
+<script>
+(function() {
+  // ── Config ──
+  var SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
+  var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1udnhpdGV4Y2Rnb2h6Z3R2d3pnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MTM4NTMsImV4cCI6MjA4OTQ4OTg1M30.h2Y1nIxV1xkvCyeSOknAiu-SrjPwijsueaJel10JoA4';
+
+  // ── Helpers ──
+  function esc(str) {
+    if (str == null) return '';
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(str)));
+    return d.innerHTML;
+  }
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function headers(patch) {
+    var h = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json'
+    };
+    if (patch) h['Prefer'] = 'return=minimal';
+    return h;
+  }
+
+  function fmtDate(d) {
+    if (!d) return '---';
+    var dt = new Date(d);
+    return dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function fmtDateShort(d) {
+    if (!d) return '---';
+    var dt = new Date(d);
+    return dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function nightsBetween(a, b) {
+    if (!a || !b) return 0;
+    var d1 = new Date(a), d2 = new Date(b);
+    return Math.max(0, Math.round((d2 - d1) / 86400000));
+  }
+
+  // ── Inject ALL CSS ──
+  (function injectCSS() {
+    var style = document.createElement('style');
+    style.textContent = [
+      ':root {',
+      '  --gold: #BD982F;',
+      '  --gold-light: #d4b45a;',
+      '  --gold-dark: #9A7A1F;',
+      '  --linen: #EAE7E1;',
+      '  --linen-dark: #ddd9d1;',
+      '  --cream: #F7F5F2;',
+      '  --black: #000;',
+      '  --text-dark: #1a1a1a;',
+      '  --text-mid: #444;',
+      '  --text-light: #777;',
+      '  --white: #fff;',
+      '  --font-body: "Questrial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+      '}',
+
+      '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
+
+      'html { scroll-behavior: smooth; }',
+
+      'body {',
+      '  font-family: var(--font-body);',
+      '  background: var(--cream);',
+      '  color: var(--text-dark);',
+      '  line-height: 1.6;',
+      '  -webkit-font-smoothing: antialiased;',
+      '}',
+
+      /* Loading screen */
+      '#loading-screen {',
+      '  position: fixed; inset: 0; z-index: 9999;',
+      '  background: var(--black);',
+      '  display: flex; flex-direction: column; align-items: center; justify-content: center;',
+      '}',
+      '.ls-spinner {',
+      '  width: 48px; height: 48px; border: 3px solid rgba(189,152,47,0.2);',
+      '  border-top-color: var(--gold); border-radius: 50%;',
+      '  animation: spin 1s linear infinite;',
+      '}',
+      '.ls-text {',
+      '  margin-top: 20px; color: var(--gold); font-size: 14px;',
+      '  letter-spacing: 2px; text-transform: uppercase;',
+      '}',
+      '@keyframes spin { to { transform: rotate(360deg); } }',
+
+      /* Error screen */
+      '#error-screen {',
+      '  position: fixed; inset: 0; z-index: 9998;',
+      '  background: var(--black);',
+      '  display: flex; flex-direction: column; align-items: center; justify-content: center;',
+      '  text-align: center; padding: 40px;',
+      '}',
+      '.err-title { color: var(--gold); font-size: 24px; margin-bottom: 12px; letter-spacing: 2px; text-transform: uppercase; }',
+      '.err-msg { color: #999; font-size: 15px; max-width: 400px; line-height: 1.6; }',
+
+      /* Scroll progress */
+      '#scroll-progress {',
+      '  position: fixed; top: 0; left: 0; width: 0%; height: 3px;',
+      '  background: var(--gold); z-index: 10000; transition: width 0.1s linear;',
+      '}',
+
+      /* Page wrapper */
+      '#canvas {',
+      '  max-width: 820px; margin: 0 auto; background: var(--white);',
+      '  overflow: hidden;',
+      '}',
+      '@media (min-width: 1024px) {',
+      '  #canvas { margin-top: 24px; margin-bottom: 40px; border-radius: 12px;',
+      '    box-shadow: 0 8px 40px rgba(0,0,0,0.12); }',
+      '}',
+
+      /* Toast */
+      '#toast {',
+      '  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(80px);',
+      '  background: var(--text-dark); color: var(--white); padding: 12px 28px;',
+      '  border-radius: 8px; font-size: 14px; z-index: 10001;',
+      '  opacity: 0; transition: opacity 0.3s, transform 0.3s;',
+      '  pointer-events: none;',
+      '}',
+      '#toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }',
+
+      /* Reveal animation */
+      '.reveal {',
+      '  opacity: 0; transform: translateY(24px);',
+      '  transition: opacity 0.7s ease, transform 0.7s ease;',
+      '}',
+      '.reveal.visible { opacity: 1; transform: translateY(0); }',
+
+      /* ── Section 1: HERO ── */
+      '.pos-hero {',
+      '  position: relative; min-height: 480px; overflow: hidden;',
+      '  display: flex; flex-direction: column; justify-content: flex-end;',
+      '  padding: 48px 40px;',
+      '}',
+      '.pos-hero-img {',
+      '  position: absolute; inset: 0; width: 100%; height: 100%;',
+      '  object-fit: cover;',
+      '}',
+      '.pos-hero-overlay {',
+      '  position: absolute; inset: 0;',
+      '  background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.7) 100%);',
+      '}',
+      '.pos-hero-content { position: relative; z-index: 1; }',
+      '.pos-hero-brand {',
+      '  color: var(--gold); font-size: 12px; letter-spacing: 3px;',
+      '  text-transform: uppercase; margin-bottom: 12px;',
+      '}',
+      '.pos-hero-title {',
+      '  color: var(--white); font-size: 36px; line-height: 1.2;',
+      '  background: linear-gradient(90deg, var(--white) 0%, var(--white) 40%, var(--gold-light) 50%, var(--white) 60%, var(--white) 100%);',
+      '  background-size: 200% 100%;',
+      '  -webkit-background-clip: text; background-clip: text;',
+      '  -webkit-text-fill-color: transparent;',
+      '  animation: shimmer 6s linear infinite;',
+      '}',
+      '@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }',
+      '@media (max-width: 767px) {',
+      '  .pos-hero { min-height: 380px; padding: 32px 24px; }',
+      '  .pos-hero-title { font-size: 28px; }',
+      '}',
+
+      /* ── Section 2: GREETING ── */
+      '.pos-greeting { background: var(--white); padding: 48px 40px; }',
+      '.pos-greeting-meta {',
+      '  font-size: 12px; color: var(--text-light); letter-spacing: 1px;',
+      '  text-transform: uppercase; margin-bottom: 16px;',
+      '}',
+      '.pos-greeting-rule {',
+      '  width: 60px; height: 2px; background: var(--gold); margin-bottom: 24px;',
+      '}',
+      '.pos-greeting-dear {',
+      '  font-size: 22px; color: var(--text-dark); margin-bottom: 16px;',
+      '}',
+      '.pos-greeting-body { color: var(--text-mid); font-size: 15px; line-height: 1.7; }',
+      '.pos-greeting-notes {',
+      '  margin-top: 20px; padding: 16px 20px;',
+      '  border-left: 3px solid var(--gold); font-style: italic;',
+      '  color: var(--text-mid); font-size: 14px; line-height: 1.6;',
+      '  background: var(--cream);',
+      '}',
+      '@media (max-width: 767px) {',
+      '  .pos-greeting { padding: 32px 24px; }',
+      '}',
+
+      /* ── Section 3: PROPERTY OVERVIEW ── */
+      '.pos-overview { background: var(--linen); padding: 48px 40px; }',
+      '.pos-overview-name { font-size: 26px; color: var(--text-dark); margin-bottom: 8px; }',
+      '.pos-overview-tagline { font-style: italic; color: var(--text-mid); font-size: 15px; margin-bottom: 20px; }',
+      '.pos-overview-desc { color: var(--text-mid); font-size: 15px; line-height: 1.7; margin-bottom: 32px; }',
+      '.pos-stats-grid {',
+      '  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;',
+      '}',
+      '.pos-stat-card {',
+      '  background: var(--white); border-radius: 8px; padding: 20px 16px;',
+      '  text-align: center;',
+      '}',
+      '.pos-stat-value { font-size: 28px; color: var(--gold); margin-bottom: 4px; }',
+      '.pos-stat-label { font-size: 12px; color: var(--text-light); text-transform: uppercase; letter-spacing: 1px; }',
+      '@media (max-width: 767px) {',
+      '  .pos-overview { padding: 32px 24px; }',
+      '  .pos-stats-grid { grid-template-columns: repeat(2, 1fr); }',
+      '}',
+
+      /* ── Section 4: GALLERY ── */
+      '.pos-gallery { background: var(--white); padding: 48px 0; }',
+      '.pos-gallery-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 24px; padding: 0 40px; }',
+      '.pos-gallery-scroll {',
+      '  display: flex; gap: 16px; overflow-x: auto; padding: 0 40px 16px;',
+      '  -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory;',
+      '}',
+      '.pos-gallery-scroll::-webkit-scrollbar { height: 6px; }',
+      '.pos-gallery-scroll::-webkit-scrollbar-track { background: var(--cream); }',
+      '.pos-gallery-scroll::-webkit-scrollbar-thumb { background: var(--gold-light); border-radius: 3px; }',
+      '.pos-gallery-img {',
+      '  flex: 0 0 auto; height: 300px; width: auto; max-width: 420px;',
+      '  object-fit: cover; border-radius: 8px; scroll-snap-align: start;',
+      '}',
+      '@media (max-width: 767px) {',
+      '  .pos-gallery { padding: 32px 0; }',
+      '  .pos-gallery-heading { padding: 0 24px; }',
+      '  .pos-gallery-scroll { padding: 0 24px 12px; }',
+      '  .pos-gallery-img { height: 220px; max-width: 300px; }',
+      '}',
+
+      /* ── Section 5: AMENITIES ── */
+      '.pos-amenities { background: var(--linen); padding: 48px 40px; }',
+      '.pos-amenities-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 24px; }',
+      '.pos-amenities-list { list-style: none; columns: 2; column-gap: 32px; }',
+      '.pos-feature-line {',
+      '  padding: 6px 0; font-size: 15px; color: var(--text-mid);',
+      '  break-inside: avoid; display: flex; align-items: center; gap: 10px;',
+      '}',
+      '.pos-feature-line::before {',
+      '  content: ""; display: inline-block; width: 8px; height: 8px;',
+      '  background: var(--gold); border-radius: 50%; flex-shrink: 0;',
+      '}',
+      '@media (max-width: 767px) {',
+      '  .pos-amenities { padding: 32px 24px; }',
+      '  .pos-amenities-list { columns: 1; }',
+      '}',
+
+      /* ── Section 6: PRICING ── */
+      '.pos-pricing { background: var(--white); padding: 48px 40px; }',
+      '.pos-pricing-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 24px; }',
+      '.pos-pricing-card {',
+      '  background: var(--cream); border-radius: 12px; padding: 32px;',
+      '}',
+      '.pos-pricing-row {',
+      '  display: flex; justify-content: space-between; padding: 10px 0;',
+      '  border-bottom: 1px solid var(--linen-dark); font-size: 15px;',
+      '}',
+      '.pos-pricing-row:last-child { border-bottom: none; }',
+      '.pos-pricing-label { color: var(--text-light); }',
+      '.pos-pricing-value { color: var(--text-dark); font-weight: 400; }',
+      '.pos-pricing-price {',
+      '  margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--gold);',
+      '  text-align: center;',
+      '}',
+      '.pos-pricing-amount { font-size: 28px; color: var(--gold); }',
+      '.pos-pricing-per { font-size: 13px; color: var(--text-light); margin-top: 2px; }',
+      '.pos-pricing-budget {',
+      '  margin-top: 12px; font-size: 14px; color: var(--text-mid); text-align: center;',
+      '}',
+      '@media (max-width: 767px) {',
+      '  .pos-pricing { padding: 32px 24px; }',
+      '  .pos-pricing-card { padding: 24px; }',
+      '}',
+
+      /* ── Section 7: LOCATION ── */
+      '.pos-location { background: var(--linen); padding: 48px 40px; }',
+      '.pos-location-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 16px; }',
+      '.pos-location-address { color: var(--text-mid); font-size: 15px; line-height: 1.7; }',
+      '@media (max-width: 767px) { .pos-location { padding: 32px 24px; } }',
+
+      /* ── Section 8: NEXT STEPS ── */
+      '.pos-steps { background: var(--white); padding: 48px 40px; }',
+      '.pos-steps-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 28px; }',
+      '.pos-steps-list { list-style: none; counter-reset: steps; }',
+      '.pos-step-item {',
+      '  display: flex; align-items: flex-start; gap: 16px;',
+      '  margin-bottom: 20px; font-size: 15px; color: var(--text-mid);',
+      '}',
+      '.pos-step-num {',
+      '  flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%;',
+      '  background: var(--gold); color: var(--white); display: flex;',
+      '  align-items: center; justify-content: center; font-size: 14px;',
+      '}',
+      '.pos-step-text { padding-top: 5px; }',
+      '@media (max-width: 767px) { .pos-steps { padding: 32px 24px; } }',
+
+      /* ── Section 9: CTA ── */
+      '.pos-cta { background: var(--black); padding: 56px 40px; text-align: center; }',
+      '.pos-cta-heading { color: var(--white); font-size: 24px; margin-bottom: 32px; }',
+      '.pos-cta-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }',
+      '.pos-btn-interested {',
+      '  position: relative; overflow: hidden;',
+      '  background: var(--gold); color: var(--black); border: none;',
+      '  padding: 14px 36px; font-size: 15px; font-family: var(--font-body);',
+      '  cursor: pointer; border-radius: 6px; letter-spacing: 1px;',
+      '  text-transform: uppercase; transition: background 0.3s;',
+      '}',
+      '.pos-btn-interested:hover { background: var(--gold-light); }',
+      '.pos-btn-interested::after {',
+      '  content: ""; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;',
+      '  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);',
+      '  transition: none;',
+      '}',
+      '.pos-btn-interested:hover::after {',
+      '  animation: btnShine 0.6s ease forwards;',
+      '}',
+      '@keyframes btnShine { to { left: 150%; } }',
+      '.pos-btn-interested:disabled {',
+      '  background: var(--gold-dark); cursor: default; opacity: 0.8;',
+      '}',
+      '.pos-btn-interested:disabled:hover::after { animation: none; }',
+      '.pos-btn-share {',
+      '  background: transparent; color: var(--gold); border: 2px solid var(--gold);',
+      '  padding: 14px 36px; font-size: 15px; font-family: var(--font-body);',
+      '  cursor: pointer; border-radius: 6px; letter-spacing: 1px;',
+      '  text-transform: uppercase; transition: background 0.3s, color 0.3s;',
+      '}',
+      '.pos-btn-share:hover { background: var(--gold); color: var(--black); }',
+      '@media (max-width: 767px) {',
+      '  .pos-cta { padding: 40px 24px; }',
+      '  .pos-cta-buttons { flex-direction: column; align-items: stretch; }',
+      '  .pos-btn-interested, .pos-btn-share { width: 100%; }',
+      '}',
+
+      /* ── Section 10: CONTACT ── */
+      '.pos-contact { background: var(--cream); padding: 48px 40px; text-align: center; }',
+      '.pos-contact-heading { font-size: 22px; color: var(--text-dark); margin-bottom: 24px; }',
+      '.pos-contact-links { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }',
+      '.pos-contact-btn {',
+      '  display: inline-flex; align-items: center; gap: 8px;',
+      '  padding: 12px 24px; border-radius: 6px; font-size: 14px;',
+      '  color: var(--text-dark); background: var(--white); text-decoration: none;',
+      '  border: 1px solid var(--linen-dark); transition: border-color 0.3s, box-shadow 0.3s;',
+      '  font-family: var(--font-body);',
+      '}',
+      '.pos-contact-btn:hover { border-color: var(--gold); box-shadow: 0 2px 12px rgba(189,152,47,0.15); }',
+      '@media (max-width: 767px) {',
+      '  .pos-contact { padding: 32px 24px; }',
+      '  .pos-contact-links { flex-direction: column; align-items: stretch; }',
+      '}',
+
+      /* ── Section 11: FOOTER ── */
+      '.pos-footer { background: var(--linen); padding: 40px 40px; text-align: center; }',
+      '.pos-footer-brand { font-size: 18px; color: var(--text-dark); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }',
+      '.pos-footer-tagline { font-size: 13px; color: var(--text-light); margin-bottom: 12px; }',
+      '.pos-footer-copy { font-size: 12px; color: var(--text-light); }',
+      '@media (max-width: 767px) { .pos-footer { padding: 32px 24px; } }'
+    ].join('\n');
+    document.head.appendChild(style);
+  })();
+
+  // ── Render loading screen ──
+  el('loading-screen').innerHTML =
+    '<div class="ls-spinner"></div>' +
+    '<div class="ls-text">Loading your proposal</div>';
+
+  // ── Show error ──
+  function showError(type) {
+    var titles = {
+      missing_ref: 'Missing Reference',
+      not_found: 'Proposal Not Found',
+      expired: 'Proposal Expired',
+      error: 'Something Went Wrong'
+    };
+    var messages = {
+      missing_ref: 'No proposal reference was provided. Please check the link you were sent and try again.',
+      not_found: 'We could not find a proposal matching this reference. It may have been removed or the link is incorrect.',
+      expired: 'This proposal has expired. Please contact us for an updated proposal.',
+      error: 'We encountered an issue loading your proposal. Please try again later or contact us directly.'
+    };
+    el('loading-screen').style.display = 'none';
+    var errEl = el('error-screen');
+    errEl.style.display = 'flex';
+    errEl.innerHTML =
+      '<div class="err-title">' + esc(titles[type] || titles.error) + '</div>' +
+      '<div class="err-msg">' + esc(messages[type] || messages.error) + '</div>';
+  }
+
+  // ── Show toast ──
+  function showToast(msg) {
+    var t = el('toast');
+    t.textContent = msg;
+    t.classList.add('visible');
+    setTimeout(function() { t.classList.remove('visible'); }, 2600);
+  }
+
+  // ── Scroll progress ──
+  window.addEventListener('scroll', function() {
+    var h = document.documentElement.scrollHeight - window.innerHeight;
+    var pct = h > 0 ? (window.scrollY / h) * 100 : 0;
+    el('scroll-progress').style.width = pct + '%';
+  });
+
+  // ── Intersection Observer for reveal ──
+  function initReveal() {
+    var items = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      items.forEach(function(el) { el.classList.add('visible'); });
+      return;
+    }
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1 });
+    items.forEach(function(el) { observer.observe(el); });
+  }
+
+  // ── Supabase fetch helper ──
+  function sbGet(path) {
+    return fetch(SUPABASE_URL + '/rest/v1/' + path, { headers: headers(false) })
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+  }
+
+  function sbPatch(path, body) {
+    return fetch(SUPABASE_URL + '/rest/v1/' + path, {
+      method: 'PATCH',
+      headers: headers(true),
+      body: JSON.stringify(body)
+    });
+  }
+
+  // ── Build the page ──
+  function render(proposal, property) {
+    var p = proposal;
+    var pr = property;
+
+    // Parse JSON arrays safely
+    var gallery = pr.gallery_images;
+    if (typeof gallery === 'string') { try { gallery = JSON.parse(gallery); } catch(e) { gallery = []; } }
+    if (!Array.isArray(gallery)) gallery = [];
+
+    var amenities = pr.amenity_tags;
+    if (typeof amenities === 'string') { try { amenities = JSON.parse(amenities); } catch(e) { amenities = []; } }
+    if (!Array.isArray(amenities)) amenities = [];
+
+    var links = pr.listing_links;
+    if (typeof links === 'string') { try { links = JSON.parse(links); } catch(e) { links = []; } }
+    if (!Array.isArray(links)) links = [];
+
+    var nights = nightsBetween(p.check_in, p.check_out);
+    var currency = pr.price_currency || 'ZAR';
+    var currencySymbol = currency === 'ZAR' ? 'R' : currency + ' ';
+
+    var locationParts = [pr.suburb, pr.city, pr.province].filter(Boolean);
+
+    var html = '';
+
+    // Section 1 - HERO
+    html += '<section class="pos-hero">';
+    if (pr.hero_image_url) {
+      html += '<img class="pos-hero-img" src="' + esc(pr.hero_image_url) + '" alt="' + esc(pr.property_name) + '">';
+    }
+    html += '<div class="pos-hero-overlay"></div>';
+    html += '<div class="pos-hero-content">';
+    html += '<div class="pos-hero-brand">CT Rentals</div>';
+    html += '<h1 class="pos-hero-title">' + esc(pr.property_name) + '</h1>';
+    html += '</div>';
+    html += '</section>';
+
+    // Section 2 - PERSONAL GREETING
+    html += '<section class="pos-greeting reveal">';
+    html += '<div class="pos-greeting-meta">Prepared ' + esc(fmtDate(p.created_at)) + ' &nbsp;|&nbsp; Ref: ' + esc(p.ref_code) + '</div>';
+    html += '<div class="pos-greeting-rule"></div>';
+    html += '<div class="pos-greeting-dear">Dear ' + esc(p.guest_name) + ',</div>';
+    html += '<p class="pos-greeting-body">We\'ve selected this property based on your requirements for ' +
+      esc(p.guests_total) + ' guest' + (p.guests_total != 1 ? 's' : '') + ', ' +
+      esc(fmtDateShort(p.check_in)) + ' to ' + esc(fmtDateShort(p.check_out)) + '.</p>';
+    if (p.notes) {
+      html += '<div class="pos-greeting-notes">' + esc(p.notes) + '</div>';
+    }
+    html += '</section>';
+
+    // Section 3 - PROPERTY OVERVIEW
+    html += '<section class="pos-overview reveal">';
+    html += '<h2 class="pos-overview-name">' + esc(pr.property_name) + '</h2>';
+    if (pr.tagline) {
+      html += '<div class="pos-overview-tagline">' + esc(pr.tagline) + '</div>';
+    }
+    if (pr.description) {
+      html += '<p class="pos-overview-desc">' + esc(pr.description) + '</p>';
+    }
+    html += '<div class="pos-stats-grid">';
+    html += '<div class="pos-stat-card"><div class="pos-stat-value">' + esc(pr.bedrooms != null ? pr.bedrooms : '-') + '</div><div class="pos-stat-label">Bedrooms</div></div>';
+    html += '<div class="pos-stat-card"><div class="pos-stat-value">' + esc(pr.bathrooms != null ? pr.bathrooms : '-') + '</div><div class="pos-stat-label">Bathrooms</div></div>';
+    html += '<div class="pos-stat-card"><div class="pos-stat-value">' + esc(pr.sleeps != null ? pr.sleeps : '-') + '</div><div class="pos-stat-label">Sleeps</div></div>';
+    html += '<div class="pos-stat-card"><div class="pos-stat-value" style="font-size:16px;">' + esc([pr.suburb, pr.city].filter(Boolean).join(', ') || '-') + '</div><div class="pos-stat-label">Location</div></div>';
+    html += '</div>';
+    html += '</section>';
+
+    // Section 4 - GALLERY
+    if (gallery.length > 0) {
+      html += '<section class="pos-gallery reveal">';
+      html += '<h2 class="pos-gallery-heading">Gallery</h2>';
+      html += '<div class="pos-gallery-scroll">';
+      for (var i = 0; i < gallery.length; i++) {
+        html += '<img class="pos-gallery-img" src="' + esc(gallery[i]) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
+      }
+      html += '</div>';
+      html += '</section>';
+    }
+
+    // Section 5 - AMENITIES
+    if (amenities.length > 0) {
+      html += '<section class="pos-amenities reveal">';
+      html += '<h2 class="pos-amenities-heading">What\'s Included</h2>';
+      html += '<ul class="pos-amenities-list">';
+      for (var j = 0; j < amenities.length; j++) {
+        html += '<li class="pos-feature-line">' + esc(amenities[j]) + '</li>';
+      }
+      html += '</ul>';
+      html += '</section>';
+    }
+
+    // Section 6 - PRICING
+    html += '<section class="pos-pricing reveal">';
+    html += '<h2 class="pos-pricing-heading">Your Stay</h2>';
+    html += '<div class="pos-pricing-card">';
+    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-in</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_in)) + '</span></div>';
+    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-out</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_out)) + '</span></div>';
+    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Duration</span><span class="pos-pricing-value">' + esc(nights) + ' night' + (nights != 1 ? 's' : '') + '</span></div>';
+    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Guests</span><span class="pos-pricing-value">' + esc(p.guests_total) + ' total</span></div>';
+    if (pr.price_from) {
+      html += '<div class="pos-pricing-price">';
+      html += '<div class="pos-pricing-amount">From ' + esc(currencySymbol) + esc(Number(pr.price_from).toLocaleString()) + '</div>';
+      html += '<div class="pos-pricing-per">per week</div>';
+      html += '</div>';
+    }
+    if (p.budget_min || p.budget_max) {
+      html += '<div class="pos-pricing-budget">Your budget: R' + esc(Number(p.budget_min || 0).toLocaleString()) + ' &ndash; R' + esc(Number(p.budget_max || 0).toLocaleString()) + '</div>';
+    }
+    html += '</div>';
+    html += '</section>';
+
+    // Section 7 - LOCATION
+    html += '<section class="pos-location reveal">';
+    html += '<h2 class="pos-location-heading">Location</h2>';
+    html += '<p class="pos-location-address">' + esc(locationParts.join(', ') || 'Location details available on request') + '</p>';
+    html += '</section>';
+
+    // Section 8 - NEXT STEPS
+    html += '<section class="pos-steps reveal">';
+    html += '<h2 class="pos-steps-heading">Next Steps</h2>';
+    html += '<ol class="pos-steps-list">';
+    var steps = [
+      'Review this proposal',
+      'Let us know if you\'re interested',
+      'We\'ll confirm availability and send booking details',
+      'Secure your stay'
+    ];
+    for (var s = 0; s < steps.length; s++) {
+      html += '<li class="pos-step-item"><span class="pos-step-num">' + (s + 1) + '</span><span class="pos-step-text">' + esc(steps[s]) + '</span></li>';
+    }
+    html += '</ol>';
+    html += '</section>';
+
+    // Section 9 - CTA
+    var alreadyInterested = (p.status === 'interested');
+    html += '<section class="pos-cta reveal">';
+    html += '<h2 class="pos-cta-heading">Interested in ' + esc(pr.property_name) + '?</h2>';
+    html += '<div class="pos-cta-buttons">';
+    html += '<button id="btn-interested" class="pos-btn-interested"' + (alreadyInterested ? ' disabled' : '') + '>' +
+      (alreadyInterested ? 'Interest Registered' : 'I\'m Interested') + '</button>';
+    html += '<button id="btn-share" class="pos-btn-share">Share Proposal</button>';
+    html += '</div>';
+    html += '</section>';
+
+    // Section 10 - CONTACT
+    html += '<section class="pos-contact reveal">';
+    html += '<h2 class="pos-contact-heading">Get in Touch</h2>';
+    html += '<div class="pos-contact-links">';
+    html += '<a href="tel:+27218130813" class="pos-contact-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>+27 21 813 0813</a>';
+    html += '<a href="mailto:info@ctrentals.co.za" class="pos-contact-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>info@ctrentals.co.za</a>';
+    html += '<a href="https://wa.me/27218130813" target="_blank" rel="noopener" class="pos-contact-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>WhatsApp</a>';
+    html += '</div>';
+    html += '</section>';
+
+    // Section 11 - FOOTER
+    html += '<footer class="pos-footer reveal">';
+    html += '<div class="pos-footer-brand">CT Rentals</div>';
+    html += '<div class="pos-footer-tagline">Cape Town Holiday Rentals</div>';
+    html += '<div class="pos-footer-copy">&copy; ' + new Date().getFullYear() + ' CT Rentals. All rights reserved.</div>';
+    html += '</footer>';
+
+    // Inject into canvas
+    var canvas = el('canvas');
+    canvas.innerHTML = html;
+
+    // Hide loading, show canvas
+    el('loading-screen').style.display = 'none';
+    canvas.style.display = 'block';
+
+    // Init reveal animations
+    initReveal();
+
+    // ── Button: I'm Interested ──
+    var btnInterested = el('btn-interested');
+    if (btnInterested && !alreadyInterested) {
+      btnInterested.addEventListener('click', function() {
+        btnInterested.disabled = true;
+        btnInterested.textContent = 'Interest Registered';
+        sbPatch('proposals?ref_code=eq.' + encodeURIComponent(p.ref_code), {
+          status: 'interested',
+          accepted_at: new Date().toISOString()
+        }).catch(function() {
+          // Silently handle — button stays disabled as visual confirmation
+        });
+      });
+    }
+
+    // ── Button: Share Proposal ──
+    var btnShare = el('btn-share');
+    if (btnShare) {
+      btnShare.addEventListener('click', function() {
+        var url = window.location.href;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function() {
+            showToast('Link copied to clipboard');
+          }).catch(function() {
+            fallbackCopy(url);
+          });
+        } else {
+          fallbackCopy(url);
+        }
+      });
+    }
+
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast('Link copied to clipboard');
+      } catch(e) {
+        showToast('Could not copy link');
+      }
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ── Main init ──
+  (function init() {
+    var params = new URLSearchParams(window.location.search);
+    var ref = params.get('ref');
+
+    if (!ref) {
+      showError('missing_ref');
+      return;
+    }
+
+    var encodedRef = encodeURIComponent(ref);
+
+    // Step 1: Fetch proposal
+    sbGet('proposals?ref_code=eq.' + encodedRef + '&select=*&limit=1')
+      .then(function(proposals) {
+        if (!proposals || proposals.length === 0) {
+          showError('not_found');
+          return;
+        }
+        var proposal = proposals[0];
+
+        // Check if expired (status)
+        if (proposal.status === 'expired') {
+          showError('expired');
+          return;
+        }
+
+        // Step 2: Fetch property
+        sbGet('partner_properties?id=eq.' + encodeURIComponent(proposal.property_id) + '&select=*&limit=1')
+          .then(function(properties) {
+            if (!properties || properties.length === 0) {
+              showError('not_found');
+              return;
+            }
+            var property = properties[0];
+
+            // Step 3: Mark as viewed
+            sbPatch('proposals?ref_code=eq.' + encodedRef, {
+              viewed_at: new Date().toISOString()
+            }).catch(function() {
+              // Non-blocking — continue rendering
+            });
+
+            // Step 4: Render
+            render(proposal, property);
+          })
+          .catch(function() {
+            showError('error');
+          });
+      })
+      .catch(function() {
+        showError('error');
+      });
+  })();
+
+})();
+</script>
+</body>
+</html>
