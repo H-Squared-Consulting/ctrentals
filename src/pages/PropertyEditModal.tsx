@@ -314,7 +314,80 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           />
 
           <SectionHeading>Amenities</SectionHeading>
-          <div className="form-group"><label className="form-label">Amenity Tags (comma-separated)</label><input type="text" className="form-input" value={form.amenity_tags} onChange={(e) => setForm({ ...form, amenity_tags: e.target.value })} placeholder="pool, wifi, parking, pet-friendly" /></div>
+          {(() => {
+            // Parse current tags
+            const currentTags = typeof form.amenity_tags === 'string'
+              ? form.amenity_tags.split(',').map(t => t.trim()).filter(Boolean)
+              : Array.isArray(form.amenity_tags) ? form.amenity_tags : [];
+
+            const presets = [
+              'WiFi','Pool','Hot tub','Free parking','Air conditioning','Fireplace','Kitchen',
+              'Dishwasher','Washer','Dryer','TV','BBQ grill','Coffee maker','Iron','Bathtub',
+              'Heating','Sun loungers','Outdoor dining','Outdoor furniture','Private patio',
+              'Mountain view','Workspace','Housekeeping','Cleaning available','Single level home',
+              'Pet friendly','Garden','Gym','Sauna','Fire pit','Pool table','Trampoline',
+              'Private entrance','Sound system','Crib available',
+            ];
+
+            const updateTags = (tags) => setForm(prev => ({ ...prev, amenity_tags: tags.join(', ') }));
+            const addTag = (tag) => { if (!currentTags.includes(tag)) updateTags([...currentTags, tag]); };
+            const removeTag = (tag) => updateTags(currentTags.filter(t => t !== tag));
+
+            const unusedPresets = presets.filter(p => !currentTags.includes(p));
+
+            return (
+              <div className="amenity-editor">
+                {/* Active tags */}
+                {currentTags.length > 0 && (
+                  <div className="amenity-active">
+                    {currentTags.map(tag => (
+                      <span key={tag} className="amenity-tag amenity-tag--active" onClick={() => removeTag(tag)}>
+                        {tag} <span className="amenity-tag-x">✕</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {currentTags.length === 0 && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginBottom: '8px' }}>No amenities added yet. Click below to add.</div>
+                )}
+
+                {/* Custom input */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Type custom amenity..."
+                    style={{ flex: 1 }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const val = e.target.value.trim();
+                        if (val) { addTag(val); e.target.value = ''; }
+                      }
+                    }}
+                  />
+                  <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }} onClick={(e) => {
+                    const input = e.target.previousSibling;
+                    if (input && input.value.trim()) { addTag(input.value.trim()); input.value = ''; }
+                  }}>+ Add</button>
+                </div>
+
+                {/* Preset suggestions */}
+                {unusedPresets.length > 0 && (
+                  <div className="amenity-presets">
+                    <div className="amenity-presets-label">Quick add:</div>
+                    <div className="amenity-presets-list">
+                      {unusedPresets.map(tag => (
+                        <span key={tag} className="amenity-tag amenity-tag--preset" onClick={() => addTag(tag)}>
+                          + {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <SectionHeading>Links</SectionHeading>
           <div className="form-group"><label className="form-label">Booking URL</label><input type="url" className="form-input" value={form.booking_url} onChange={(e) => setForm({ ...form, booking_url: e.target.value })} placeholder="https://..." /></div>
