@@ -41,6 +41,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     bedrooms: property.bedrooms ?? '',
     bathrooms: property.bathrooms ?? '',
     sleeps: property.sleeps ?? '',
+    bed_sizes: Array.isArray(property.bed_sizes) ? property.bed_sizes : [],
     price_from: property.price_from ?? '',
     price_currency: property.price_currency || 'ZAR',
     hero_image_url: property.hero_image_url || '',
@@ -123,6 +124,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         is_featured: form.is_featured,
         pos_assured: form.pos_assured,
         sort_order: parseInt(form.sort_order, 10) || 0,
+        bed_sizes: form.bed_sizes.filter(b => b.room || b.bed),
         notes: form.notes.trim() || null,
       };
 
@@ -231,6 +233,58 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             <div className="form-group"><label className="form-label">Bedrooms</label><input type="number" className="form-input" value={form.bedrooms} onChange={(e) => setForm({ ...form, bedrooms: e.target.value })} min={0} /></div>
             <div className="form-group"><label className="form-label">Bathrooms</label><input type="number" className="form-input" value={form.bathrooms} onChange={(e) => setForm({ ...form, bathrooms: e.target.value })} min={0} /></div>
             <div className="form-group"><label className="form-label">Sleeps</label><input type="number" className="form-input" value={form.sleeps} onChange={(e) => setForm({ ...form, sleeps: e.target.value })} min={0} /></div>
+          </div>
+
+          <SectionHeading>Bed Sizes</SectionHeading>
+          <div className="bed-sizes-editor">
+            {form.bed_sizes.map((bed, i) => (
+              <div key={i} className="bed-size-row">
+                <input
+                  type="text"
+                  className="form-input"
+                  value={bed.room || ''}
+                  onChange={(e) => {
+                    const updated = [...form.bed_sizes];
+                    updated[i] = { ...updated[i], room: e.target.value };
+                    setForm(prev => ({ ...prev, bed_sizes: updated }));
+                  }}
+                  placeholder="e.g. Master Bedroom"
+                  style={{ flex: 1 }}
+                />
+                <select
+                  className="form-input"
+                  value={bed.bed || ''}
+                  onChange={(e) => {
+                    const updated = [...form.bed_sizes];
+                    updated[i] = { ...updated[i], bed: e.target.value };
+                    setForm(prev => ({ ...prev, bed_sizes: updated }));
+                  }}
+                  style={{ width: '140px' }}
+                >
+                  <option value="">Select size</option>
+                  <option value="King">King</option>
+                  <option value="Queen">Queen</option>
+                  <option value="Double">Double</option>
+                  <option value="Single">Single</option>
+                  <option value="Twin (2x Single)">Twin (2x Single)</option>
+                  <option value="Bunk Beds">Bunk Beds</option>
+                  <option value="Sleeper Couch">Sleeper Couch</option>
+                </select>
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: '4px 8px', fontSize: '0.875rem', color: 'var(--error)' }}
+                  onClick={() => {
+                    const updated = form.bed_sizes.filter((_, j) => j !== i);
+                    setForm(prev => ({ ...prev, bed_sizes: updated }));
+                  }}
+                >✕</button>
+              </div>
+            ))}
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem', marginTop: '4px' }}
+              onClick={() => setForm(prev => ({ ...prev, bed_sizes: [...prev.bed_sizes, { room: '', bed: '' }] }))}
+            >+ Add Bedroom</button>
           </div>
 
           <SectionHeading>Pricing</SectionHeading>

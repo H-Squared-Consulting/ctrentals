@@ -193,6 +193,31 @@
       '  .br-stat-value { font-size: 28px; }',
       '}',
 
+      '/* ── Bed Sizes ── */',
+      '.br-beds { background: var(--white); padding: 40px 40px; }',
+      '.br-beds-heading {',
+      '  font-size: 20px; font-weight: 400; color: var(--text-dark);',
+      '  text-align: center; margin-bottom: 8px;',
+      '}',
+      '.br-beds-rule {',
+      '  width: 50px; height: 2px; background: var(--gold); margin: 0 auto 24px; border: none;',
+      '}',
+      '.br-beds-grid {',
+      '  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));',
+      '  gap: 12px; max-width: 600px; margin: 0 auto;',
+      '}',
+      '.br-bed-card {',
+      '  background: var(--cream); border-radius: 8px; padding: 14px 16px;',
+      '  display: flex; align-items: center; gap: 12px;',
+      '}',
+      '.br-bed-icon { font-size: 20px; flex-shrink: 0; }',
+      '.br-bed-room { font-size: 14px; font-weight: 600; color: var(--text-dark); line-height: 1.3; }',
+      '.br-bed-type { font-size: 13px; color: var(--text-light); }',
+      '@media (max-width: 767px) {',
+      '  .br-beds { padding: 32px 24px; }',
+      '  .br-beds-grid { grid-template-columns: 1fr; }',
+      '}',
+
       /* ── Section 3: ABOUT ── */
       '.br-about { background: var(--linen); padding: 48px 40px; }',
       '.br-about-heading {',
@@ -440,6 +465,31 @@
       if (locationStr) {
         html += '<div class="br-stats-location">' + esc(locationStr) + '</div>';
       }
+      html += '</section>';
+    }
+
+    // Bed Sizes section
+    var bedSizes = p.bed_sizes;
+    if (typeof bedSizes === 'string') { try { bedSizes = JSON.parse(bedSizes); } catch(e) { bedSizes = []; } }
+    if (!Array.isArray(bedSizes)) bedSizes = [];
+    bedSizes = bedSizes.filter(function(b) { return b.room || b.bed; });
+
+    if (bedSizes.length > 0) {
+      html += '<section class="br-beds reveal">';
+      html += '<h2 class="br-beds-heading">Sleeping Arrangements</h2>';
+      html += '<div class="br-beds-rule"></div>';
+      html += '<div class="br-beds-grid">';
+      for (var bi = 0; bi < bedSizes.length; bi++) {
+        var bed = bedSizes[bi];
+        html += '<div class="br-bed-card">';
+        html += '<div class="br-bed-icon">🛏</div>';
+        html += '<div>';
+        html += '<div class="br-bed-room">' + esc(bed.room || 'Bedroom ' + (bi + 1)) + '</div>';
+        if (bed.bed) html += '<div class="br-bed-type">' + esc(bed.bed) + '</div>';
+        html += '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
       html += '</section>';
     }
 

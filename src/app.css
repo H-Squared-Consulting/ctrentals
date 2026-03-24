@@ -1095,6 +1095,15 @@ select.form-input { cursor: pointer; }
 .pv-booking-guest { font-size: 0.8125rem; font-weight: 600; color: var(--text); }
 .pv-booking-dates { font-size: 0.6875rem; color: var(--text-light); }
 
+/* ===== Bed Sizes Editor ===== */
+.bed-sizes-editor { margin-bottom: 8px; }
+.bed-size-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
 /* ===== Image Manager ===== */
 .img-manager { margin-bottom: 12px; }
 .img-manager-label {
