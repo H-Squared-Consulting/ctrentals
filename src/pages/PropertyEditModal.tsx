@@ -254,8 +254,8 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               }
               return [];
             })()}
-            onHeroChange={(url) => setForm({ ...form, hero_image_url: url || '' })}
-            onGalleryChange={(urls) => setForm({ ...form, gallery_images: JSON.stringify(urls) })}
+            onHeroChange={(url) => setForm(prev => ({ ...prev, hero_image_url: url || '' }))}
+            onGalleryChange={(urls) => setForm(prev => ({ ...prev, gallery_images: JSON.stringify(urls) }))}
             supabase={supabase}
           />
 
