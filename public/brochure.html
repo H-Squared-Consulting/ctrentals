@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CT Rentals - Property Brochure</title>
+<title>Property Brochure</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
@@ -406,7 +406,7 @@
     }
     html += '<div class="br-hero-overlay"></div>';
     html += '<div class="br-hero-content">';
-    html += '<div class="br-hero-brand">CT Rentals</div>';
+    // No branding on brochures
     html += '<h1 class="br-hero-title">' + esc(p.property_name) + '</h1>';
     if (p.tagline) {
       html += '<div class="br-hero-tagline">' + esc(p.tagline) + '</div>';
@@ -474,7 +474,7 @@
     // Section 5: AMENITIES
     if (amenities.length > 0) {
       html += '<section class="br-amenities reveal">';
-      html += '<h2 class="br-amenities-heading">What\'s Included</h2>';
+      html += '<h2 class="br-amenities-heading">Amenities</h2>';
       html += '<div class="br-amenities-rule"></div>';
       html += '<ul class="br-amenities-list">';
       for (var m = 0; m < amenities.length; m++) {
@@ -495,9 +495,9 @@
 
     // Section 8: FOOTER
     html += '<footer class="br-footer">';
-    html += '<div class="br-footer-brand">CT Rentals</div>';
-    html += '<div class="br-footer-tagline">Cape Town Holiday Rentals</div>';
-    html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' CT Rentals. All rights reserved.</div>';
+    // No branding in footer
+    // No tagline
+    html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' All rights reserved.</div>';
     html += '</footer>';
 
     return html;
@@ -534,7 +534,7 @@
       var p = data[0];
 
       // Set page title
-      document.title = (p.property_name || 'Property Brochure') + ' - CT Rentals';
+      document.title = (p.property_name || 'Property Brochure');
 
       // Render brochure
       var canvas = el('canvas');
