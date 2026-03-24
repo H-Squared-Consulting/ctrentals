@@ -4,6 +4,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/proposal.html", "destination": "/proposal.html" },
+    { "source": "/brochure.html", "destination": "/brochure.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
