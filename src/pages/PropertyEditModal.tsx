@@ -5,6 +5,7 @@
  */
 
 import { useState } from 'react';
+import ImageManager from '../components/ImageManager';
 import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS } from './constants';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user }) {
@@ -242,9 +243,23 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             </div>
           </div>
 
-          <SectionHeading>Images & Amenities</SectionHeading>
-          <div className="form-group"><label className="form-label">Hero Image URL</label><input type="text" className="form-input" value={form.hero_image_url} onChange={(e) => setForm({ ...form, hero_image_url: e.target.value })} placeholder="https://..." /></div>
-          <div className="form-group"><label className="form-label">Gallery Images (JSON array of URLs)</label><textarea className="form-input" rows={3} value={form.gallery_images} onChange={(e) => setForm({ ...form, gallery_images: e.target.value })} placeholder='["https://img1.jpg", "https://img2.jpg"]' /></div>
+          <SectionHeading>Images</SectionHeading>
+          <ImageManager
+            propertyId={property.id || 'new'}
+            heroImage={form.hero_image_url || null}
+            galleryImages={(() => {
+              if (Array.isArray(form.gallery_images)) return form.gallery_images;
+              if (typeof form.gallery_images === 'string' && form.gallery_images.trim()) {
+                try { const parsed = JSON.parse(form.gallery_images); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+              }
+              return [];
+            })()}
+            onHeroChange={(url) => setForm({ ...form, hero_image_url: url || '' })}
+            onGalleryChange={(urls) => setForm({ ...form, gallery_images: JSON.stringify(urls) })}
+            supabase={supabase}
+          />
+
+          <SectionHeading>Amenities</SectionHeading>
           <div className="form-group"><label className="form-label">Amenity Tags (comma-separated)</label><input type="text" className="form-input" value={form.amenity_tags} onChange={(e) => setForm({ ...form, amenity_tags: e.target.value })} placeholder="pool, wifi, parking, pet-friendly" /></div>
 
           <SectionHeading>Links</SectionHeading>
