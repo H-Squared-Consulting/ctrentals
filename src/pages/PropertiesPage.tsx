@@ -4,6 +4,7 @@ import { useLayout } from '../contexts/LayoutContext';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import PropertyEditModal from './PropertyEditModal';
+import PricingModal from './PricingModal';
 import { CT_RENTALS_PARTNER_ID, PROPERTY_TYPE_OPTIONS } from './constants';
 
 interface Property extends DataRow {
@@ -37,6 +38,8 @@ export default function PropertiesPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editingProperty, setEditingProperty] = useState<any | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [pricingProperty, setPricingProperty] = useState<any | null>(null);
 
   useEffect(() => { setPageTitle('Properties'); }, [setPageTitle]);
 
@@ -239,6 +242,13 @@ export default function PropertiesPage() {
                   >
                     ✏️ Edit
                   </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={(e) => { e.stopPropagation(); setPricingProperty(property); }}
+                  >
+                    💰 Pricing
+                  </button>
                 </div>
               </div>
             ))
@@ -256,13 +266,22 @@ export default function PropertiesPage() {
           defaultSort={{ key: 'bedrooms', direction: 'desc' }}
           headerActions={undefined}
           actions={(row: DataRow) => (
-            <span
-              className="action-icon"
-              onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditingProperty(row as Property); }}
-              title="Edit property"
-            >
-              ✏️
-            </span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <span
+                className="action-icon"
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditingProperty(row as Property); }}
+                title="Edit property"
+              >
+                ✏️
+              </span>
+              <span
+                className="action-icon"
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setPricingProperty(row as Property); }}
+                title="Pricing"
+              >
+                💰
+              </span>
+            </div>
           )}
           onRowClick={(row: DataRow) => setEditingProperty(row as Property)}
           pageSize={25}
@@ -270,7 +289,7 @@ export default function PropertiesPage() {
         />
       )}
 
-      {/* ── Modal ── */}
+      {/* ── Edit Modal ── */}
       {editingProperty && (
         <PropertyEditModal
           property={editingProperty}
@@ -279,6 +298,15 @@ export default function PropertiesPage() {
           onSave={async () => { setEditingProperty(null); await loadProperties(); }}
           supabase={supabase}
           user={user}
+        />
+      )}
+
+      {/* ── Pricing Modal ── */}
+      {pricingProperty && (
+        <PricingModal
+          property={pricingProperty}
+          onClose={() => setPricingProperty(null)}
+          supabase={supabase}
         />
       )}
     </div>

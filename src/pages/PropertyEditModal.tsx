@@ -4,9 +4,10 @@
  * PropertyEditModal -- Create / edit a property
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ImageManager from '../components/ImageManager';
-import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS } from './constants';
+import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS, PLATFORM_NAME_OPTIONS } from './constants';
+import type { Baseline, ChannelProfile } from '../types/pricing';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user }) {
   const isNew = !property.id;
@@ -68,6 +69,99 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // ── Baselines ──
+  const currentYear = new Date().getFullYear();
+  const [baselines, setBaselines] = useState<Baseline[]>([]);
+  const [newBaseline, setNewBaseline] = useState({ year: currentYear, daily_rate: '', monthly_rate: '' });
+
+  // ── Channel Profiles ──
+  const [channelProfiles, setChannelProfiles] = useState<ChannelProfile[]>([]);
+  const [newChannel, setNewChannel] = useState({ platform_name: '', platform_fee_pct: '', platform_fixed_fee: '', notes: '' });
+
+  useEffect(() => {
+    if (!property.id || isNew) return;
+    async function loadPricingData() {
+      const [blRes, chRes] = await Promise.all([
+        supabase.from('baselines').select('*').eq('property_id', property.id).order('year', { ascending: false }),
+        supabase.from('channel_profiles').select('*').eq('property_id', property.id).order('platform_name'),
+      ]);
+      if (blRes.data) setBaselines(blRes.data);
+      if (chRes.data) setChannelProfiles(chRes.data);
+    }
+    loadPricingData();
+  }, [property.id]);
+
+  async function handleSaveBaseline() {
+    if (!newBaseline.daily_rate || !newBaseline.monthly_rate) { alert('Both daily and monthly rates are required'); return; }
+    try {
+      const payload = {
+        property_id: property.id,
+        year: newBaseline.year,
+        daily_rate: parseFloat(newBaseline.daily_rate),
+        monthly_rate: parseFloat(newBaseline.monthly_rate),
+        locked: true,
+      };
+      const { data, error } = await supabase.from('baselines').upsert(payload, { onConflict: 'property_id,year' }).select();
+      if (error) throw error;
+      setBaselines((prev) => {
+        const filtered = prev.filter((b) => !(b.property_id === property.id && b.year === newBaseline.year));
+        return [data[0], ...filtered].sort((a, b) => b.year - a.year);
+      });
+      setNewBaseline({ year: currentYear, daily_rate: '', monthly_rate: '' });
+    } catch (err) {
+      alert('Failed to save baseline: ' + err.message);
+    }
+  }
+
+  async function handleToggleBaselineLock(bl) {
+    try {
+      const { error } = await supabase.from('baselines').update({ locked: !bl.locked, updated_at: new Date().toISOString() }).eq('id', bl.id);
+      if (error) throw error;
+      setBaselines((prev) => prev.map((b) => (b.id === bl.id ? { ...b, locked: !b.locked } : b)));
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+    }
+  }
+
+  async function handleDeleteBaseline(id) {
+    try {
+      const { error } = await supabase.from('baselines').delete().eq('id', id);
+      if (error) throw error;
+      setBaselines((prev) => prev.filter((b) => b.id !== id));
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+    }
+  }
+
+  async function handleSaveChannel() {
+    if (!newChannel.platform_name) { alert('Platform name is required'); return; }
+    try {
+      const payload = {
+        property_id: property.id,
+        platform_name: newChannel.platform_name,
+        platform_fee_pct: parseFloat(newChannel.platform_fee_pct) || 0,
+        platform_fixed_fee: parseFloat(newChannel.platform_fixed_fee) || 0,
+        notes: newChannel.notes.trim() || null,
+      };
+      const { data, error } = await supabase.from('channel_profiles').insert(payload).select();
+      if (error) throw error;
+      setChannelProfiles((prev) => [...prev, data[0]]);
+      setNewChannel({ platform_name: '', platform_fee_pct: '', platform_fixed_fee: '', notes: '' });
+    } catch (err) {
+      alert('Failed to save channel: ' + err.message);
+    }
+  }
+
+  async function handleDeleteChannel(id) {
+    try {
+      const { error } = await supabase.from('channel_profiles').delete().eq('id', id);
+      if (error) throw error;
+      setChannelProfiles((prev) => prev.filter((c) => c.id !== id));
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+    }
+  }
 
   function handleNameChange(value) {
     const updates = { property_name: value };
@@ -296,6 +390,95 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               </select>
             </div>
           </div>
+
+          {!isNew && (
+            <>
+              <SectionHeading>Baselines</SectionHeading>
+              <div className="baseline-editor">
+                {baselines.map((bl) => (
+                  <div key={bl.id} className="baseline-row">
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}</div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Daily</label>
+                      <div style={{ fontSize: '0.875rem' }}>R{Number(bl.daily_rate).toLocaleString()}</div>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Monthly</label>
+                      <div style={{ fontSize: '0.875rem' }}>R{Number(bl.monthly_rate).toLocaleString()}</div>
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.6875rem', padding: '4px 8px' }}
+                      onClick={() => handleToggleBaselineLock(bl)}
+                    >
+                      {bl.locked ? '🔒' : '🔓'}
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }}
+                      onClick={() => handleDeleteBaseline(bl.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <div className="baseline-row" style={{ marginTop: '4px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Year</label>
+                    <select className="form-input" value={newBaseline.year} onChange={(e) => setNewBaseline({ ...newBaseline, year: Number(e.target.value) })} style={{ width: '80px' }}>
+                      {[currentYear, currentYear + 1].map((y) => (<option key={y} value={y}>{y}</option>))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Daily Rate</label>
+                    <input type="number" className="form-input" value={newBaseline.daily_rate} onChange={(e) => setNewBaseline({ ...newBaseline, daily_rate: e.target.value })} min={0} step="0.01" placeholder="0.00" />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Monthly Rate</label>
+                    <input type="number" className="form-input" value={newBaseline.monthly_rate} onChange={(e) => setNewBaseline({ ...newBaseline, monthly_rate: e.target.value })} min={0} step="0.01" placeholder="0.00" />
+                  </div>
+                  <button className="btn btn-primary" style={{ fontSize: '0.6875rem', padding: '4px 10px' }} onClick={handleSaveBaseline}>Save</button>
+                  <div />
+                </div>
+              </div>
+
+              <SectionHeading>Channel Profiles</SectionHeading>
+              <div>
+                {channelProfiles.map((ch) => (
+                  <div key={ch.id} className="channel-row">
+                    <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{ch.platform_name}</div>
+                    <div style={{ fontSize: '0.8125rem' }}>{ch.platform_fee_pct}%</div>
+                    <div style={{ fontSize: '0.8125rem' }}>R{ch.platform_fixed_fee}</div>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }}
+                      onClick={() => handleDeleteChannel(ch.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <div className="channel-row" style={{ marginTop: '4px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Platform</label>
+                    <select className="form-input" value={newChannel.platform_name} onChange={(e) => setNewChannel({ ...newChannel, platform_name: e.target.value })}>
+                      <option value="">-- Select --</option>
+                      {PLATFORM_NAME_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Fee %</label>
+                    <input type="number" className="form-input" value={newChannel.platform_fee_pct} onChange={(e) => setNewChannel({ ...newChannel, platform_fee_pct: e.target.value })} min={0} step="0.1" placeholder="0" />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Fixed Fee</label>
+                    <input type="number" className="form-input" value={newChannel.platform_fixed_fee} onChange={(e) => setNewChannel({ ...newChannel, platform_fixed_fee: e.target.value })} min={0} step="0.01" placeholder="0.00" />
+                  </div>
+                  <button className="btn btn-primary" style={{ fontSize: '0.6875rem', padding: '4px 10px' }} onClick={handleSaveChannel}>Add</button>
+                </div>
+              </div>
+            </>
+          )}
 
           <SectionHeading>Images</SectionHeading>
           <ImageManager

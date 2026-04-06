@@ -40,3 +40,39 @@ export const PLATFORM_OPTIONS = [
   { value: 'repeat', label: 'Repeat Guest' },
   { value: 'other', label: 'Other' },
 ];
+
+// ── Pricing Engine ──
+
+export const PRICING_PROPOSAL_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  draft:    { label: 'Draft',    color: '#92400E', bg: '#FEF3C7' },
+  live:     { label: 'Live',     color: '#065F46', bg: '#D1FAE5' },
+  accepted: { label: 'Accepted', color: '#1E40AF', bg: '#DBEAFE' },
+  expired:  { label: 'Expired',  color: '#6B7280', bg: '#F3F4F6' },
+  archived: { label: 'Archived', color: '#6B7280', bg: '#F3F4F6' },
+};
+
+export const SEASON_TAG_OPTIONS = [
+  { value: 'Peak', label: 'Peak' },
+  { value: 'High', label: 'High' },
+  { value: 'Mid',  label: 'Mid' },
+  { value: 'Low',  label: 'Low' },
+];
+
+export const CALC_METHOD_OPTIONS = [
+  { value: 'margin', label: 'Margin' },
+  { value: 'markup', label: 'Markup' },
+];
+
+export const SCENARIO_TYPE_OPTIONS = [
+  { value: 'direct',   label: 'Direct' },
+  { value: 'agent',    label: 'Agent' },
+  { value: 'platform', label: 'Platform' },
+];
+
+export const PLATFORM_NAME_OPTIONS = [
+  { value: 'Airbnb',      label: 'Airbnb' },
+  { value: 'Booking.com', label: 'Booking.com' },
+  { value: 'VRBO',        label: 'VRBO' },
+  { value: 'LekkeSlaap',  label: 'LekkeSlaap' },
+  { value: 'Other',       label: 'Other' },
+];
