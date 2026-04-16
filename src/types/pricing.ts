@@ -24,6 +24,8 @@ export interface SeasonTag {
 export interface Agent {
   id: string;
   name: string;
+  company: string | null;
+  email: string | null;
   default_commission_pct: number;
   created_at: string;
 }

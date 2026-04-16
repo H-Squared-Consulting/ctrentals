@@ -360,7 +360,9 @@ export default function PricingModal({ property, onClose, supabase }) {
                       >
                         <option value="">-- Select agent --</option>
                         {agents.map((a) => (
-                          <option key={a.id} value={a.id}>{a.name} ({a.default_commission_pct}%)</option>
+                          <option key={a.id} value={a.id}>
+                            {a.name}{a.company ? ` — ${a.company}` : ''} ({a.default_commission_pct}%)
+                          </option>
                         ))}
                       </select>
                     </div>
