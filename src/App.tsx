@@ -6,10 +6,7 @@ import PropertiesPage from './pages/PropertiesPage';
 import EnquiriesPage from './pages/EnquiriesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
 import BookingCalendarPage from './pages/BookingCalendarPage';
-import ProposalsPage from './pages/ProposalsPage';
-import BrochuresPage from './pages/BrochuresPage';
-import SeasonTagsPage from './pages/SeasonTagsPage';
-import AgentsPage from './pages/AgentsPage';
+import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -38,20 +35,8 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             <NavLink to="/enquiries" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
               Enquiries
             </NavLink>
-            <NavLink to="/proposals" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
-              Proposals
-            </NavLink>
-            <NavLink to="/enquiry/new" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
-              New Enquiry
-            </NavLink>
-            <NavLink to="/brochures" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
-              Brochures
-            </NavLink>
-            <NavLink to="/seasons" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
-              Seasons
-            </NavLink>
-            <NavLink to="/agents" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
-              Agents
+            <NavLink to="/settings" className={({ isActive }) => `top-nav-link ${isActive ? 'active' : ''}`}>
+              Settings
             </NavLink>
           </nav>
         </div>
@@ -84,13 +69,9 @@ export function App() {
       <Route path="/properties" element={<ProtectedRoute><AppLayout><PropertiesPage /></AppLayout></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><AppLayout><BookingCalendarPage /></AppLayout></ProtectedRoute>} />
       <Route path="/enquiries" element={<ProtectedRoute><AppLayout><EnquiriesPage /></AppLayout></ProtectedRoute>} />
-      <Route path="/proposals" element={<ProtectedRoute><AppLayout><ProposalsPage /></AppLayout></ProtectedRoute>} />
       <Route path="/enquiry/new" element={<ProtectedRoute><AppLayout><EnquiryForm /></AppLayout></ProtectedRoute>} />
-      <Route path="/brochures" element={<ProtectedRoute><AppLayout><BrochuresPage /></AppLayout></ProtectedRoute>} />
-      <Route path="/seasons" element={<ProtectedRoute><AppLayout><SeasonTagsPage /></AppLayout></ProtectedRoute>} />
-      <Route path="/agents" element={<ProtectedRoute><AppLayout><AgentsPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
       <Route path="*" element={<Navigate to={user ? '/properties' : '/login'} replace />} />
     </Routes>
   );
 }
-

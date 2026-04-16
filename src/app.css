@@ -1543,6 +1543,38 @@ select.form-input { cursor: pointer; }
   justify-content: flex-end;
 }
 
+/* ===== Page Tabs ===== */
+.page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.page-tab {
+  padding: 8px 20px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: var(--transition);
+}
+.page-tab.active {
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+.page-tab:hover:not(.active) {
+  background: var(--border-light);
+  color: var(--text);
+}
+
 /* ===== Pricing Engine ===== */
 .pricing-modal { max-width: 920px; }
 

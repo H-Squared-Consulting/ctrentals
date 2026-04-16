@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import type { Agent } from '../types/pricing';
 
-export default function AgentsPage() {
+export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
@@ -21,7 +21,7 @@ export default function AgentsPage() {
 
   const [newAgent, setNewAgent] = useState({ name: '', default_commission_pct: '10' });
 
-  useEffect(() => { setPageTitle('Agents'); }, [setPageTitle]);
+  useEffect(() => { if (!embedded) setPageTitle('Agents'); }, [setPageTitle, embedded]);
 
   async function loadAgents() {
     setLoading(true);

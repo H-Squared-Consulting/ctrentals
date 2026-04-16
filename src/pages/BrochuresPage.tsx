@@ -19,7 +19,7 @@ function getBrochureUrl(propertyId: string) {
   return `${window.location.origin}/brochure.html?id=${propertyId}`;
 }
 
-export default function BrochuresPage() {
+export default function BrochuresPage({ embedded }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
@@ -28,7 +28,7 @@ export default function BrochuresPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
 
-  useEffect(() => { setPageTitle('House Brochures'); }, [setPageTitle]);
+  useEffect(() => { if (!embedded) setPageTitle('House Brochures'); }, [setPageTitle, embedded]);
 
   async function loadProperties() {
     setLoading(true);

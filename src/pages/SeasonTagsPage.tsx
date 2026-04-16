@@ -11,7 +11,7 @@ import DateInput from '../components/DateInput';
 import { SEASON_TAG_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import type { SeasonTag } from '../types/pricing';
 
-export default function SeasonTagsPage() {
+export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
@@ -28,7 +28,7 @@ export default function SeasonTagsPage() {
     property_id: '',
   });
 
-  useEffect(() => { setPageTitle('Season Tags'); }, [setPageTitle]);
+  useEffect(() => { if (!embedded) setPageTitle('Season Tags'); }, [setPageTitle, embedded]);
 
   async function loadData() {
     setLoading(true);

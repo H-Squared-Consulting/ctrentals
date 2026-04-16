@@ -49,7 +49,7 @@ function getProposalUrl(refCode: string) {
   return `${window.location.origin}/proposal.html?ref=${refCode}`;
 }
 
-export default function ProposalsPage() {
+export default function ProposalsPage({ embedded }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -57,7 +57,7 @@ export default function ProposalsPage() {
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  useEffect(() => { setPageTitle('Proposals'); }, [setPageTitle]);
+  useEffect(() => { if (!embedded) setPageTitle('Proposals'); }, [setPageTitle, embedded]);
 
   async function fetchProposals() {
     setLoading(true);
