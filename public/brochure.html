@@ -433,6 +433,40 @@
     };
   }
 
+  // Fill the gallery grid in RAF-paced batches. Large galleries (100+ photos)
+  // were stalling the iframe paint when emitted inline — by streaming the
+  // figures in after first paint, the rest of the brochure becomes visible
+  // immediately while photos arrive incrementally.
+  var GALLERY_BATCH_SIZE = 16;
+  function fillGalleryChunked() {
+    if (!window._brGalleryQueue) return;
+    var queue = window._brGalleryQueue;
+    var grid = document.getElementById('br-gallery-grid');
+    if (!grid) return;
+    var items = queue.items;
+    var propertyName = queue.propertyName;
+    var i = 0;
+    function step() {
+      // Bail if a re-render swapped this grid out from under us (e.g. live preview).
+      if (grid !== document.getElementById('br-gallery-grid')) return;
+      var end = Math.min(i + GALLERY_BATCH_SIZE, items.length);
+      var chunk = '';
+      for (; i < end; i++) {
+        var item = items[i];
+        var figClass = 'br-gallery-fig' + (i === 0 ? ' br-gallery-full' : '');
+        chunk += '<figure class="' + figClass + '">';
+        chunk += '<img src="' + esc(item.url) + '" alt="' + esc(propertyName) + ' - Photo ' + (i + 1) + '" loading="lazy">';
+        if (item.caption) {
+          chunk += '<figcaption class="br-gallery-caption">' + esc(item.caption) + '</figcaption>';
+        }
+        chunk += '</figure>';
+      }
+      grid.insertAdjacentHTML('beforeend', chunk);
+      if (i < items.length) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
   // Parse brochure_config: { hidden_sections: [...], photo_order: [...] }.
   // Missing / null fields fall back to defaults — legacy rows render as before.
   function readBrochureConfig(cfg) {
@@ -562,28 +596,39 @@
     }
 
     // Section 4: GALLERY — filter by show_in_brochure, render caption when set.
+    // For galleries this big (Villa Kilimani has 108 photos), the synchronous
+    // innerHTML assignment can stall the iframe long enough that the preview
+    // looks blank. We emit an empty grid here and stash the data on a window
+    // global; the post-render code below fills the grid in RAF-paced chunks
+    // so the iframe paints immediately and the photos stream in.
     var visibleGallery = [];
     for (var gi = 0; gi < gallery.length; gi++) {
       var gm = imageMeta(imgMeta, gallery[gi]);
       if (gm.show) visibleGallery.push({ url: gallery[gi], caption: gm.caption });
     }
+    // In preview mode (iframe inside the admin editor) cap the gallery to a
+    // representative subset — mom is reviewing layout, not browsing every
+    // photo, and rendering 100+ images can stall the iframe on some browsers.
+    // The public brochure URL (no &preview=1) still renders the full set.
+    var PREVIEW_CAP = 24;
+    var isPreviewMode = /[?&]preview=1\b/.test(window.location.search);
+    var galleryTruncated = false;
+    if (isPreviewMode && visibleGallery.length > PREVIEW_CAP) {
+      visibleGallery = visibleGallery.slice(0, PREVIEW_CAP);
+      galleryTruncated = true;
+    }
     if (!cfg.hide('gallery') && visibleGallery.length > 0) {
+      window._brGalleryQueue = { items: visibleGallery, propertyName: p.property_name };
       html += '<section class="br-gallery reveal">';
       html += '<h2 class="br-gallery-heading">Gallery</h2>';
       html += '<div class="br-gallery-rule"></div>';
-      html += '<div class="br-gallery-grid">';
-      for (var k = 0; k < visibleGallery.length; k++) {
-        var item = visibleGallery[k];
-        var figClass = 'br-gallery-fig' + (k === 0 ? ' br-gallery-full' : '');
-        html += '<figure class="' + figClass + '">';
-        html += '<img src="' + esc(item.url) + '" alt="' + esc(p.property_name) + ' - Photo ' + (k + 1) + '" loading="lazy">';
-        if (item.caption) {
-          html += '<figcaption class="br-gallery-caption">' + esc(item.caption) + '</figcaption>';
-        }
-        html += '</figure>';
+      html += '<div class="br-gallery-grid" id="br-gallery-grid"></div>';
+      if (galleryTruncated) {
+        html += '<div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-light);font-style:italic">Preview shows first ' + PREVIEW_CAP + ' photos. The full brochure includes all photos.</div>';
       }
-      html += '</div>';
       html += '</section>';
+    } else {
+      window._brGalleryQueue = null;
     }
 
     // Section 5: AMENITIES
@@ -654,9 +699,20 @@
       // Set page title
       document.title = (p.property_name || 'Property Brochure');
 
-      // Render brochure
+      // Render brochure. Wrap in try/catch so any rendering exception lands
+      // in a visible error block rather than leaving the canvas blank.
       var canvas = el('canvas');
-      canvas.innerHTML = renderBrochure(p);
+      try {
+        canvas.innerHTML = renderBrochure(p);
+        fillGalleryChunked();
+      } catch (renderErr) {
+        console.error('[brochure] initial render failed:', renderErr);
+        canvas.innerHTML =
+          '<div style="padding:40px;font-family:sans-serif;color:#991B1B;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;margin:40px auto;max-width:800px">' +
+          '<strong>Render failed:</strong><br><pre style="white-space:pre-wrap;margin-top:8px;font-size:13px">' +
+          esc(String(renderErr && renderErr.stack || renderErr)) +
+          '</pre></div>';
+      }
       canvas.style.display = 'block';
 
       // Hide loading
@@ -672,14 +728,30 @@
         window.addEventListener('message', function(evt) {
           var msg = evt.data;
           if (!msg || msg.type !== 'preview-config' || !window._brProperty) return;
-          // Overlay the draft config (and any image_metadata override) onto
-          // the cached property data and re-render in place.
+          // Overlay the draft config (config / image_metadata / hero /
+          // gallery) onto the cached property data and re-render in place.
           var overlay = { brochure_config: msg.config || {} };
           if (msg.image_metadata && typeof msg.image_metadata === 'object') {
             overlay.image_metadata = msg.image_metadata;
           }
+          if (typeof msg.hero_image_url === 'string' || msg.hero_image_url === null) {
+            overlay.hero_image_url = msg.hero_image_url;
+          }
+          if (Array.isArray(msg.gallery_images)) {
+            overlay.gallery_images = msg.gallery_images;
+          }
           var draft = Object.assign({}, window._brProperty, overlay);
-          canvas.innerHTML = renderBrochure(draft);
+          try {
+            canvas.innerHTML = renderBrochure(draft);
+            fillGalleryChunked();
+          } catch (renderErr) {
+            console.error('[brochure] preview render failed:', renderErr);
+            canvas.innerHTML =
+              '<div style="padding:40px;font-family:sans-serif;color:#991B1B;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;margin:40px auto;max-width:800px">' +
+              '<strong>Preview render failed:</strong><br><pre style="white-space:pre-wrap;margin-top:8px;font-size:13px">' +
+              esc(String(renderErr && renderErr.stack || renderErr)) +
+              '</pre></div>';
+          }
           initReveal();
           // Re-wire copy-link button since it gets re-mounted by innerHTML.
           var copyBtn2 = el('btn-copy-link');

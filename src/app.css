@@ -1901,9 +1901,10 @@ select.form-input { cursor: pointer; }
 .brochure-editor-sub { font-size: 0.75rem; color: var(--text-light); margin-top: 2px; }
 .brochure-editor-body {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 0;
-  flex: 1; min-height: 0;
+  flex: 0 0 50%;
+  min-height: 0;
 }
 .brochure-editor-controls {
   border-right: 1px solid var(--border);
@@ -1935,39 +1936,75 @@ select.form-input { cursor: pointer; }
   background: var(--bg); border-radius: 6px;
 }
 /* Photo strip — horizontal, draggable */
-.brochure-editor-strip {
+/* Photos area — bottom half of the editor, wrapping scrollable grid. */
+.brochure-editor-photos {
   border-top: 1px solid var(--border);
   background: var(--bg);
-  padding: 12px 16px;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.brochure-editor-photos-header {
+  padding: 12px 16px 8px;
   flex-shrink: 0;
-  max-height: 320px;
-  display: flex; flex-direction: column; gap: 8px;
 }
-.brochure-editor-strip-header { flex-shrink: 0; }
-.brochure-editor-strip-row {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding: 8px 4px;
-  align-items: stretch;
-}
-.brochure-editor-gallery-list {
-  display: flex;
-  gap: 10px;
-  align-items: stretch;
+.brochure-editor-photos-grid {
   flex: 1;
-  overflow-x: auto;
-  padding-right: 8px;
+  overflow-y: auto;
+  padding: 8px 16px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+/* Simple photo tile — the whole tile IS the click target and IS the drag handle. */
+.brochure-editor-photo-tile {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--surface);
+  border: 2px solid transparent;
+  transition: transform 0.12s ease, border-color 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+  user-select: none;
+  aspect-ratio: 4 / 3;
+}
+.brochure-editor-photo-tile:hover {
+  border-color: var(--color-primary, #3B82F6);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+  transform: translateY(-1px);
+}
+.brochure-editor-photo-tile:active { cursor: grabbing; }
+.brochure-editor-photo-tile.is-dragging { opacity: 0.4; transform: scale(0.96); }
+.brochure-editor-photo-tile.is-excluded { opacity: 0.45; }
+.brochure-editor-photo-tile.is-excluded:hover { opacity: 0.75; }
+.brochure-editor-photo-tile img {
+  display: block;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.brochure-editor-photo-banner {
+  position: absolute;
+  top: 50%; left: 0; right: 0;
+  transform: translateY(-50%);
+  background: rgba(146, 64, 14, 0.92);
+  color: #fff;
+  font-size: 0.8125rem; font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 8px;
+  text-align: center;
 }
 .brochure-editor-hero-card {
-  flex: 0 0 auto;
-  width: 160px;
+  position: relative;
   background: var(--surface);
-  border: 2px solid #d4af37; /* hero highlight */
+  border: 3px solid #d4af37;
   border-radius: 8px;
   overflow: hidden;
   display: flex; flex-direction: column;
   align-items: stretch;
+  aspect-ratio: 4 / 3;
 }
 .brochure-editor-hero-card.brochure-editor-hero-empty {
   border-style: dashed;
@@ -1975,26 +2012,39 @@ select.form-input { cursor: pointer; }
   justify-content: center;
   padding: 16px;
   text-align: center;
+  aspect-ratio: 4 / 3;
 }
 .brochure-editor-hero-card img {
   display: block;
-  width: 100%; height: 130px;
+  width: 100%; height: 100%;
   object-fit: cover;
 }
 .brochure-editor-hero-label {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 2;
   background: #d4af37;
   color: #fff;
-  font-size: 0.6875rem; font-weight: 800;
+  font-size: 0.625rem; font-weight: 800;
   letter-spacing: 0.06em;
   padding: 4px 8px;
-  text-align: center;
+  border-radius: 3px;
 }
 .brochure-editor-hero-note {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  z-index: 2;
   font-size: 0.6875rem;
-  color: var(--text-light);
+  color: #fff;
   padding: 6px 8px;
   text-align: center;
+  background: rgba(17, 24, 39, 0.7);
   font-style: italic;
+}
+.brochure-editor-hero-card.brochure-editor-hero-empty .brochure-editor-hero-note {
+  position: static;
+  background: none;
+  color: var(--text-light);
 }
 .brochure-editor-strip-slot {
   display: flex;
@@ -2008,6 +2058,109 @@ select.form-input { cursor: pointer; }
   margin: 0 3px;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
+/* New photo card (replaces the legacy strip thumb). */
+.brochure-editor-photo-slot { position: relative; display: flex; }
+.brochure-editor-photo-marker {
+  position: absolute;
+  left: -8px;
+  top: 0; bottom: 0;
+  width: 4px;
+  background: var(--color-primary);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  z-index: 1;
+}
+.brochure-editor-photo-card {
+  position: relative;
+  width: 100%;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+  overflow: hidden;
+  transition: transform 0.12s ease, border-color 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+}
+.brochure-editor-photo-card:hover {
+  border-color: var(--color-primary-light, #93C5FD);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-1px);
+}
+.brochure-editor-photo-card:active { cursor: grabbing; }
+.brochure-editor-photo-card.is-hidden { opacity: 0.5; }
+.brochure-editor-photo-card.is-dragging { opacity: 0.4; transform: scale(0.96); }
+.brochure-editor-photo-card img {
+  display: block;
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  pointer-events: none;
+}
+.brochure-editor-photo-pos {
+  position: absolute;
+  top: 6px; left: 6px;
+  background: rgba(17, 24, 39, 0.82);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1;
+  z-index: 1;
+}
+.brochure-editor-photo-top {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.4);
+  background: rgba(17, 24, 39, 0.78);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1;
+}
+.brochure-editor-photo-top:hover:not(:disabled) { background: rgba(17, 24, 39, 0.95); }
+.brochure-editor-photo-top:disabled { opacity: 0.3; cursor: not-allowed; }
+.brochure-editor-photo-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  background: rgba(146, 64, 14, 0.9);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+.brochure-editor-photo-caption {
+  font-size: 0.75rem;
+  color: var(--text);
+  padding: 6px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.brochure-editor-photo-include {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.brochure-editor-photo-include.is-on  { background: #ECFDF5; color: #065F46; }
+.brochure-editor-photo-include.is-off { background: #FEF3C7; color: #92400E; }
+.brochure-editor-photo-include:hover  { filter: brightness(0.96); }
+
 .brochure-editor-thumb {
   position: relative;
   flex: 0 0 auto;
@@ -2034,27 +2187,43 @@ select.form-input { cursor: pointer; }
   pointer-events: none;
 }
 .brochure-editor-thumb-moverow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 4px;
   padding: 6px 6px 0;
   border-top: 1px solid var(--border);
 }
 .brochure-editor-move-btn {
-  flex: 1;
-  padding: 6px 4px;
+  padding: 5px 2px;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 4px;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brochure-editor-move-btn:hover:not(:disabled) { background: var(--bg); }
 .brochure-editor-move-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
+.brochure-editor-thumb-hero-btn {
+  margin: 4px 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #d4af37;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.brochure-editor-thumb-hero-btn:hover { background: #fef3c7; }
 .brochure-editor-thumb-overlay {
   position: absolute;
   inset: 0 0 auto 0;
