@@ -674,6 +674,15 @@
     var id = params.get('id');
     var slug = params.get('slug');
 
+    // Vercel rewrites only change what file is served — the browser URL keeps
+    // its original /brochures/<slug> form, so window.location.search is empty
+    // even though we rewrote to /brochure.html?slug=…. Fall back to parsing
+    // the pathname directly.
+    if (!id && !slug) {
+      var pathMatch = window.location.pathname.match(/^\/brochures\/([^/?#]+)/);
+      if (pathMatch) slug = decodeURIComponent(pathMatch[1]);
+    }
+
     if (!id && !slug) {
       showError('Missing Property ID', 'No property ID was provided. Please check the link and try again.');
       return;
