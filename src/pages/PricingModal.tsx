@@ -47,6 +47,21 @@ export default function PricingModal({ property, onClose, supabase }) {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
+  // Expiry — default today + 7 days in local tz (D7)
+  const defaultExpiry = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  };
+  const [expiryDate, setExpiryDate] = useState<string>(defaultExpiry());
+
+  // Duplicate-flow banner (D6): surfaces when a reused proposal refers
+  // to an agent / channel that no longer exists.
+  const [staleBanner, setStaleBanner] = useState<string>('');
+
+  // Per-row status-change errors (surfaced inline on the proposals tab)
+  const [statusError, setStatusError] = useState<string>('');
+
   const currentYear = new Date().getFullYear();
 
   // ── Load all data ──
@@ -61,7 +76,7 @@ export default function PricingModal({ property, onClose, supabase }) {
           supabase.from('season_tags').select('*').or(`property_id.eq.${property.id},property_id.is.null`).order('start_date'),
           supabase.from('agents').select('*').order('name'),
           supabase.from('channel_profiles').select('*').eq('property_id', property.id).order('platform_name'),
-          supabase.from('pricing_proposals').select('*').eq('property_id', property.id).order('created_at', { ascending: false }),
+          supabase.from('pricing_proposals_with_computed_status').select('*').eq('property_id', property.id).order('created_at', { ascending: false }),
           supabase.from('vat_settings').select('*').limit(1).maybeSingle(),
         ]);
 
@@ -151,12 +166,16 @@ export default function PricingModal({ property, onClose, supabase }) {
         scenario_type: scenarioType,
         agent_id: scenarioType === 'agent' ? selectedAgentId || null : null,
         channel_profile_id: scenarioType === 'platform' ? selectedChannelId || null : null,
+        // Originals (always):
         baseline_used: currentBaseline,
         baseline_mode: baselineMode,
+        commission_pct: commissionPct,
+        // Overrides (nullable):
+        reduced_baseline: reducedBaseline !== '' ? Number(reducedBaseline) : null,
+        reduced_commission_pct: reducedCommission !== '' ? Number(reducedCommission) : null,
         season_tag: selectedSeason || null,
         season_multiplier: seasonMultiplier,
         calc_method: calcMethod,
-        commission_pct: reducedCommission !== '' ? Number(reducedCommission) : commissionPct,
         owner_net: breakdown.ownerNet,
         company_take: breakdown.companyTake,
         client_price_excl_vat: breakdown.clientPriceExclVat,
@@ -165,15 +184,25 @@ export default function PricingModal({ property, onClose, supabase }) {
         vat_amount: breakdown.vatAmount,
         client_price_incl_vat: breakdown.clientPriceInclVat,
         status: 'draft',
+        expiry_date: expiryDate || null,
         notes: proposalNotes.trim() || null,
       };
 
-      const { data, error } = await supabase.from('pricing_proposals').insert(payload).select();
-      if (error) throw error;
+      const { error: insertErr } = await supabase.from('pricing_proposals').insert(payload);
+      if (insertErr) throw insertErr;
 
-      setProposals((prev) => [data[0], ...prev]);
+      // Re-read from the view so the new row carries computed_status for display.
+      const { data: refreshed } = await supabase
+        .from('pricing_proposals_with_computed_status')
+        .select('*')
+        .eq('property_id', property.id)
+        .order('created_at', { ascending: false });
+      if (refreshed) setProposals(refreshed);
+
       setSaveMessage('Proposal created');
       setProposalNotes('');
+      setStaleBanner('');
+      setExpiryDate(defaultExpiry());
       setTimeout(() => setSaveMessage(''), 3000);
     } catch (err) {
       console.error('Error creating proposal:', err);
@@ -185,19 +214,82 @@ export default function PricingModal({ property, onClose, supabase }) {
 
   // ── Update proposal status ──
   async function handleStatusChange(proposalId: string, newStatus: string) {
+    setStatusError('');
     try {
       const { error } = await supabase
         .from('pricing_proposals')
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', proposalId);
       if (error) throw error;
-      setProposals((prev) =>
-        prev.map((p) => (p.id === proposalId ? { ...p, status: newStatus, updated_at: new Date().toISOString() } : p))
-      );
+      // Refetch from the view so computed_status reflects the new state.
+      const { data: refreshed } = await supabase
+        .from('pricing_proposals_with_computed_status')
+        .select('*')
+        .eq('property_id', property.id)
+        .order('created_at', { ascending: false });
+      if (refreshed) setProposals(refreshed);
     } catch (err) {
       console.error('Error updating proposal:', err);
-      alert('Failed to update: ' + err.message);
+      const raw = err?.message || String(err);
+      // Friendly messages for our trigger raises.
+      let msg = raw;
+      if (raw.includes('PROPOSAL_ILLEGAL_TRANSITION')) {
+        msg = `That status change isn't allowed (${raw.split(':').slice(-1)[0].trim()}).`;
+      } else if (raw.includes('PROPOSAL_IMMUTABLE')) {
+        msg = 'This proposal is locked. Only status, notes, and the expiry date can change after it is saved.';
+      }
+      setStatusError(msg);
+      setTimeout(() => setStatusError(''), 5000);
     }
+  }
+
+  // ── Prefill from an existing proposal (Duplicate flow, D6) ──
+  function handleDuplicate(row: PricingProposal) {
+    const banners: string[] = [];
+    setBaselineMode(row.baseline_mode);
+    setSelectedSeason(row.season_tag || '');
+    setCalcMethod(row.calc_method);
+    setCommissionPct(Number(row.commission_pct));
+
+    // Scenario + relations (may be stale).
+    let nextScenario = row.scenario_type;
+    let nextAgent = '';
+    let nextChannel = '';
+    if (row.scenario_type === 'agent') {
+      if (row.agent_id && agents.some((a) => a.id === row.agent_id)) {
+        nextAgent = row.agent_id;
+      } else if (row.agent_id) {
+        banners.push('the original agent is no longer available');
+        setCommissionPct(0);
+      }
+    } else if (row.scenario_type === 'platform') {
+      if (row.channel_profile_id && channels.some((c) => c.id === row.channel_profile_id)) {
+        nextChannel = row.channel_profile_id;
+      } else if (row.channel_profile_id) {
+        banners.push('the original channel is no longer available');
+        nextScenario = 'direct';
+      }
+    }
+    setScenarioType(nextScenario);
+    setSelectedAgentId(nextAgent);
+    setSelectedChannelId(nextChannel);
+
+    // Overrides + notes.
+    setReducedBaseline(row.reduced_baseline != null ? String(row.reduced_baseline) : '');
+    setReducedCommission(row.reduced_commission_pct != null ? String(row.reduced_commission_pct) : '');
+    setShowOverrides(row.reduced_baseline != null || row.reduced_commission_pct != null);
+    setProposalNotes(row.notes || '');
+
+    // New proposal resets these:
+    setExpiryDate(defaultExpiry());
+    setStaleBanner(
+      banners.length
+        ? `The original ${banners.join(' and ')} for this proposal. Please review before saving.`
+        : ''
+    );
+
+    // Jump to calculator tab.
+    setActiveTab('calculator');
   }
 
   const fmt = (n: number) => `R${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -220,8 +312,8 @@ export default function PricingModal({ property, onClose, supabase }) {
       render: (row) => fmt(row.client_price_incl_vat),
     },
     {
-      key: 'status', label: 'Status', align: 'center',
-      render: (row) => <StatusBadge status={row.status} config={PRICING_PROPOSAL_STATUS_CONFIG} />,
+      key: 'computed_status', label: 'Status', align: 'center',
+      render: (row) => <StatusBadge status={row.computed_status || row.status} config={PRICING_PROPOSAL_STATUS_CONFIG} />,
     },
     {
       key: 'expiry_date', label: 'Expiry', hideOnMobile: true,
@@ -272,6 +364,22 @@ export default function PricingModal({ property, onClose, supabase }) {
         <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
           {activeTab === 'calculator' && (
             <div className="pricing-layout">
+              {staleBanner && (
+                <div
+                  style={{
+                    gridColumn: '1 / -1',
+                    padding: '10px 12px',
+                    background: '#FEF3C7',
+                    color: '#92400E',
+                    border: '1px solid #FCD34D',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.8125rem',
+                    marginBottom: '8px',
+                  }}
+                >
+                  ⚠ {staleBanner}
+                </div>
+              )}
               {/* ── LEFT PANEL: Inputs ── */}
               <div className="pricing-inputs">
                 {/* Baseline */}
@@ -460,6 +568,19 @@ export default function PricingModal({ property, onClose, supabase }) {
                   )}
                 </div>
 
+                {/* Expiry */}
+                <div className="pricing-section">
+                  <div className="form-group">
+                    <label className="form-label">Valid Until</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={expiryDate}
+                      onChange={(e) => setExpiryDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+
                 {/* Notes */}
                 <div className="pricing-section">
                   <div className="form-group">
@@ -567,6 +688,21 @@ export default function PricingModal({ property, onClose, supabase }) {
 
           {activeTab === 'proposals' && (
             <div>
+              {statusError && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: '#FEE2E2',
+                    color: '#991B1B',
+                    border: '1px solid #FCA5A5',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.8125rem',
+                    marginBottom: '8px',
+                  }}
+                >
+                  {statusError}
+                </div>
+              )}
               {proposals.length === 0 ? (
                 <div className="empty-state">
                   <p className="empty-state-message">No pricing proposals yet. Use the calculator to create one.</p>
@@ -580,31 +716,55 @@ export default function PricingModal({ property, onClose, supabase }) {
                   defaultSort={{ key: 'created_at', direction: 'desc' }}
                   pageSize={10}
                   emptyMessage="No proposals."
-                  actions={(row) => (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      {row.status === 'draft' && (
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px' }} onClick={() => handleStatusChange(row.id, 'live')}>
-                          Go Live
+                  actions={(row) => {
+                    const display = row.computed_status || row.status;
+                    const stored = row.status;
+                    return (
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {stored === 'draft' && (
+                          <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px' }} onClick={() => handleStatusChange(row.id, 'live')}>
+                            Go Live
+                          </button>
+                        )}
+                        {stored === 'live' && display === 'live' && (
+                          <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px' }} onClick={() => handleStatusChange(row.id, 'accepted')}>
+                            Accept
+                          </button>
+                        )}
+                        {stored === 'live' && (
+                          <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px', color: '#92400E' }} onClick={() => handleStatusChange(row.id, 'expired')}>
+                            Mark Expired
+                          </button>
+                        )}
+                        {(stored === 'draft' || stored === 'live' || stored === 'accepted' || stored === 'expired') && (
+                          <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px', color: 'var(--text-light)' }} onClick={() => handleStatusChange(row.id, 'archived')}>
+                            Archive
+                          </button>
+                        )}
+                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px' }} onClick={() => handleDuplicate(row)}>
+                          Duplicate
                         </button>
-                      )}
-                      {row.status === 'live' && (
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px' }} onClick={() => handleStatusChange(row.id, 'accepted')}>
-                          Accept
-                        </button>
-                      )}
-                      {(row.status === 'draft' || row.status === 'live') && (
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '2px 6px', color: 'var(--text-light)' }} onClick={() => handleStatusChange(row.id, 'archived')}>
-                          Archive
-                        </button>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  }}
                   renderSubRow={(row) => (
                     <div className="pricing-proposal-detail">
                       <div className="pricing-proposal-detail-grid">
-                        <div><span className="form-label">Baseline</span><br />{fmt(row.baseline_used)} ({row.baseline_mode})</div>
+                        <div>
+                          <span className="form-label">Baseline</span><br />
+                          {row.reduced_baseline != null
+                            ? <><strong>{fmt(row.reduced_baseline)}</strong> <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>(reduced from {fmt(row.baseline_used)})</span></>
+                            : <>{fmt(row.baseline_used)}</>
+                          } ({row.baseline_mode})
+                        </div>
                         <div><span className="form-label">Season</span><br />{row.season_tag || 'None'} ({row.season_multiplier}x)</div>
-                        <div><span className="form-label">Method</span><br />{row.calc_method} @ {row.commission_pct}%</div>
+                        <div>
+                          <span className="form-label">Method</span><br />
+                          {row.calc_method} @ {row.reduced_commission_pct != null
+                            ? <><strong>{row.reduced_commission_pct}%</strong> <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>(reduced from {row.commission_pct}%)</span></>
+                            : <>{row.commission_pct}%</>
+                          }
+                        </div>
                         <div><span className="form-label">Owner Net</span><br />{fmt(row.owner_net)}</div>
                         <div><span className="form-label">Company Take</span><br />{fmt(row.company_take)}</div>
                         <div><span className="form-label">Client (excl)</span><br />{fmt(row.client_price_excl_vat)}</div>

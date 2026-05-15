@@ -110,7 +110,12 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       });
       setNewBaseline({ year: currentYear, daily_rate: '', monthly_rate: '' });
     } catch (err) {
-      alert('Failed to save baseline: ' + err.message);
+      const raw = err?.message || String(err);
+      if (raw.includes('BASELINE_LOCKED')) {
+        alert('This baseline is locked. Unlock it first to make changes.');
+      } else {
+        alert('Failed to save baseline: ' + raw);
+      }
     }
   }
 
@@ -130,7 +135,12 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       if (error) throw error;
       setBaselines((prev) => prev.filter((b) => b.id !== id));
     } catch (err) {
-      alert('Failed to delete: ' + err.message);
+      const raw = err?.message || String(err);
+      if (raw.includes('BASELINE_LOCKED')) {
+        alert('This baseline is locked. Unlock it first to delete it.');
+      } else {
+        alert('Failed to delete: ' + raw);
+      }
     }
   }
 

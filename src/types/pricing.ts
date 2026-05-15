@@ -48,12 +48,14 @@ export interface PricingProposal {
   scenario_type: 'direct' | 'agent' | 'platform';
   agent_id: string | null;
   channel_profile_id: string | null;
-  baseline_used: number;
+  baseline_used: number;                 // ORIGINAL baseline at time of save
   baseline_mode: 'daily' | 'monthly';
   season_tag: string | null;
   season_multiplier: number;
   calc_method: 'margin' | 'markup';
-  commission_pct: number;
+  commission_pct: number;                // ORIGINAL commission at time of save
+  reduced_baseline: number | null;       // Override baseline (owner concession)
+  reduced_commission_pct: number | null; // Override commission (reduced concession)
   owner_net: number;
   company_take: number;
   client_price_excl_vat: number;
@@ -66,6 +68,8 @@ export interface PricingProposal {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Present only when reading from pricing_proposals_with_computed_status:
+  computed_status?: PricingProposalStatus;
 }
 
 export interface VatSettings {
