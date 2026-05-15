@@ -421,6 +421,20 @@
     try { return JSON.parse(val); } catch(e) { return []; }
   }
 
+  // Airbnb's muscache CDN serves the full original resolution when no size
+  // hint is present in the URL. For a 100-photo gallery that's hundreds of
+  // megabytes; the browser falls over before any image paints. Append a
+  // reasonable width hint so the CDN returns a sensible size. Supabase
+  // Storage URLs are left untouched — they're already correctly sized.
+  function sizedImgUrl(url, w) {
+    if (!url || typeof url !== 'string') return url;
+    if (url.indexOf('muscache.com') === -1) return url;
+    // Don't double-up if the URL already has a size hint.
+    if (/[?&]im_w=/.test(url)) return url;
+    var sep = url.indexOf('?') === -1 ? '?' : '&';
+    return url + sep + 'im_w=' + w;
+  }
+
   // Read image_metadata for a given URL. Missing entry == default (caption '',
   // show_in_brochure true) so untouched legacy properties behave as before.
   function imageMeta(meta, url) {
@@ -455,7 +469,7 @@
         var item = items[i];
         var figClass = 'br-gallery-fig' + (i === 0 ? ' br-gallery-full' : '');
         chunk += '<figure class="' + figClass + '">';
-        chunk += '<img src="' + esc(item.url) + '" alt="' + esc(propertyName) + ' - Photo ' + (i + 1) + '" loading="lazy">';
+        chunk += '<img src="' + esc(sizedImgUrl(item.url, 1200)) + '" alt="' + esc(propertyName) + ' - Photo ' + (i + 1) + '" loading="lazy">';
         if (item.caption) {
           chunk += '<figcaption class="br-gallery-caption">' + esc(item.caption) + '</figcaption>';
         }
@@ -515,7 +529,7 @@
     var heroImg = p.hero_image_url || (gallery.length ? gallery[0] : '');
     html += '<section class="br-hero">';
     if (heroImg) {
-      html += '<img class="br-hero-img" src="' + esc(heroImg) + '" alt="' + esc(p.property_name) + '">';
+      html += '<img class="br-hero-img" src="' + esc(sizedImgUrl(heroImg, 1920)) + '" alt="' + esc(p.property_name) + '">';
     }
     html += '<div class="br-hero-overlay"></div>';
     html += '<div class="br-hero-content">';

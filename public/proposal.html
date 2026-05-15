@@ -427,6 +427,17 @@
   });
 
   // ── Intersection Observer for reveal ──
+  // Cap muscache.com image fetches to a sensible width so a property with
+  // a 100+ photo gallery doesn't try to pull hundreds of MB of originals
+  // and time out before painting. See brochure.html for the same fix.
+  function sizedImgUrl(url, w) {
+    if (!url || typeof url !== 'string') return url;
+    if (url.indexOf('muscache.com') === -1) return url;
+    if (/[?&]im_w=/.test(url)) return url;
+    var sep = url.indexOf('?') === -1 ? '?' : '&';
+    return url + sep + 'im_w=' + w;
+  }
+
   function initReveal() {
     var items = document.querySelectorAll('.reveal');
     if (!('IntersectionObserver' in window)) {
@@ -506,7 +517,7 @@
     // Section 1 - HERO
     html += '<section class="pos-hero">';
     if (pr.hero_image_url) {
-      html += '<img class="pos-hero-img" src="' + esc(pr.hero_image_url) + '" alt="' + esc(pr.property_name) + '">';
+      html += '<img class="pos-hero-img" src="' + esc(sizedImgUrl(pr.hero_image_url, 1920)) + '" alt="' + esc(pr.property_name) + '">';
     }
     html += '<div class="pos-hero-overlay"></div>';
     html += '<div class="pos-hero-content">';
@@ -564,7 +575,7 @@
       for (var i = 0; i < visibleGallery.length; i++) {
         var gItem = visibleGallery[i];
         html += '<figure class="pos-gallery-fig">';
-        html += '<img src="' + esc(gItem.url) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
+        html += '<img src="' + esc(sizedImgUrl(gItem.url, 1200)) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
         if (gItem.caption) {
           html += '<figcaption class="pos-gallery-caption">' + esc(gItem.caption) + '</figcaption>';
         }
