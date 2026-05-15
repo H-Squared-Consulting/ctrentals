@@ -620,15 +620,18 @@
       var gm = imageMeta(imgMeta, gallery[gi]);
       if (gm.show) visibleGallery.push({ url: gallery[gi], caption: gm.caption });
     }
-    // In preview mode (iframe inside the admin editor) cap the gallery to a
-    // representative subset — mom is reviewing layout, not browsing every
-    // photo, and rendering 100+ images can stall the iframe on some browsers.
-    // The public brochure URL (no &preview=1) still renders the full set.
+    // Hard cap the gallery at a reasonable number of photos. Properties
+    // scraped from Airbnb can have 70+ photos; loading all of them in a
+    // single page kills the browser before anything paints. The first N in
+    // gallery_images is what mom has curated to the top of the lineup via
+    // the Brochure editor, so this is the photo set she wants to feature.
+    var HARD_CAP = 30;
     var PREVIEW_CAP = 24;
     var isPreviewMode = /[?&]preview=1\b/.test(window.location.search);
     var galleryTruncated = false;
-    if (isPreviewMode && visibleGallery.length > PREVIEW_CAP) {
-      visibleGallery = visibleGallery.slice(0, PREVIEW_CAP);
+    var cap = isPreviewMode ? PREVIEW_CAP : HARD_CAP;
+    if (visibleGallery.length > cap) {
+      visibleGallery = visibleGallery.slice(0, cap);
       galleryTruncated = true;
     }
     if (!cfg.hide('gallery') && visibleGallery.length > 0) {
@@ -637,8 +640,8 @@
       html += '<h2 class="br-gallery-heading">Gallery</h2>';
       html += '<div class="br-gallery-rule"></div>';
       html += '<div class="br-gallery-grid" id="br-gallery-grid"></div>';
-      if (galleryTruncated) {
-        html += '<div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-light);font-style:italic">Preview shows first ' + PREVIEW_CAP + ' photos. The full brochure includes all photos.</div>';
+      if (galleryTruncated && isPreviewMode) {
+        html += '<div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-light);font-style:italic">Preview shows first ' + cap + ' photos.</div>';
       }
       html += '</section>';
     } else {
