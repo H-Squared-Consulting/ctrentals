@@ -125,7 +125,6 @@ let suburb = null;
 const seoSec = sections.find(s => s.section?.__typename === 'SeoLinksSection')?.section;
 const breadcrumbs = seoSec?.breadcrumbs ?? [];
 if (breadcrumbs.length >= 5) suburb = breadcrumbs[breadcrumbs.length - 1].title?.trim() || null;
-if (suburbMatch && !suburb) suburb = suburbMatch[1].trim();
 
 // Rating / review count
 const overview = sectionById('OVERVIEW_DEFAULT_V2') || sections.find(s => s.section?.overviewItems);
