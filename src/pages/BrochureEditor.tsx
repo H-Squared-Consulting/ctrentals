@@ -185,11 +185,15 @@ export default function BrochureEditor({ property, onClose, onSave, supabase }) 
         throw new Error('No rows updated — your account may not have permission to edit this property.');
       }
       setSavedConfirm(true);
-      // NB: deliberately not calling onSave() here. The parent's loadProperties()
-      // flips a `loading` flag that replaces the whole PropertiesPage tree with
-      // a spinner — that would unmount this editor and lose savedConfirm + the
-      // local edit state. Property cards don't display anything derived from
-      // brochure_config / image_metadata, so the refresh is gratuitous.
+      // Hand the parent the patched property snapshot so the next time this
+      // property is opened (without a hard refresh) the editor sees the
+      // freshly-saved values, not the pre-save snapshot. Going through
+      // loadProperties() would flip a `loading` flag and unmount this editor
+      // mid-flow, so we update in place instead.
+      if (onSave) {
+        const updated = { ...property, brochure_config: draftConfig, image_metadata: imageMeta };
+        Promise.resolve(onSave(updated)).catch(() => {});
+      }
     } catch (err: any) {
       alert('Failed to save brochure layout: ' + (err?.message || err));
     } finally {

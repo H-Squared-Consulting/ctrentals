@@ -331,7 +331,14 @@ export default function PropertiesPage() {
         <BrochureEditor
           property={brochureProperty}
           onClose={() => setBrochureProperty(null)}
-          onSave={async () => { await loadProperties(); }}
+          onSave={(updated: any) => {
+            // Patch in place instead of calling loadProperties() — the latter
+            // flips a `loading` flag and replaces this whole tree with a
+            // spinner, unmounting the editor mid-save. Updating these slots
+            // ensures the next re-open reads the freshly-saved snapshot.
+            setProperties((prev) => prev.map((p) => p.id === updated.id ? { ...p, ...updated } : p));
+            setBrochureProperty((prev: any) => prev && prev.id === updated.id ? { ...prev, ...updated } : prev);
+          }}
           supabase={supabase}
         />
       )}
