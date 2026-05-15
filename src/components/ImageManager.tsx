@@ -7,6 +7,41 @@
 import { useState, useEffect, useRef } from 'react';
 
 const BUCKET = 'property-images';
+const MAX_DIM = 1920;        // long-edge pixel cap for on-upload compression
+const JPEG_QUALITY = 0.82;   // visually lossless-ish for photos
+const GRID_INITIAL = 12;     // thumbs shown before "Show all" is tapped
+
+// Resize a File in the browser via <canvas> so uploads are small enough for
+// the admin UI to actually render. Leaves non-raster files untouched.
+async function compressImageFile(file) {
+  try {
+    if (!file.type.startsWith('image/')) return file;
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_DIM / Math.max(bitmap.width, bitmap.height));
+    // If the image is already small enough, skip the re-encode.
+    if (scale === 1 && file.size < 600_000) return file;
+
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+
+    const blob = await new Promise((res) =>
+      canvas.toBlob((b) => res(b), 'image/jpeg', JPEG_QUALITY)
+    );
+    if (!blob) return file;
+    // Rewrite extension to .jpg since we just encoded as JPEG.
+    const baseName = file.name.replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  } catch (err) {
+    console.warn('[ImageManager] compress failed, uploading original:', err);
+    return file;
+  }
+}
 
 export default function ImageManager({ propertyId, heroImage, galleryImages, onHeroChange, onGalleryChange, supabase }) {
   // Master list of all image URLs — initialized once from props, then managed internally
@@ -19,7 +54,9 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
   const [currentHero, setCurrentHero] = useState(heroImage || null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadCounter, setUploadCounter] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [dragOver, setDragOver] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const fileRef = useRef(null);
 
   // Push changes up to parent whenever hero or allImages changes
@@ -33,48 +70,97 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
     return data?.publicUrl || '';
   }
 
-  async function uploadFiles(files) {
-    if (!files || files.length === 0) return;
+  async function uploadFiles(fileList) {
+    // Snapshot the FileList into a stable array up front — the input's
+    // FileList is live and can be yanked out from under the loop.
+    const files = Array.from(fileList || []);
+    console.log('[ImageManager] uploadFiles called with', files.length, 'file(s):',
+      files.map((f) => `${f.name} (${f.type || 'no-type'}, ${f.size}B)`));
+    if (files.length === 0) return;
+
     setUploading(true);
     setUploadProgress(0);
+    setUploadCounter({ done: 0, total: files.length });
 
     const folder = propertyId || 'temp-' + Date.now();
     const newUrls = [];
+    const failures = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file.type.startsWith('image/')) continue;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
 
-      const ext = file.name.split('.').pop() || 'jpg';
-      const fileName = `${folder}/${Date.now()}-${i}.${ext}`;
+        // Tell the UI we're STARTING file i+1 of N before we await, so the
+        // "2 of 4" label paints during the slow network call, not after.
+        setUploadCounter({ done: i + 1, total: files.length });
+        console.log(`[ImageManager] starting file ${i + 1}/${files.length}: ${file.name}`);
 
-      const { error } = await supabase.storage.from(BUCKET).upload(fileName, file, {
-        cacheControl: '3600',
-        upsert: false,
-      });
+        // Per-file try/catch — one bad file must never abort the whole batch.
+        try {
+          if (!file.type || !file.type.startsWith('image/')) {
+            failures.push(`${file.name}: not an image (type "${file.type || 'unknown'}")`);
+          } else {
+            // Resize/re-encode client-side BEFORE upload so the grid isn't
+            // forced to decode 20 MB originals later.
+            const compressed = await compressImageFile(file);
+            const ext = (compressed.name.split('.').pop() || 'jpg').toLowerCase();
+            const unique =
+              (typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+            const fileName = `${folder}/${unique}.${ext}`;
 
-      if (!error) {
-        newUrls.push(getPublicUrl(fileName));
-      } else {
-        console.error('Upload error:', error.message);
+            const { error } = await supabase.storage.from(BUCKET).upload(fileName, compressed, {
+              cacheControl: '31536000',
+              upsert: false,
+              contentType: compressed.type,
+            });
+
+            if (error) {
+              console.error(`Upload error for ${file.name}:`, error.message);
+              failures.push(`${file.name}: ${error.message}`);
+            } else {
+              newUrls.push(getPublicUrl(fileName));
+            }
+          }
+        } catch (fileErr) {
+          console.error(`Upload threw for ${file.name}:`, fileErr);
+          failures.push(`${file.name}: ${fileErr?.message || fileErr}`);
+        }
+
+        // Tick the progress bar once this file resolves.
+        setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+        console.log(`[ImageManager] finished file ${i + 1}/${files.length}`);
       }
-      setUploadProgress(Math.round(((i + 1) / files.length) * 100));
-    }
+      console.log(`[ImageManager] loop done. Uploaded ${newUrls.length}/${files.length}. Failures:`, failures);
 
-    if (newUrls.length > 0) {
-      const updated = [...allImages, ...newUrls];
-      const hero = currentHero || newUrls[0];
-      setAllImages(updated);
-      setCurrentHero(hero);
-      syncToParent(hero, updated);
-    }
+      if (newUrls.length > 0) {
+        const updated = [...allImages, ...newUrls];
+        const hero = currentHero || newUrls[0];
+        setAllImages(updated);
+        setCurrentHero(hero);
+        syncToParent(hero, updated);
+      }
 
-    setUploading(false);
-    setUploadProgress(0);
+      if (failures.length > 0) {
+        alert(
+          `${newUrls.length} of ${files.length} image${files.length === 1 ? '' : 's'} uploaded.\n\n` +
+          `Failed:\n• ${failures.join('\n• ')}`
+        );
+      }
+    } finally {
+      // Always unlock the UI — even if something unexpected happened above.
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadCounter({ done: 0, total: 0 });
+    }
   }
 
-  function handleFileSelect(e) {
-    uploadFiles(e.target.files);
+  async function handleFileSelect(e) {
+    // Snapshot first; only clear the input AFTER uploadFiles has returned,
+    // so the live FileList isn't yanked out from under the upload loop.
+    const picked = e.target.files;
+    await uploadFiles(picked);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -108,7 +194,7 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
         <div className="img-manager-label">Hero Image (Cover Photo)</div>
         {currentHero ? (
           <div className="img-hero-preview">
-            <img src={currentHero} alt="Hero" />
+            <img src={currentHero} alt="Hero" loading="lazy" decoding="async" />
             <div className="img-hero-overlay">
               <span className="img-hero-badge">HERO</span>
             </div>
@@ -129,38 +215,78 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
         {uploading ? (
           <div className="img-upload-progress">
             <div className="img-upload-progress-bar" style={{ width: `${uploadProgress}%` }} />
-            <span>Uploading... {uploadProgress}%</span>
+            <span>
+              {uploadCounter.total > 1
+                ? `Uploading ${uploadCounter.done} of ${uploadCounter.total}... ${uploadProgress}%`
+                : `Uploading... ${uploadProgress}%`}
+            </span>
           </div>
         ) : (
           <>
             <div style={{ fontSize: '1.5rem', marginBottom: '4px' }}>📷</div>
             <div style={{ fontWeight: 600, fontSize: '0.8125rem' }}>Drop images here or click to upload</div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>JPG, PNG, or WebP</div>
+            <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>
+              JPG, PNG, or WebP — pick or drop multiple files at once
+            </div>
           </>
         )}
         <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
       </div>
 
       {/* Image grid */}
-      {allImages.length > 0 && (
-        <>
-          <div className="img-manager-label" style={{ marginTop: '12px' }}>
-            All Images ({allImages.length}) — click to set as hero
-          </div>
-          <div className="img-grid">
-            {allImages.map((url, i) => {
-              const isHero = url === currentHero;
-              return (
-                <div key={url} className={`img-grid-item ${isHero ? 'img-grid-item--hero' : ''}`}>
-                  <img src={url} alt={`Image ${i + 1}`} onClick={() => setAsHero(url)} />
-                  {isHero && <span className="img-grid-badge">HERO</span>}
-                  <button className="img-grid-remove" onClick={(e) => { e.stopPropagation(); removeImage(url); }} title="Remove">✕</button>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+      {allImages.length > 0 && (() => {
+        // Always show the hero first, then the rest. When the gallery is large,
+        // only paint the first GRID_INITIAL thumbs until the user taps "Show all"
+        // — decoding 37+ multi-MB images at once locks up the modal.
+        const ordered = currentHero
+          ? [currentHero, ...allImages.filter((u) => u !== currentHero)]
+          : allImages;
+        const visible = showAll ? ordered : ordered.slice(0, GRID_INITIAL);
+        const hiddenCount = ordered.length - visible.length;
+        return (
+          <>
+            <div className="img-manager-label" style={{ marginTop: '12px' }}>
+              All Images ({allImages.length}) — click to set as hero
+            </div>
+            <div className="img-grid">
+              {visible.map((url, i) => {
+                const isHero = url === currentHero;
+                return (
+                  <div key={url} className={`img-grid-item ${isHero ? 'img-grid-item--hero' : ''}`}>
+                    <img
+                      src={url}
+                      alt={`Image ${i + 1}`}
+                      loading="lazy"
+                      decoding="async"
+                      onClick={() => setAsHero(url)}
+                    />
+                    {isHero && <span className="img-grid-badge">HERO</span>}
+                    <button className="img-grid-remove" onClick={(e) => { e.stopPropagation(); removeImage(url); }} title="Remove">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+            {hiddenCount > 0 && (
+              <button
+                className="btn btn-ghost"
+                style={{ marginTop: '8px', fontSize: '0.8125rem' }}
+                onClick={() => setShowAll(true)}
+              >
+                Show all {ordered.length} images ({hiddenCount} hidden)
+              </button>
+            )}
+            {showAll && ordered.length > GRID_INITIAL && (
+              <button
+                className="btn btn-ghost"
+                style={{ marginTop: '8px', fontSize: '0.8125rem' }}
+                onClick={() => setShowAll(false)}
+              >
+                Collapse to first {GRID_INITIAL}
+              </button>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
