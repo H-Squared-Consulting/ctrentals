@@ -274,60 +274,97 @@ export default function BrochureEditor({ property, onClose, onSave, supabase }) 
           </div>
         </div>
 
-        {/* ── Photo strip (drag to reorder) ── */}
+        {/* ── Hero + Gallery strip ── */}
         <div className="brochure-editor-strip">
           <div className="brochure-editor-strip-header">
-            <div className="brochure-editor-section-title">Photo lineup — drag to reorder</div>
+            <div className="brochure-editor-section-title">Photos in this brochure</div>
             <div className="brochure-editor-section-hint">
-              Drag any photo left or right to change its position. The first photo gets the big "feature" slot at the top of the gallery.
+              The <strong>Hero</strong> photo appears at the top of the brochure.
+              Change it in the property editor. The Gallery photos below appear in the order shown — use the
+              <strong> ← Earlier</strong> and <strong>Later →</strong> buttons (or drag) to rearrange.
             </div>
           </div>
-          {order.length === 0 ? (
-            <div className="brochure-editor-empty">No gallery photos yet. Add some in the property editor.</div>
-          ) : (
+
+          <div className="brochure-editor-strip-row">
+            {/* Hero card — informational only, no controls. */}
+            {property.hero_image_url ? (
+              <div className="brochure-editor-hero-card">
+                <div className="brochure-editor-hero-label">HERO</div>
+                <img src={property.hero_image_url} alt="Hero" loading="lazy" />
+                <div className="brochure-editor-hero-note">Set in property editor</div>
+              </div>
+            ) : (
+              <div className="brochure-editor-hero-card brochure-editor-hero-empty">
+                <div className="brochure-editor-hero-label">HERO</div>
+                <div className="brochure-editor-hero-note">No hero set — pick one in the property editor</div>
+              </div>
+            )}
+
             <div
-              className="brochure-editor-strip-row"
+              className="brochure-editor-gallery-list"
               onDragOver={(e) => { if (dragIndex !== null) e.preventDefault(); }}
               onDrop={onDropOnStrip}
             >
-              {order.map((url, idx) => {
-                const meta = imageMeta[url] || {};
-                const show = getShow(url);
-                const isDragging = dragIndex === idx;
-                const showInsertBefore = dropIndex === idx && dragIndex !== null && dragIndex !== idx && dragIndex !== idx - 1;
-                const showInsertAfter  = dropIndex === idx + 1 && dragIndex !== null && dragIndex !== idx && dragIndex !== idx + 1 && idx === order.length - 1;
-                return (
-                  <div key={url} className="brochure-editor-strip-slot">
-                    {showInsertBefore && <div className="brochure-editor-strip-marker" />}
-                    <div
-                      className={`brochure-editor-thumb ${idx === 0 ? 'is-feature' : ''} ${!show ? 'is-hidden' : ''} ${isDragging ? 'is-dragging' : ''}`}
-                      draggable
-                      onDragStart={(e) => onDragStart(idx, e)}
-                      onDragEnd={onDragEnd}
-                      onDragOver={(e) => onDragOverThumb(idx, e)}
-                    >
-                      <div className="brochure-editor-thumb-pos">{idx + 1}</div>
-                      <img src={url} alt={`Photo ${idx + 1}`} loading="lazy" draggable={false} />
-                      {idx === 0 && show && <div className="brochure-editor-thumb-badge">FEATURE</div>}
-                      {!show && <div className="brochure-editor-thumb-overlay">Excluded</div>}
-                      {meta.caption && (
-                        <div className="brochure-editor-thumb-caption" title={meta.caption}>{meta.caption}</div>
-                      )}
-                      <button
-                        className={`brochure-editor-thumb-toggle ${show ? 'is-on' : 'is-off'}`}
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); toggleInclude(url); }}
-                        title={show ? 'Click to exclude from brochure' : 'Click to include in brochure'}
+              {order.length === 0 ? (
+                <div className="brochure-editor-empty">No gallery photos yet. Add some in the property editor.</div>
+              ) : (
+                order.map((url, idx) => {
+                  const meta = imageMeta[url] || {};
+                  const show = getShow(url);
+                  const isDragging = dragIndex === idx;
+                  const showInsertBefore = dropIndex === idx && dragIndex !== null && dragIndex !== idx && dragIndex !== idx - 1;
+                  const showInsertAfter  = dropIndex === idx + 1 && dragIndex !== null && dragIndex !== idx && dragIndex !== idx + 1 && idx === order.length - 1;
+                  return (
+                    <div key={url} className="brochure-editor-strip-slot">
+                      {showInsertBefore && <div className="brochure-editor-strip-marker" />}
+                      <div
+                        className={`brochure-editor-thumb ${!show ? 'is-hidden' : ''} ${isDragging ? 'is-dragging' : ''}`}
+                        draggable
+                        onDragStart={(e) => onDragStart(idx, e)}
+                        onDragEnd={onDragEnd}
+                        onDragOver={(e) => onDragOverThumb(idx, e)}
                       >
-                        {show ? '✓ Included' : '+ Include'}
-                      </button>
+                        <img src={url} alt={`Photo ${idx + 1}`} loading="lazy" draggable={false} />
+                        {!show && <div className="brochure-editor-thumb-overlay">Excluded</div>}
+                        {meta.caption && (
+                          <div className="brochure-editor-thumb-caption" title={meta.caption}>{meta.caption}</div>
+                        )}
+                        <div className="brochure-editor-thumb-moverow">
+                          <button
+                            type="button"
+                            className="brochure-editor-move-btn"
+                            onClick={(e) => { e.stopPropagation(); performDrop(idx, idx - 1); }}
+                            disabled={idx === 0}
+                            title="Move earlier"
+                          >
+                            ← Earlier
+                          </button>
+                          <button
+                            type="button"
+                            className="brochure-editor-move-btn"
+                            onClick={(e) => { e.stopPropagation(); performDrop(idx, idx + 2); }}
+                            disabled={idx === order.length - 1}
+                            title="Move later"
+                          >
+                            Later →
+                          </button>
+                        </div>
+                        <button
+                          className={`brochure-editor-thumb-toggle ${show ? 'is-on' : 'is-off'}`}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleInclude(url); }}
+                          title={show ? 'Click to exclude from brochure' : 'Click to include in brochure'}
+                        >
+                          {show ? '✓ Included' : '+ Include'}
+                        </button>
+                      </div>
+                      {showInsertAfter && <div className="brochure-editor-strip-marker" />}
                     </div>
-                    {showInsertAfter && <div className="brochure-editor-strip-marker" />}
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* ── Post-save confirmation. Backdrop is no longer click-to-close —
