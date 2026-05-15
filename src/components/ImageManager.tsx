@@ -43,7 +43,7 @@ async function compressImageFile(file) {
   }
 }
 
-export default function ImageManager({ propertyId, heroImage, galleryImages, onHeroChange, onGalleryChange, supabase }) {
+export default function ImageManager({ propertyId, heroImage, galleryImages, imageMetadata, onHeroChange, onGalleryChange, onImageMetadataChange, supabase }) {
   // Master list of all image URLs — initialized once from props, then managed internally
   const [allImages, setAllImages] = useState(() => {
     const set = new Set();
@@ -52,6 +52,12 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
     return Array.from(set);
   });
   const [currentHero, setCurrentHero] = useState(heroImage || null);
+  // Per-image metadata: { [url]: { caption, show_in_brochure } }.
+  // Missing entry == { caption: '', show_in_brochure: true }, so old rows
+  // with a NULL/empty image_metadata behave exactly like before.
+  const [metadata, setMetadata] = useState(() =>
+    imageMetadata && typeof imageMetadata === 'object' ? { ...imageMetadata } : {}
+  );
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadCounter, setUploadCounter] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
@@ -60,9 +66,28 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
   const fileRef = useRef(null);
 
   // Push changes up to parent whenever hero or allImages changes
-  function syncToParent(hero, images) {
+  function syncToParent(hero, images, meta) {
     onHeroChange(hero || '');
     onGalleryChange(images.filter(u => u !== hero));
+    if (onImageMetadataChange) onImageMetadataChange(meta ?? metadata);
+  }
+
+  function getMeta(url) {
+    const m = metadata[url];
+    return {
+      caption: (m && typeof m.caption === 'string') ? m.caption : '',
+      show_in_brochure: !m || m.show_in_brochure !== false, // default true
+    };
+  }
+
+  function updateMeta(url, patch) {
+    setMetadata((prev) => {
+      const current = prev[url] || { caption: '', show_in_brochure: true };
+      const next = { ...prev, [url]: { ...current, ...patch } };
+      // Push to parent so it lands in the form payload on save.
+      if (onImageMetadataChange) onImageMetadataChange(next);
+      return next;
+    });
   }
 
   function getPublicUrl(path) {
@@ -139,7 +164,7 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
         const hero = currentHero || newUrls[0];
         setAllImages(updated);
         setCurrentHero(hero);
-        syncToParent(hero, updated);
+        syncToParent(hero, updated, metadata);
       }
 
       if (failures.length > 0) {
@@ -172,19 +197,24 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
 
   function setAsHero(url) {
     setCurrentHero(url);
-    syncToParent(url, allImages);
+    syncToParent(url, allImages, metadata);
   }
 
   function removeImage(url) {
     const updated = allImages.filter(u => u !== url);
     setAllImages(updated);
 
+    // Drop the metadata entry so dead caption strings don't ride along.
+    const nextMeta = { ...metadata };
+    delete nextMeta[url];
+    setMetadata(nextMeta);
+
     let hero = currentHero;
     if (url === currentHero) {
       hero = updated.length > 0 ? updated[0] : null;
       setCurrentHero(hero);
     }
-    syncToParent(hero, updated);
+    syncToParent(hero, updated, nextMeta);
   }
 
   return (
@@ -246,22 +276,46 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, onH
         return (
           <>
             <div className="img-manager-label" style={{ marginTop: '12px' }}>
-              All Images ({allImages.length}) — click to set as hero
+              All Images ({allImages.length}) — click an image to set as hero. Add a caption to label it on brochures and proposals. Untick "Show in brochures" to hide a photo from outputs.
             </div>
             <div className="img-grid">
               {visible.map((url, i) => {
                 const isHero = url === currentHero;
+                const m = getMeta(url);
                 return (
-                  <div key={url} className={`img-grid-item ${isHero ? 'img-grid-item--hero' : ''}`}>
-                    <img
-                      src={url}
-                      alt={`Image ${i + 1}`}
-                      loading="lazy"
-                      decoding="async"
-                      onClick={() => setAsHero(url)}
-                    />
-                    {isHero && <span className="img-grid-badge">HERO</span>}
-                    <button className="img-grid-remove" onClick={(e) => { e.stopPropagation(); removeImage(url); }} title="Remove">✕</button>
+                  <div key={url} className={`img-grid-card ${isHero ? 'img-grid-card--hero' : ''}`}>
+                    <div className={`img-grid-item ${isHero ? 'img-grid-item--hero' : ''}`}>
+                      <img
+                        src={url}
+                        alt={`Image ${i + 1}`}
+                        loading="lazy"
+                        decoding="async"
+                        onClick={() => setAsHero(url)}
+                      />
+                      {isHero && <span className="img-grid-badge">HERO</span>}
+                      <button className="img-grid-remove" onClick={(e) => { e.stopPropagation(); removeImage(url); }} title="Remove">✕</button>
+                    </div>
+                    <div className="img-grid-meta">
+                      <input
+                        type="text"
+                        className="form-input img-grid-caption"
+                        placeholder="Add a caption (e.g. Master bedroom)"
+                        value={m.caption}
+                        onChange={(e) => updateMeta(url, { caption: e.target.value })}
+                      />
+                      {isHero ? (
+                        <div className="img-grid-hero-note">Always shown in brochures</div>
+                      ) : (
+                        <label className="img-grid-toggle">
+                          <input
+                            type="checkbox"
+                            checked={m.show_in_brochure}
+                            onChange={(e) => updateMeta(url, { show_in_brochure: e.target.checked })}
+                          />
+                          <span>Show in brochures</span>
+                        </label>
+                      )}
+                    </div>
                   </div>
                 );
               })}

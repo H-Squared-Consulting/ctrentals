@@ -244,19 +244,24 @@
       '.br-gallery-grid {',
       '  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;',
       '}',
-      '.br-gallery-grid img {',
+      '.br-gallery-fig { margin: 0; display: flex; flex-direction: column; gap: 6px; }',
+      '.br-gallery-fig img {',
       '  width: 100%; height: 260px; object-fit: cover; border-radius: 8px;',
-      '  transition: transform 0.3s ease; cursor: pointer;',
+      '  transition: transform 0.3s ease; cursor: pointer; display: block;',
       '}',
-      '.br-gallery-grid img:hover { transform: scale(1.02); }',
-      '.br-gallery-grid img.br-gallery-full {',
-      '  grid-column: 1 / -1; height: 360px;',
+      '.br-gallery-fig img:hover { transform: scale(1.02); }',
+      '.br-gallery-fig.br-gallery-full { grid-column: 1 / -1; }',
+      '.br-gallery-fig.br-gallery-full img { height: 360px; }',
+      '.br-gallery-caption {',
+      '  font-size: 14px; color: var(--text-dark); text-align: center;',
+      '  font-style: italic; font-weight: 500; padding: 4px 4px 0;',
       '}',
       '@media (max-width: 767px) {',
       '  .br-gallery { padding: 32px 24px; }',
       '  .br-gallery-grid { grid-template-columns: 1fr; }',
-      '  .br-gallery-grid img { height: 220px; }',
-      '  .br-gallery-grid img.br-gallery-full { grid-column: auto; height: 240px; }',
+      '  .br-gallery-fig img { height: 220px; }',
+      '  .br-gallery-fig.br-gallery-full { grid-column: auto; }',
+      '  .br-gallery-fig.br-gallery-full img { height: 240px; }',
       '}',
 
       /* ── Section 5: AMENITIES ── */
@@ -416,11 +421,60 @@
     try { return JSON.parse(val); } catch(e) { return []; }
   }
 
+  // Read image_metadata for a given URL. Missing entry == default (caption '',
+  // show_in_brochure true) so untouched legacy properties behave as before.
+  function imageMeta(meta, url) {
+    if (!meta || typeof meta !== 'object') return { caption: '', show: true };
+    var m = meta[url];
+    if (!m || typeof m !== 'object') return { caption: '', show: true };
+    return {
+      caption: typeof m.caption === 'string' ? m.caption : '',
+      show: m.show_in_brochure !== false,
+    };
+  }
+
+  // Parse brochure_config: { hidden_sections: [...], photo_order: [...] }.
+  // Missing / null fields fall back to defaults — legacy rows render as before.
+  function readBrochureConfig(cfg) {
+    if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch(e) { cfg = {}; } }
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {};
+    var hidden = Array.isArray(cfg.hidden_sections) ? cfg.hidden_sections : [];
+    var order  = Array.isArray(cfg.photo_order) ? cfg.photo_order : null;
+    return {
+      hide: function(name) { return hidden.indexOf(name) !== -1; },
+      photoOrder: order,
+    };
+  }
+
   // ── Build brochure HTML ──
   function renderBrochure(p) {
     var gallery = parseJSON(p.gallery_images);
     var amenities = parseJSON(p.amenity_tags);
     var listingLinks = parseJSON(p.listing_links);
+    // image_metadata is jsonb — Supabase returns it as a parsed object.
+    var imgMeta = (p.image_metadata && typeof p.image_metadata === 'object' && !Array.isArray(p.image_metadata))
+      ? p.image_metadata
+      : (typeof p.image_metadata === 'string' ? (function(){ try { return JSON.parse(p.image_metadata) || {}; } catch(e) { return {}; } })() : {});
+    var cfg = readBrochureConfig(p.brochure_config);
+
+    // Apply photo_order if present. URLs not in the override list fall back
+    // to their original gallery position (appended at the end). URLs in the
+    // override that no longer exist in gallery are dropped.
+    if (cfg.photoOrder) {
+      var gallerySet = {};
+      for (var go = 0; go < gallery.length; go++) gallerySet[gallery[go]] = true;
+      var ordered = [];
+      var seen = {};
+      for (var po = 0; po < cfg.photoOrder.length; po++) {
+        var u = cfg.photoOrder[po];
+        if (gallerySet[u] && !seen[u]) { ordered.push(u); seen[u] = true; }
+      }
+      for (var go2 = 0; go2 < gallery.length; go2++) {
+        if (!seen[gallery[go2]]) ordered.push(gallery[go2]);
+      }
+      gallery = ordered;
+    }
+
     var html = '';
 
     // Section 1: HERO
@@ -450,7 +504,7 @@
     if (p.city) locationParts.push(p.city);
     var locationStr = locationParts.join(', ');
 
-    if (stats.length > 0 || locationStr) {
+    if (!cfg.hide('stats') && (stats.length > 0 || locationStr)) {
       html += '<section class="br-stats reveal">';
       if (stats.length > 0) {
         html += '<div class="br-stats-row">';
@@ -474,7 +528,7 @@
     if (!Array.isArray(bedSizes)) bedSizes = [];
     bedSizes = bedSizes.filter(function(b) { return b.room || b.bed; });
 
-    if (bedSizes.length > 0) {
+    if (!cfg.hide('beds') && bedSizes.length > 0) {
       html += '<section class="br-beds reveal">';
       html += '<h2 class="br-beds-heading">Sleeping Arrangements</h2>';
       html += '<div class="br-beds-rule"></div>';
@@ -494,7 +548,7 @@
     }
 
     // Section 3: ABOUT
-    if (p.description) {
+    if (!cfg.hide('about') && p.description) {
       var descParagraphs = p.description.split(/\n\n|\n/).filter(function(s) { return s.trim(); });
       html += '<section class="br-about reveal">';
       html += '<h2 class="br-about-heading">About This Property</h2>';
@@ -507,22 +561,33 @@
       html += '</section>';
     }
 
-    // Section 4: GALLERY
-    if (gallery.length > 0) {
+    // Section 4: GALLERY — filter by show_in_brochure, render caption when set.
+    var visibleGallery = [];
+    for (var gi = 0; gi < gallery.length; gi++) {
+      var gm = imageMeta(imgMeta, gallery[gi]);
+      if (gm.show) visibleGallery.push({ url: gallery[gi], caption: gm.caption });
+    }
+    if (!cfg.hide('gallery') && visibleGallery.length > 0) {
       html += '<section class="br-gallery reveal">';
       html += '<h2 class="br-gallery-heading">Gallery</h2>';
       html += '<div class="br-gallery-rule"></div>';
       html += '<div class="br-gallery-grid">';
-      for (var k = 0; k < gallery.length; k++) {
-        var fullClass = k === 0 ? ' br-gallery-full' : '';
-        html += '<img class="' + fullClass + '" src="' + esc(gallery[k]) + '" alt="' + esc(p.property_name) + ' - Photo ' + (k + 1) + '" loading="lazy">';
+      for (var k = 0; k < visibleGallery.length; k++) {
+        var item = visibleGallery[k];
+        var figClass = 'br-gallery-fig' + (k === 0 ? ' br-gallery-full' : '');
+        html += '<figure class="' + figClass + '">';
+        html += '<img src="' + esc(item.url) + '" alt="' + esc(p.property_name) + ' - Photo ' + (k + 1) + '" loading="lazy">';
+        if (item.caption) {
+          html += '<figcaption class="br-gallery-caption">' + esc(item.caption) + '</figcaption>';
+        }
+        html += '</figure>';
       }
       html += '</div>';
       html += '</section>';
     }
 
     // Section 5: AMENITIES
-    if (amenities.length > 0) {
+    if (!cfg.hide('amenities') && amenities.length > 0) {
       html += '<section class="br-amenities reveal">';
       html += '<h2 class="br-amenities-heading">Amenities</h2>';
       html += '<div class="br-amenities-rule"></div>';
@@ -537,11 +602,13 @@
     // Section 6: PRICING — removed (no pricing on brochures)
 
     // Section 7: SHARE
-    html += '<section class="br-share reveal">';
-    html += '<h2 class="br-share-heading">Share This Property</h2>';
-    html += '<button class="br-btn-primary" id="btn-copy-link">Copy Link</button>';
-    html += '<div class="br-share-sub">Share this brochure with anyone interested</div>';
-    html += '</section>';
+    if (!cfg.hide('share')) {
+      html += '<section class="br-share reveal">';
+      html += '<h2 class="br-share-heading">Share This Property</h2>';
+      html += '<button class="br-btn-primary" id="btn-copy-link">Copy Link</button>';
+      html += '<div class="br-share-sub">Share this brochure with anyone interested</div>';
+      html += '</section>';
+    }
 
     // Section 8: FOOTER
     html += '<footer class="br-footer">';
@@ -582,6 +649,7 @@
       }
 
       var p = data[0];
+      window._brProperty = p; // referenced by the preview-mode postMessage handler below
 
       // Set page title
       document.title = (p.property_name || 'Property Brochure');
@@ -596,6 +664,32 @@
 
       // Init reveal animations
       initReveal();
+
+      // Preview mode: parent (BrochureEditor) sends draft configs via postMessage
+      // so the iframe re-renders live as the user edits, without re-fetching.
+      var isPreview = /[?&]preview=1\b/.test(window.location.search);
+      if (isPreview) {
+        window.addEventListener('message', function(evt) {
+          var msg = evt.data;
+          if (!msg || msg.type !== 'preview-config' || !window._brProperty) return;
+          // Overlay the draft config (and any image_metadata override) onto
+          // the cached property data and re-render in place.
+          var overlay = { brochure_config: msg.config || {} };
+          if (msg.image_metadata && typeof msg.image_metadata === 'object') {
+            overlay.image_metadata = msg.image_metadata;
+          }
+          var draft = Object.assign({}, window._brProperty, overlay);
+          canvas.innerHTML = renderBrochure(draft);
+          initReveal();
+          // Re-wire copy-link button since it gets re-mounted by innerHTML.
+          var copyBtn2 = el('btn-copy-link');
+          if (copyBtn2) copyBtn2.addEventListener('click', function() {
+            navigator.clipboard.writeText(window.location.href).catch(function() {});
+          });
+        });
+        // Tell the parent we're ready to receive previews.
+        try { window.parent.postMessage({ type: 'preview-ready' }, '*'); } catch(e) {}
+      }
 
       // Copy link button
       var copyBtn = el('btn-copy-link');

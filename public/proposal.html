@@ -237,6 +237,9 @@
       '.pos-gallery-scroll::-webkit-scrollbar { height: 6px; }',
       '.pos-gallery-scroll::-webkit-scrollbar-track { background: var(--cream); }',
       '.pos-gallery-scroll::-webkit-scrollbar-thumb { background: var(--gold-light); border-radius: 3px; }',
+      '.pos-gallery-fig { margin: 0; flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; scroll-snap-align: start; }',
+      '.pos-gallery-fig img { display: block; height: 300px; width: auto; max-width: 420px; object-fit: cover; border-radius: 8px; }',
+      '.pos-gallery-caption { font-size: 13px; color: var(--text-dark); font-style: italic; font-weight: 500; text-align: center; max-width: 420px; padding-top: 2px; }',
       '.pos-gallery-img {',
       '  flex: 0 0 auto; height: 300px; width: auto; max-width: 420px;',
       '  object-fit: cover; border-radius: 8px; scroll-snap-align: start;',
@@ -246,6 +249,8 @@
       '  .pos-gallery-heading { padding: 0 24px; }',
       '  .pos-gallery-scroll { padding: 0 24px 12px; }',
       '  .pos-gallery-img { height: 220px; max-width: 300px; }',
+      '  .pos-gallery-fig img { height: 220px; max-width: 300px; }',
+      '  .pos-gallery-caption { max-width: 300px; }',
       '}',
 
       /* ── Section 5: AMENITIES ── */
@@ -467,6 +472,21 @@
     if (typeof gallery === 'string') { try { gallery = JSON.parse(gallery); } catch(e) { gallery = []; } }
     if (!Array.isArray(gallery)) gallery = [];
 
+    // Per-image metadata: { [url]: { caption, show_in_brochure } }.
+    // Missing entry == { caption: '', show_in_brochure: true } — legacy rows
+    // keep behaving exactly as before.
+    var imgMeta = pr.image_metadata;
+    if (typeof imgMeta === 'string') { try { imgMeta = JSON.parse(imgMeta); } catch(e) { imgMeta = {}; } }
+    if (!imgMeta || typeof imgMeta !== 'object' || Array.isArray(imgMeta)) imgMeta = {};
+    function imgMetaFor(url) {
+      var m = imgMeta[url];
+      if (!m || typeof m !== 'object') return { caption: '', show: true };
+      return {
+        caption: typeof m.caption === 'string' ? m.caption : '',
+        show: m.show_in_brochure !== false,
+      };
+    }
+
     var amenities = pr.amenity_tags;
     if (typeof amenities === 'string') { try { amenities = JSON.parse(amenities); } catch(e) { amenities = []; } }
     if (!Array.isArray(amenities)) amenities = [];
@@ -531,12 +551,24 @@
     html += '</section>';
 
     // Section 4 - GALLERY
-    if (gallery.length > 0) {
+    // Filter the gallery by show_in_brochure before rendering.
+    var visibleGallery = [];
+    for (var gi = 0; gi < gallery.length; gi++) {
+      var gm = imgMetaFor(gallery[gi]);
+      if (gm.show) visibleGallery.push({ url: gallery[gi], caption: gm.caption });
+    }
+    if (visibleGallery.length > 0) {
       html += '<section class="pos-gallery reveal">';
       html += '<h2 class="pos-gallery-heading">Gallery</h2>';
       html += '<div class="pos-gallery-scroll">';
-      for (var i = 0; i < gallery.length; i++) {
-        html += '<img class="pos-gallery-img" src="' + esc(gallery[i]) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
+      for (var i = 0; i < visibleGallery.length; i++) {
+        var gItem = visibleGallery[i];
+        html += '<figure class="pos-gallery-fig">';
+        html += '<img src="' + esc(gItem.url) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
+        if (gItem.caption) {
+          html += '<figcaption class="pos-gallery-caption">' + esc(gItem.caption) + '</figcaption>';
+        }
+        html += '</figure>';
       }
       html += '</div>';
       html += '</section>';

@@ -5,6 +5,7 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import PropertyEditModal from './PropertyEditModal';
 import PricingModal from './PricingModal';
+import BrochureEditor from './BrochureEditor';
 import { CT_RENTALS_PARTNER_ID, PROPERTY_TYPE_OPTIONS } from './constants';
 
 interface Property extends DataRow {
@@ -40,6 +41,7 @@ export default function PropertiesPage() {
   const [editingProperty, setEditingProperty] = useState<any | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pricingProperty, setPricingProperty] = useState<any | null>(null);
+  const [brochureProperty, setBrochureProperty] = useState<any | null>(null);
 
   useEffect(() => { setPageTitle('Properties'); }, [setPageTitle]);
 
@@ -249,6 +251,13 @@ export default function PropertiesPage() {
                   >
                     💰 Pricing
                   </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={(e) => { e.stopPropagation(); setBrochureProperty(property); }}
+                  >
+                    📄 Brochure
+                  </button>
                 </div>
               </div>
             ))
@@ -281,6 +290,13 @@ export default function PropertiesPage() {
               >
                 💰
               </span>
+              <span
+                className="action-icon"
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setBrochureProperty(row as Property); }}
+                title="Brochure layout"
+              >
+                📄
+              </span>
             </div>
           )}
           onRowClick={(row: DataRow) => setEditingProperty(row as Property)}
@@ -306,6 +322,16 @@ export default function PropertiesPage() {
         <PricingModal
           property={pricingProperty}
           onClose={() => setPricingProperty(null)}
+          supabase={supabase}
+        />
+      )}
+
+      {/* ── Brochure Editor ── */}
+      {brochureProperty && (
+        <BrochureEditor
+          property={brochureProperty}
+          onClose={() => setBrochureProperty(null)}
+          onSave={async () => { await loadProperties(); }}
           supabase={supabase}
         />
       )}

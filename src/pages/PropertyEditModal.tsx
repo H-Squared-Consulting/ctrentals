@@ -47,6 +47,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     price_currency: property.price_currency || 'ZAR',
     hero_image_url: property.hero_image_url || '',
     gallery_images: stringifyJSON(property.gallery_images),
+    image_metadata: (property.image_metadata && typeof property.image_metadata === 'object' && !Array.isArray(property.image_metadata))
+      ? property.image_metadata
+      : {},
     amenity_tags: parseAmenityTags(property.amenity_tags),
     booking_url: property.booking_url || '',
     listing_links: stringifyJSON(property.listing_links),
@@ -212,6 +215,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         price_currency: form.price_currency || 'ZAR',
         hero_image_url: form.hero_image_url.trim() || null,
         gallery_images: safeParseJSON(form.gallery_images),
+        image_metadata: form.image_metadata && typeof form.image_metadata === 'object' ? form.image_metadata : {},
         amenity_tags: parseAmenityTagsInput(form.amenity_tags),
         booking_url: form.booking_url.trim() || null,
         listing_links: safeParseJSON(form.listing_links),
@@ -271,13 +275,13 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '1100px', width: '95vw' }}>
         <div className="modal-header">
           <h2 className="modal-title">{isNew ? 'Add Property' : 'Edit Property'}</h2>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
 
-        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+        <div className="modal-body" style={{ maxHeight: '85vh', overflowY: 'auto' }}>
           <SectionHeading>Identity</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
@@ -501,8 +505,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               }
               return [];
             })()}
+            imageMetadata={form.image_metadata}
             onHeroChange={(url) => setForm(prev => ({ ...prev, hero_image_url: url || '' }))}
             onGalleryChange={(urls) => setForm(prev => ({ ...prev, gallery_images: JSON.stringify(urls) }))}
+            onImageMetadataChange={(meta) => setForm(prev => ({ ...prev, image_metadata: meta || {} }))}
             supabase={supabase}
           />
 
@@ -586,51 +592,6 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           <div className="form-group"><label className="form-label">Booking URL</label><input type="url" className="form-input" value={form.booking_url} onChange={(e) => setForm({ ...form, booking_url: e.target.value })} placeholder="https://..." /></div>
           <div className="form-group"><label className="form-label">Listing Links (JSON)</label><textarea className="form-input" rows={3} value={form.listing_links} onChange={(e) => setForm({ ...form, listing_links: e.target.value })} placeholder='[{"platform": "airbnb", "url": "https://..."}]' /></div>
 
-          <SectionHeading>Contact Override</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-            <div className="form-group"><label className="form-label">Email</label><input type="email" className="form-input" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label">Phone</label><input type="tel" className="form-input" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label">WhatsApp</label><input type="tel" className="form-input" value={form.whatsapp_number} onChange={(e) => setForm({ ...form, whatsapp_number: e.target.value })} /></div>
-          </div>
-
-          <SectionHeading>Rating</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-            <div className="form-group"><label className="form-label">External Rating</label><input type="number" className="form-input" value={form.external_rating} onChange={(e) => setForm({ ...form, external_rating: e.target.value })} min={0} max={5} step="0.1" /></div>
-            <div className="form-group"><label className="form-label">Rating Source</label><input type="text" className="form-input" value={form.external_rating_source} onChange={(e) => setForm({ ...form, external_rating_source: e.target.value })} placeholder="e.g., Google, Airbnb" /></div>
-            <div className="form-group"><label className="form-label">Review Count</label><input type="number" className="form-input" value={form.external_review_count} onChange={(e) => setForm({ ...form, external_review_count: e.target.value })} min={0} /></div>
-          </div>
-
-          <SectionHeading>Owner (Internal)</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-            <div className="form-group"><label className="form-label">Owner Name</label><input type="text" className="form-input" value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label">Owner Email</label><input type="email" className="form-input" value={form.owner_email} onChange={(e) => setForm({ ...form, owner_email: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label">Owner Phone</label><input type="tel" className="form-input" value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} /></div>
-          </div>
-
-          <SectionHeading>Publishing</SectionHeading>
-          <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={form.is_published} onChange={(e) => setForm({ ...form, is_published: e.target.checked })} />
-              <span className="form-label" style={{ margin: 0 }}>Published</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={form.is_featured} onChange={(e) => setForm({ ...form, is_featured: e.target.checked })} />
-              <span className="form-label" style={{ margin: 0 }}>Featured</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={form.pos_assured} onChange={(e) => setForm({ ...form, pos_assured: e.target.checked })} />
-              <span className="form-label" style={{ margin: 0 }}>POS Assured</span>
-            </label>
-          </div>
-          <div className="form-group" style={{ maxWidth: '120px' }}>
-            <label className="form-label">Sort Order</label>
-            <input type="number" className="form-input" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} min={0} />
-          </div>
-
-          <SectionHeading>Notes</SectionHeading>
-          <div className="form-group">
-            <textarea className="form-input" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Internal notes..." />
-          </div>
         </div>
 
         <div className="modal-footer">
