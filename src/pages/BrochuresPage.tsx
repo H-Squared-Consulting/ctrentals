@@ -38,7 +38,7 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
     setLoading(true);
     const { data, error } = await supabase
       .from('partner_properties')
-      .select('id, property_name, bedrooms, bathrooms, sleeps, suburb, city, hero_image_url, is_published')
+      .select('id, slug, property_name, bedrooms, bathrooms, sleeps, suburb, city, hero_image_url, is_published')
       .eq('partner_id', CT_RENTALS_PARTNER_ID)
       .order('property_name');
     if (!error && data) setProperties(data as Property[]);
