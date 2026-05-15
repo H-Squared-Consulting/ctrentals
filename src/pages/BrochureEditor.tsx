@@ -91,7 +91,11 @@ export default function BrochureEditor({ property, onClose, onSave, supabase }) 
   const [linkCopied, setLinkCopied] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const shareUrl = `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
+  // Prefer the clean slug-based URL (handled by vercel.json rewrite). Falls
+  // back to the legacy ?id= form when a property somehow has no slug.
+  const shareUrl = property.slug
+    ? `${window.location.origin}/brochures/${encodeURIComponent(property.slug)}`
+    : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
 
   // Drag state for reordering the photo strip. dragIndex is the source thumb
   // being dragged; dropIndex is the gap index (0..N) where it would land.

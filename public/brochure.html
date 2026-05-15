@@ -668,14 +668,21 @@
   // ── Main ──
   (function main() {
     var params = new URLSearchParams(window.location.search);
+    // Accept either ?id=<uuid> (legacy / canonical) or ?slug=<slug>. The slug
+    // form is what /brochures/<slug> rewrites to via vercel.json, so the
+    // shareable URL doesn't expose .html.
     var id = params.get('id');
+    var slug = params.get('slug');
 
-    if (!id) {
+    if (!id && !slug) {
       showError('Missing Property ID', 'No property ID was provided. Please check the link and try again.');
       return;
     }
 
-    var url = SUPABASE_URL + '/rest/v1/partner_properties?id=eq.' + encodeURIComponent(id) + '&select=*&limit=1';
+    var lookup = id
+      ? 'id=eq.' + encodeURIComponent(id)
+      : 'slug=eq.' + encodeURIComponent(slug);
+    var url = SUPABASE_URL + '/rest/v1/partner_properties?' + lookup + '&select=*&limit=1';
 
     fetch(url, {
       headers: {

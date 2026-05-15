@@ -5,6 +5,7 @@ import { CT_RENTALS_PARTNER_ID } from './constants';
 
 interface Property {
   id: string;
+  slug: string | null;
   property_name: string;
   bedrooms: number | null;
   bathrooms: number | null;
@@ -15,8 +16,11 @@ interface Property {
   is_published: boolean;
 }
 
-function getBrochureUrl(propertyId: string) {
-  return `${window.location.origin}/brochure.html?id=${propertyId}`;
+function getBrochureUrl(property: { id: string; slug?: string | null }) {
+  // Prefer the clean slug-based URL; vercel.json rewrites /brochures/:slug
+  // to /brochure.html?slug=:slug. Old ?id= URLs still resolve.
+  if (property.slug) return `${window.location.origin}/brochures/${encodeURIComponent(property.slug)}`;
+  return `${window.location.origin}/brochure.html?id=${property.id}`;
 }
 
 export default function BrochuresPage({ embedded }: { embedded?: boolean } = {}) {
@@ -52,9 +56,9 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
     });
   }, [properties, searchQuery]);
 
-  function copyLink(propertyId: string) {
-    navigator.clipboard.writeText(getBrochureUrl(propertyId));
-    setCopied(propertyId);
+  function copyLink(property: Property) {
+    navigator.clipboard.writeText(getBrochureUrl(property));
+    setCopied(property.id);
     setTimeout(() => setCopied(null), 2000);
   }
 
@@ -120,14 +124,14 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
                 <button
                   className="btn btn-ghost"
                   style={{ fontSize: '0.75rem' }}
-                  onClick={() => copyLink(property.id)}
+                  onClick={() => copyLink(property)}
                 >
                   {copied === property.id ? '✓ Copied' : '🔗 Copy Link'}
                 </button>
                 <a
                   className="btn btn-outline"
                   style={{ fontSize: '0.75rem' }}
-                  href={getBrochureUrl(property.id)}
+                  href={getBrochureUrl(property)}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
