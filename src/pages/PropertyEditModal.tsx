@@ -98,6 +98,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     owner_email: property.owner_email || '',
     owner_phone: property.owner_phone || '',
     is_published: property.is_published || false,
+    is_archived: property.is_archived || false,
     is_featured: property.is_featured || false,
     pos_assured: property.pos_assured || false,
     sort_order: property.sort_order ?? 0,
@@ -107,6 +108,57 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Two-click confirm so a stray click doesn't permanently retire a
+  // property. Auto-resets after a few seconds.
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  useEffect(() => {
+    if (!confirmingArchive) return;
+    const t = setTimeout(() => setConfirmingArchive(false), 5000);
+    return () => clearTimeout(t);
+  }, [confirmingArchive]);
+
+  async function handleArchive() {
+    if (isNew || !property.id) return;
+    setSaving(true);
+    try {
+      // Archiving also forces unpublished so the property can never be
+      // accidentally shown on the public site while retired.
+      const { error } = await supabase
+        .from('partner_properties')
+        .update({ is_archived: true, is_published: false, updated_at: new Date().toISOString() })
+        .eq('id', property.id);
+      if (error) throw error;
+      toast.success('Property archived');
+      setConfirmingArchive(false);
+      if (onSave) await onSave();
+    } catch (err) {
+      toast.error('Failed to archive: ' + (err?.message || err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUnarchive() {
+    if (isNew || !property.id) return;
+    setSaving(true);
+    try {
+      // Coming back from Archived lands the property in Inactive
+      // (is_archived=false, is_published=false). The user can then
+      // flip the Publish toggle on the Listing tab when ready.
+      const { error } = await supabase
+        .from('partner_properties')
+        .update({ is_archived: false, updated_at: new Date().toISOString() })
+        .eq('id', property.id);
+      if (error) throw error;
+      toast.success('Property restored to Inactive');
+      setForm(f => ({ ...f, is_archived: false }));
+      if (onSave) await onSave();
+    } catch (err) {
+      toast.error('Failed to unarchive: ' + (err?.message || err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // ── Tabs ──
   // Tabbed detail view per the UX spec. Overview is always available;
@@ -303,6 +355,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         owner_email: form.owner_email.trim() || null,
         owner_phone: form.owner_phone.trim() || null,
         is_published: form.is_published,
+        is_archived: form.is_archived,
         is_featured: form.is_featured,
         pos_assured: form.pos_assured,
         sort_order: parseInt(form.sort_order, 10) || 0,
@@ -399,6 +452,36 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           {isNew ? 'New property' : form.property_name || 'Edit property'}
         </h2>
         <div className="page-editor-header-actions">
+          {!isNew && (
+            form.is_archived ? (
+              <button
+                className="btn btn-ghost"
+                onClick={handleUnarchive}
+                disabled={saving}
+                title="Bring this property back into circulation as Inactive"
+              >
+                Unarchive
+              </button>
+            ) : confirmingArchive ? (
+              <>
+                <button className="btn btn-ghost" onClick={() => setConfirmingArchive(false)}>
+                  Cancel
+                </button>
+                <button className="btn btn-danger" onClick={handleArchive} disabled={saving}>
+                  Confirm archive
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-danger"
+                onClick={() => setConfirmingArchive(true)}
+                disabled={saving}
+                title="Archive — permanently retires this property"
+              >
+                Archive
+              </button>
+            )
+          )}
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -747,17 +830,25 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
           {activeTab === 'listing' && (<>
           <SectionHeading>Publish status</SectionHeading>
-          <label className="editor-toggle">
-            <input
-              type="checkbox"
-              checked={!!form.is_published}
-              onChange={(e) => setForm({ ...form, is_published: e.target.checked })}
-            />
-            <span className="editor-toggle-track"><span className="editor-toggle-thumb" /></span>
-            <span className="editor-toggle-label">
-              {form.is_published ? 'Active — visible on the public site and brochures' : 'Archived — hidden from public listings'}
-            </span>
-          </label>
+          {form.is_archived ? (
+            <div className="editor-tab-empty">
+              <strong>This property is archived.</strong> Use the <em>Unarchive</em> button at the top to bring it back as Inactive before publishing.
+            </div>
+          ) : (
+            <label className="editor-toggle">
+              <input
+                type="checkbox"
+                checked={!!form.is_published}
+                onChange={(e) => setForm({ ...form, is_published: e.target.checked })}
+              />
+              <span className="editor-toggle-track"><span className="editor-toggle-thumb" /></span>
+              <span className="editor-toggle-label">
+                {form.is_published
+                  ? 'Active — visible on the public site and brochures'
+                  : 'Inactive — temporarily hidden, can be reactivated any time'}
+              </span>
+            </label>
+          )}
 
           {!isNew && (
             <>

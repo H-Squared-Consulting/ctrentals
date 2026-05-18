@@ -1641,9 +1641,14 @@ select.form-input { cursor: pointer; }
   color: var(--success);
 }
 .property-card__badge--inactive {
-  left: 10px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
+  right: 10px;
+  background: #FEF3C7;
+  color: #92400E;
+}
+.property-card__badge--archived {
+  right: 10px;
+  background: #FEE2E2;
+  color: #991B1B;
 }
 
 .property-card__body {

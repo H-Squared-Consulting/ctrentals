@@ -6,7 +6,6 @@ import PropertiesPage from './pages/PropertiesPage';
 import EnquiriesPage from './pages/EnquiriesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
 import BookingCalendarPage from './pages/BookingCalendarPage';
-import BrochuresPage from './pages/BrochuresPage';
 import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 import Fab from './components/Fab';
@@ -62,7 +61,11 @@ export function App() {
 
       {/* Properties + Brochures */}
       <Route path="/properties" element={<Page><PropertiesPage /></Page>} />
-      <Route path="/brochures" element={<Page><BrochuresPage /></Page>} />
+      {/* Brochures lived as a sibling of Properties. Removed from the
+          nav because it duplicated the property card's Copy / Preview
+          actions; redirect the URL so old bookmarks still land somewhere
+          sensible. */}
+      <Route path="/brochures" element={<Navigate to="/properties" replace />} />
 
       {/* Operations */}
       <Route path="/operations" element={<Navigate to="/operations/enquiries" replace />} />

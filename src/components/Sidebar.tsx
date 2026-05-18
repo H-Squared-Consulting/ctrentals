@@ -28,16 +28,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: '/dashboard', label: 'Home', icon: '🏠' },
-  {
-    to: '/properties',
-    label: 'Properties',
-    icon: '🏘',
-    aliases: ['/brochures'],
-    children: [
-      { to: '/properties', label: 'All properties' },
-      { to: '/brochures', label: 'Brochures' },
-    ],
-  },
+  { to: '/properties', label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
   {
     to: '/operations',
     label: 'Operations',

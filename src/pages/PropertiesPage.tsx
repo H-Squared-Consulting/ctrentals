@@ -7,7 +7,6 @@ import PropertyEditModal from './PropertyEditModal';
 import PricingModal from './PricingModal';
 import EmptyState from '../components/EmptyState';
 import { SkeletonGrid } from '../components/Skeleton';
-import BrochureShareMenu from '../components/BrochureShareMenu';
 import { useToast } from '../components/ToastProvider';
 import { CT_RENTALS_PARTNER_ID, PROPERTY_TYPE_OPTIONS } from './constants';
 
@@ -27,6 +26,7 @@ interface Property extends DataRow {
   hero_image_url: string | null;
   amenity_tags: string[] | null;
   is_published: boolean;
+  is_archived: boolean;
 }
 
 type ViewMode = 'cards' | 'table';
@@ -45,25 +45,31 @@ export default function PropertiesPage() {
   const [minBaths, setMinBaths] = useState<string>('');
   const [minSleeps, setMinSleeps] = useState<string>('');
   const [suburbFilter, setSuburbFilter] = useState<string>('');
-  // Hide inactive (unpublished) properties by default — they're parked, not
-  // working stock. The user flips this on when they want to reactivate one.
-  const [showInactive, setShowInactive] = useState(false);
-  // Two-step confirm for archiving — first click arms, second click commits.
-  // Auto-cancels after a few seconds if the user doesn't follow through.
-  const [confirmingArchive, setConfirmingArchive] = useState<string | null>(null);
+  // Transient "✓ Copied" state on the property card's Copy link button.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!confirmingArchive) return;
-    const t = setTimeout(() => setConfirmingArchive(null), 5000);
-    return () => clearTimeout(t);
-  }, [confirmingArchive]);
+  function brochureUrl(p: Property) {
+    return p.slug
+      ? `${window.location.origin}/brochures/${encodeURIComponent(p.slug)}`
+      : `${window.location.origin}/brochure.html?id=${encodeURIComponent(p.id)}`;
+  }
+  async function copyBrochureLink(p: Property) {
+    try { await navigator.clipboard.writeText(brochureUrl(p)); }
+    catch { /* clipboard blocked — fall through */ }
+    setCopiedId(p.id);
+    toast.success(`Link to ${p.property_name} copied`);
+    setTimeout(() => setCopiedId(null), 2000);
+  }
+  // Status filter — default Active, with explicit options for the other
+  // two buckets plus an "All" view. Replaces the prior pair of checkboxes
+  // so the toolbar stays on one line.
+  type StatusFilter = 'active' | 'inactive' | 'archived' | 'all';
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editingProperty, setEditingProperty] = useState<any | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pricingProperty, setPricingProperty] = useState<any | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [sharingProperty, setSharingProperty] = useState<any | null>(null);
 
   useEffect(() => { setPageTitle('Properties'); }, [setPageTitle]);
 
@@ -91,7 +97,11 @@ export default function PropertiesPage() {
   }, [supabase]);
 
   const inactiveCount = useMemo(
-    () => properties.filter(p => !p.is_published).length,
+    () => properties.filter(p => !p.is_archived && !p.is_published).length,
+    [properties],
+  );
+  const archivedCount = useMemo(
+    () => properties.filter(p => p.is_archived).length,
     [properties],
   );
 
@@ -106,12 +116,17 @@ export default function PropertiesPage() {
   }, [properties]);
 
   const filteredProperties = useMemo(() => {
-    // First filter by active state — only active shown unless the user
-    // explicitly flips the inactive toggle. Then narrow by search and
-    // by the distinguishing-attribute filters.
-    let list = showInactive
-      ? properties.filter(p => !p.is_published)
-      : properties.filter(p => p.is_published);
+    // Narrow by the selected status bucket, then by search + attribute
+    // filters. The dropdown is single-select rather than two toggles so
+    // the toolbar fits in one row.
+    let list = properties.filter(p => {
+      switch (statusFilter) {
+        case 'active':   return !p.is_archived && p.is_published;
+        case 'inactive': return !p.is_archived && !p.is_published;
+        case 'archived': return p.is_archived;
+        case 'all':      return true;
+      }
+    });
     if (searchQuery) {
       const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter(p => {
@@ -127,39 +142,11 @@ export default function PropertiesPage() {
     if (sleeps > 0) list = list.filter(p => (p.sleeps ?? 0) >= sleeps);
     if (suburbFilter) list = list.filter(p => p.suburb === suburbFilter);
     return list;
-  }, [properties, searchQuery, showInactive, minBeds, minBaths, minSleeps, suburbFilter]);
+  }, [properties, searchQuery, statusFilter, minBeds, minBaths, minSleeps, suburbFilter]);
 
   const filtersActive = !!(minBeds || minBaths || minSleeps || suburbFilter);
   function clearFilters() {
     setMinBeds(''); setMinBaths(''); setMinSleeps(''); setSuburbFilter('');
-  }
-
-  async function makeActive(propertyId: string) {
-    try {
-      const { error } = await supabase
-        .from('partner_properties')
-        .update({ is_published: true })
-        .eq('id', propertyId);
-      if (error) throw error;
-      setProperties(prev => prev.map(p => p.id === propertyId ? { ...p, is_published: true } : p));
-      toast.success('Property activated');
-    } catch (err: any) {
-      toast.error('Failed to activate: ' + (err?.message || err));
-    }
-  }
-
-  async function makeInactive(propertyId: string) {
-    try {
-      const { error } = await supabase
-        .from('partner_properties')
-        .update({ is_published: false })
-        .eq('id', propertyId);
-      if (error) throw error;
-      setProperties(prev => prev.map(p => p.id === propertyId ? { ...p, is_published: false } : p));
-      toast.success('Property archived');
-    } catch (err: any) {
-      toast.error('Failed to archive: ' + (err?.message || err));
-    }
   }
 
   const columns = [
@@ -194,9 +181,12 @@ export default function PropertiesPage() {
     },
     {
       key: 'is_published', label: 'Status', align: 'center' as const,
-      render: (row: DataRow) => (row as Property).is_published
-        ? <span className="status-badge" style={{ background: '#D1FAE5', color: '#059669' }}>Active</span>
-        : <span className="status-badge" style={{ background: '#F3F4F6', color: '#6B7280' }}>Inactive</span>,
+      render: (row: DataRow) => {
+        const p = row as Property;
+        if (p.is_archived) return <span className="status-badge" style={{ background: '#FEE2E2', color: '#991B1B' }}>Archived</span>;
+        if (p.is_published) return <span className="status-badge" style={{ background: '#D1FAE5', color: '#059669' }}>Active</span>;
+        return <span className="status-badge" style={{ background: '#FEF3C7', color: '#92400E' }}>Inactive</span>;
+      },
     },
   ];
 
@@ -249,8 +239,7 @@ export default function PropertiesPage() {
               )}
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {filteredProperties.length} {showInactive ? 'inactive' : 'active'}
-              {properties.length !== filteredProperties.length && ` of ${properties.length} total`}
+              {filteredProperties.length} of {properties.length} total
             </span>
             {/* Distinguishing-attribute filters — bedrooms, bathrooms,
                 sleeps, suburb. Compact selects so they fit inline with
@@ -296,15 +285,19 @@ export default function PropertiesPage() {
                 Clear filters
               </button>
             )}
-            {/* Active / Inactive toggle — minimal but obvious. */}
-            <label className="list-toolbar-toggle" title={showInactive ? 'Show active properties' : 'Show inactive (archived) properties'}>
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={(e) => setShowInactive(e.target.checked)}
-              />
-              <span>Show inactive ({inactiveCount})</span>
-            </label>
+            {/* Single status select keeps the toolbar to one row.
+                Inactive = temporarily parked. Archived = retired.   */}
+            <select
+              className="list-filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              title="Status filter"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive ({inactiveCount})</option>
+              <option value="archived">Archived ({archivedCount})</option>
+              <option value="all">All ({properties.length})</option>
+            </select>
           </div>
           <div className="list-toolbar-right">
             <div className="view-toggle">
@@ -335,20 +328,18 @@ export default function PropertiesPage() {
           {filteredProperties.length === 0 ? (
             <div style={{ gridColumn: '1 / -1' }}>
               <EmptyState
-                icon={showInactive ? '📥' : '🏡'}
+                icon={statusFilter === 'active' ? '🏡' : statusFilter === 'archived' ? '📥' : '🛋'}
                 title={
-                  showInactive
-                    ? (inactiveCount === 0 ? 'No inactive properties' : 'No inactive properties match your search')
-                    : (properties.length === 0 ? 'No properties yet' : 'No active properties match your search')
+                  properties.length === 0
+                    ? 'No properties yet'
+                    : `No ${statusFilter === 'all' ? '' : statusFilter} properties match your search`
                 }
                 description={
-                  showInactive
-                    ? 'Properties you archive will show up here. They keep all their data and can be reactivated at any time.'
-                    : (properties.length === 0
-                        ? 'Add your first property to start building brochures.'
-                        : 'Try a different search term, or toggle "Show inactive" to look in the archive.')
+                  properties.length === 0
+                    ? 'Add your first property to start building brochures.'
+                    : 'Try a different search term, or switch the status filter.'
                 }
-                action={!showInactive && properties.length === 0 ? (
+                action={properties.length === 0 ? (
                   <button className="btn btn-primary" onClick={() => setEditingProperty({})}>+ Add property</button>
                 ) : null}
               />
@@ -366,9 +357,11 @@ export default function PropertiesPage() {
                   ) : (
                     <div className="property-card__no-image">🏠</div>
                   )}
-                  {property.is_published
-                    ? <span className="property-card__badge property-card__badge--active">Active</span>
-                    : <span className="property-card__badge property-card__badge--inactive">Inactive</span>
+                  {property.is_archived
+                    ? <span className="property-card__badge property-card__badge--archived">Archived</span>
+                    : property.is_published
+                      ? <span className="property-card__badge property-card__badge--active">Active</span>
+                      : <span className="property-card__badge property-card__badge--inactive">Inactive</span>
                   }
                 </div>
                 <div className="property-card__body">
@@ -413,51 +406,27 @@ export default function PropertiesPage() {
                     💰 Pricing
                   </button>
                   {property.is_published && (
-                    <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.75rem' }}
-                      onClick={(e) => { e.stopPropagation(); setSharingProperty(property); }}
-                      title="Share or preview this property's brochure"
-                    >
-                      📄 Brochure
-                    </button>
-                  )}
-                  {property.is_published ? (
-                    confirmingArchive === property.id ? (
-                      <>
-                        <button
-                          className="btn btn-ghost"
-                          style={{ fontSize: '0.75rem' }}
-                          onClick={(e) => { e.stopPropagation(); setConfirmingArchive(null); }}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          className="btn btn-danger"
-                          style={{ fontSize: '0.75rem' }}
-                          onClick={(e) => { e.stopPropagation(); makeInactive(property.id); setConfirmingArchive(null); }}
-                        >
-                          Yes, archive
-                        </button>
-                      </>
-                    ) : (
+                    <>
                       <button
                         className="btn btn-ghost"
-                        style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}
-                        onClick={(e) => { e.stopPropagation(); setConfirmingArchive(property.id); }}
-                        title="Archive — hides this property from the public brochure list"
+                        style={{ fontSize: '0.75rem' }}
+                        onClick={(e) => { e.stopPropagation(); copyBrochureLink(property); }}
+                        title="Copy brochure link to clipboard"
                       >
-                        📥 Archive
+                        {copiedId === property.id ? '✓ Copied' : '🔗 Copy link'}
                       </button>
-                    )
-                  ) : (
-                    <button
-                      className="btn btn-primary"
-                      style={{ fontSize: '0.75rem' }}
-                      onClick={(e) => { e.stopPropagation(); makeActive(property.id); }}
-                    >
-                      ✓ Make active
-                    </button>
+                      <a
+                        className="btn btn-ghost"
+                        style={{ fontSize: '0.75rem' }}
+                        href={brochureUrl(property)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open brochure preview in a new tab"
+                      >
+                        👁 Preview
+                      </a>
+                    </>
                   )}
                 </div>
               </div>
@@ -494,48 +463,32 @@ export default function PropertiesPage() {
                   💰
                 </span>
                 {r.is_published && (
-                  <span
-                    className="action-icon"
-                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSharingProperty(r); }}
-                    title="Share or preview brochure"
-                  >
-                    📄
-                  </span>
-                )}
-                {r.is_published ? (
-                  confirmingArchive === r.id ? (
+                  <>
                     <span
                       className="action-icon"
-                      style={{ color: 'var(--color-danger)', fontWeight: 700 }}
-                      onClick={(e: React.MouseEvent) => { e.stopPropagation(); makeInactive(r.id); setConfirmingArchive(null); }}
-                      title="Click again to confirm archive"
+                      onClick={(e: React.MouseEvent) => { e.stopPropagation(); copyBrochureLink(r); }}
+                      title={copiedId === r.id ? 'Copied!' : 'Copy brochure link'}
                     >
-                      Confirm?
+                      {copiedId === r.id ? '✓' : '🔗'}
                     </span>
-                  ) : (
-                    <span
+                    <a
                       className="action-icon"
-                      onClick={(e: React.MouseEvent) => { e.stopPropagation(); setConfirmingArchive(r.id); }}
-                      title="Archive"
+                      href={brochureUrl(r)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      title="Preview brochure"
                     >
-                      📥
-                    </span>
-                  )
-                ) : (
-                  <span
-                    className="action-icon"
-                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); makeActive(r.id); }}
-                    title="Make active"
-                  >
-                    ✓
-                  </span>
+                      👁
+                    </a>
+                  </>
                 )}
               </div>
             );
           }}
           onRowClick={(row: DataRow) => setEditingProperty(row as Property)}
           pageSize={25}
-          emptyMessage={showInactive ? 'No inactive properties.' : 'No active properties yet.'}
+          emptyMessage={`No ${statusFilter === 'all' ? '' : statusFilter} properties.`}
         />
       )}
 
@@ -548,14 +501,6 @@ export default function PropertiesPage() {
           property={pricingProperty}
           onClose={() => setPricingProperty(null)}
           supabase={supabase}
-        />
-      )}
-
-      {/* ── Share brochure (per-property quick send) ── */}
-      {sharingProperty && (
-        <BrochureShareMenu
-          property={sharingProperty}
-          onClose={() => setSharingProperty(null)}
         />
       )}
 
