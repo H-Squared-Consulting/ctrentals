@@ -3309,3 +3309,68 @@ select.form-input { cursor: pointer; }
   padding: 2px 6px;
   line-height: 1.4;
 }
+
+/* MultiPicker — compact dropdown with checkbox list */
+.multi-picker { position: relative; display: inline-block; }
+.multi-picker-btn {
+  /* Match .list-filter-select footprint */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 26px 6px 10px;
+  font-size: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%236B7280' d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 8px;
+  white-space: nowrap;
+}
+.multi-picker-btn:hover { border-color: var(--text-light); }
+.multi-picker-btn.is-active { border-color: var(--color-primary); color: var(--color-primary); }
+.multi-picker-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.08);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.multi-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 0.8125rem;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.multi-picker-item:hover { background: var(--bg); }
+.multi-picker-item.is-on { color: var(--text); font-weight: 600; }
+.multi-picker-item input { margin: 0; cursor: pointer; }
+.multi-picker-clear {
+  margin-top: 2px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.multi-picker-clear:hover { color: var(--color-primary); }

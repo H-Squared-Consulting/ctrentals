@@ -8,6 +8,7 @@ import PricingModal from './PricingModal';
 import EmptyState from '../components/EmptyState';
 import { SkeletonGrid } from '../components/Skeleton';
 import { useToast } from '../components/ToastProvider';
+import MultiPicker from '../components/MultiPicker';
 import { CT_RENTALS_PARTNER_ID, PROPERTY_TYPE_OPTIONS } from './constants';
 
 interface Property extends DataRow {
@@ -40,10 +41,12 @@ export default function PropertiesPage() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [searchQuery, setSearchQuery] = useState('');
-  // Distinguishing-attribute filters. "" / 0 means "no constraint".
-  const [minBeds, setMinBeds] = useState<string>('');
-  const [minBaths, setMinBaths] = useState<string>('');
-  const [minSleeps, setMinSleeps] = useState<string>('');
+  // Distinguishing-attribute filters: multi-select per exact value so
+  // "show me 3 OR 4 bedrooms" works without dragging in 5+ as well.
+  // Empty array = no constraint on that field.
+  const [bedCounts, setBedCounts] = useState<number[]>([]);
+  const [bathCounts, setBathCounts] = useState<number[]>([]);
+  const [sleepCounts, setSleepCounts] = useState<number[]>([]);
   const [suburbFilter, setSuburbFilter] = useState<string>('');
   // Transient "✓ Copied" state on the property card's Copy link button.
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -115,6 +118,21 @@ export default function PropertiesPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [properties]);
 
+  // Bed / bath / sleeps options are derived from the actual data so we
+  // don't surface filter values that match zero properties.
+  const bedOptions = useMemo(
+    () => Array.from(new Set(properties.map(p => p.bedrooms).filter((n): n is number => typeof n === 'number' && n > 0))).sort((a, b) => a - b),
+    [properties],
+  );
+  const bathOptions = useMemo(
+    () => Array.from(new Set(properties.map(p => p.bathrooms).filter((n): n is number => typeof n === 'number' && n > 0))).sort((a, b) => a - b),
+    [properties],
+  );
+  const sleepOptions = useMemo(
+    () => Array.from(new Set(properties.map(p => p.sleeps).filter((n): n is number => typeof n === 'number' && n > 0))).sort((a, b) => a - b),
+    [properties],
+  );
+
   const filteredProperties = useMemo(() => {
     // Narrow by the selected status bucket, then by search + attribute
     // filters. The dropdown is single-select rather than two toggles so
@@ -134,19 +152,16 @@ export default function PropertiesPage() {
         return terms.every(t => text.includes(t));
       });
     }
-    const beds = Number(minBeds);
-    if (beds > 0) list = list.filter(p => (p.bedrooms ?? 0) >= beds);
-    const baths = Number(minBaths);
-    if (baths > 0) list = list.filter(p => (p.bathrooms ?? 0) >= baths);
-    const sleeps = Number(minSleeps);
-    if (sleeps > 0) list = list.filter(p => (p.sleeps ?? 0) >= sleeps);
+    if (bedCounts.length) list = list.filter(p => p.bedrooms != null && bedCounts.includes(p.bedrooms));
+    if (bathCounts.length) list = list.filter(p => p.bathrooms != null && bathCounts.includes(p.bathrooms));
+    if (sleepCounts.length) list = list.filter(p => p.sleeps != null && sleepCounts.includes(p.sleeps));
     if (suburbFilter) list = list.filter(p => p.suburb === suburbFilter);
     return list;
-  }, [properties, searchQuery, statusFilter, minBeds, minBaths, minSleeps, suburbFilter]);
+  }, [properties, searchQuery, statusFilter, bedCounts, bathCounts, sleepCounts, suburbFilter]);
 
-  const filtersActive = !!(minBeds || minBaths || minSleeps || suburbFilter);
+  const filtersActive = !!(bedCounts.length || bathCounts.length || sleepCounts.length || suburbFilter);
   function clearFilters() {
-    setMinBeds(''); setMinBaths(''); setMinSleeps(''); setSuburbFilter('');
+    setBedCounts([]); setBathCounts([]); setSleepCounts([]); setSuburbFilter('');
   }
 
   const columns = [
@@ -252,33 +267,24 @@ export default function PropertiesPage() {
             {/* Distinguishing-attribute filters — bedrooms, bathrooms,
                 sleeps, suburb. Compact selects so they fit inline with
                 search; show Clear when anything's active. */}
-            <select
-              className="list-filter-select"
-              value={minBeds}
-              onChange={(e) => setMinBeds(e.target.value)}
-              title="Filter by minimum bedrooms"
-            >
-              <option value="">Beds: any</option>
-              {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={n}>{n}+ beds</option>)}
-            </select>
-            <select
-              className="list-filter-select"
-              value={minBaths}
-              onChange={(e) => setMinBaths(e.target.value)}
-              title="Filter by minimum bathrooms"
-            >
-              <option value="">Baths: any</option>
-              {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}+ baths</option>)}
-            </select>
-            <select
-              className="list-filter-select"
-              value={minSleeps}
-              onChange={(e) => setMinSleeps(e.target.value)}
-              title="Filter by minimum guests"
-            >
-              <option value="">Sleeps: any</option>
-              {[2,4,6,8,10,12,14,16].map(n => <option key={n} value={n}>{n}+ guests</option>)}
-            </select>
+            <MultiPicker
+              label="Beds"
+              options={bedOptions}
+              selected={bedCounts}
+              onChange={(v) => setBedCounts(v as number[])}
+            />
+            <MultiPicker
+              label="Baths"
+              options={bathOptions}
+              selected={bathCounts}
+              onChange={(v) => setBathCounts(v as number[])}
+            />
+            <MultiPicker
+              label="Sleeps"
+              options={sleepOptions}
+              selected={sleepCounts}
+              onChange={(v) => setSleepCounts(v as number[])}
+            />
             <select
               className="list-filter-select"
               value={suburbFilter}
