@@ -22,8 +22,20 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const [editForm, setEditForm] = useState({ name: '', company: '', email: '', default_commission_pct: '' });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState('active'); // 'active' | 'inactive' | 'all'
   const [showAddForm, setShowAddForm] = useState(false);
   const [newAgent, setNewAgent] = useState({ name: '', company: '', email: '', default_commission_pct: '15' });
+
+  async function toggleActive(agent) {
+    try {
+      const next = !agent.is_active;
+      const { error } = await supabase.from('agents').update({ is_active: next }).eq('id', agent.id);
+      if (error) throw error;
+      setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_active: next } : a));
+    } catch (err) {
+      toast.error('Failed to update: ' + err.message);
+    }
+  }
 
   useEffect(() => { if (!embedded) setPageTitle('Agents'); }, [setPageTitle, embedded]);
 
@@ -106,12 +118,20 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
     });
   }
 
+  const inactiveCount = useMemo(() => agents.filter(a => a.is_active === false).length, [agents]);
+
   // Group by company for display
   const grouped = useMemo(() => {
-    const filtered = !searchQuery ? agents : agents.filter((a) => {
-      const text = [a.name, a.company, a.email].filter(Boolean).join(' ').toLowerCase();
-      return searchQuery.toLowerCase().split(/\s+/).every((t) => text.includes(t));
-    });
+    let filtered = agents;
+    // Treat missing is_active as true so older rows show up as active.
+    if (activeFilter === 'active') filtered = filtered.filter(a => a.is_active !== false);
+    else if (activeFilter === 'inactive') filtered = filtered.filter(a => a.is_active === false);
+    if (searchQuery) {
+      filtered = filtered.filter((a) => {
+        const text = [a.name, a.company, a.email].filter(Boolean).join(' ').toLowerCase();
+        return searchQuery.toLowerCase().split(/\s+/).every((t) => text.includes(t));
+      });
+    }
     const groups: Record<string, Agent[]> = {};
     filtered.forEach((a) => {
       const key = a.company || 'Independent';
@@ -119,7 +139,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       groups[key].push(a);
     });
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
-  }, [agents, searchQuery]);
+  }, [agents, searchQuery, activeFilter]);
 
   if (loading) {
     return <div className="page-loader"><div className="spinner" /></div>;
@@ -143,6 +163,16 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
               {agents.length} agents
             </span>
+            <select
+              className="list-filter-select"
+              value={activeFilter}
+              onChange={(e) => setActiveFilter(e.target.value)}
+              title="Filter by active state"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive ({inactiveCount})</option>
+              <option value="all">All</option>
+            </select>
           </div>
           <div className="list-toolbar-right">
             <button className="btn btn-ghost" onClick={loadAgents}>↻ Refresh</button>
@@ -221,12 +251,18 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
                     </>
                   ) : (
                     <>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>{agent.name}</span>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500, opacity: agent.is_active === false ? 0.55 : 1 }}>
+                        {agent.name}
+                        {agent.is_active === false && <span style={{ marginLeft: 8, fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-light)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Inactive</span>}
+                      </span>
                       <a href={agent.email ? `mailto:${agent.email}` : undefined} style={{ fontSize: '0.8125rem', color: 'var(--color-primary)', textDecoration: 'none' }}>
                         {agent.email || <span style={{ color: 'var(--text-light)' }}>-</span>}
                       </a>
                       <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>{agent.default_commission_pct}%</span>
                       <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={() => toggleActive(agent)} title={agent.is_active === false ? 'Reactivate this agent' : 'Mark this agent inactive'}>
+                          {agent.is_active === false ? 'Activate' : 'Deactivate'}
+                        </button>
                         <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={() => startEdit(agent)}>Edit</button>
                         <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }} onClick={() => handleDelete(agent.id)}>Delete</button>
                       </div>

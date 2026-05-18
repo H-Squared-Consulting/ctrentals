@@ -13,6 +13,8 @@ import Sidebar from './components/Sidebar';
 import SectionPlaceholder from './pages/SectionPlaceholder';
 import ProposalsPage from './pages/ProposalsPage';
 import AgentsPage from './pages/AgentsPage';
+import GuestsPage from './pages/GuestsPage';
+import HomeOwnersPage from './pages/HomeOwnersPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -75,8 +77,8 @@ export function App() {
 
       {/* CRM */}
       <Route path="/crm" element={<Navigate to="/crm/guests" replace />} />
-      <Route path="/crm/guests" element={<Page><SectionPlaceholder pageTitle="Guests" title="Guests CRM coming soon" description="Every guest's history — enquiries, proposals, stays and total spend in one place." icon="👤" /></Page>} />
-      <Route path="/crm/home-owners" element={<Page><SectionPlaceholder pageTitle="Home Owners" title="Home Owners coming soon" description="Owner directory with their properties, contracts and payout summary." icon="🏡" /></Page>} />
+      <Route path="/crm/guests" element={<Page><GuestsPage /></Page>} />
+      <Route path="/crm/home-owners" element={<Page><HomeOwnersPage /></Page>} />
       <Route path="/crm/agents" element={<Page><AgentsPage /></Page>} />
 
       {/* Finance */}

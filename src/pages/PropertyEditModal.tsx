@@ -99,6 +99,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     owner_phone: property.owner_phone || '',
     is_published: property.is_published || false,
     is_archived: property.is_archived || false,
+    owner_id: property.owner_id || '',
     is_featured: property.is_featured || false,
     pos_assured: property.pos_assured || false,
     sort_order: property.sort_order ?? 0,
@@ -108,6 +109,22 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Owner dropdown options for the Overview tab. Loaded once; updates
+  // from the CRM page happen on a separate route so we don't need to
+  // keep this in sync within a single editor session.
+  const [owners, setOwners] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('home_owners')
+        .select('id, name, company')
+        .eq('partner_id', partnerId)
+        .order('name');
+      if (!cancelled && data) setOwners(data);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, partnerId]);
   // Two-click confirm so a stray click doesn't permanently retire a
   // property. Auto-resets after a few seconds.
   const [confirmingArchive, setConfirmingArchive] = useState(false);
@@ -256,6 +273,34 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     }
   }
 
+  // Inline edit state for unlocked baselines. baselineEdits[id] holds the
+  // in-flight daily/monthly values while the user is editing.
+  const [baselineEdits, setBaselineEdits] = useState({});
+  async function handleUpdateBaseline(bl) {
+    const edit = baselineEdits[bl.id];
+    if (!edit) return;
+    const daily = parseFloat(edit.daily_rate);
+    const monthly = parseFloat(edit.monthly_rate);
+    if (!(daily > 0) || !(monthly > 0)) { toast.error('Daily and monthly rates must be positive numbers'); return; }
+    try {
+      const { error } = await supabase
+        .from('baselines')
+        .update({ daily_rate: daily, monthly_rate: monthly, updated_at: new Date().toISOString() })
+        .eq('id', bl.id);
+      if (error) throw error;
+      setBaselines((prev) => prev.map((b) => (b.id === bl.id ? { ...b, daily_rate: daily, monthly_rate: monthly } : b)));
+      setBaselineEdits((prev) => { const next = { ...prev }; delete next[bl.id]; return next; });
+      toast.success('Baseline updated');
+    } catch (err) {
+      const raw = err?.message || String(err);
+      if (raw.includes('BASELINE_LOCKED')) {
+        toast.warning('This baseline is locked. Unlock it first.');
+      } else {
+        toast.error('Failed to update: ' + raw);
+      }
+    }
+  }
+
   async function handleDeleteBaseline(id) {
     try {
       const { error } = await supabase.from('baselines').delete().eq('id', id);
@@ -356,6 +401,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         owner_phone: form.owner_phone.trim() || null,
         is_published: form.is_published,
         is_archived: form.is_archived,
+        owner_id: form.owner_id || null,
         is_featured: form.is_featured,
         pos_assured: form.pos_assured,
         sort_order: parseInt(form.sort_order, 10) || 0,
@@ -543,6 +589,21 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               {PROPERTY_TYPE_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
             </select>
           </div>
+          <div className="form-group">
+            <label className="form-label">Owner</label>
+            <select
+              className="form-input"
+              value={form.owner_id}
+              onChange={(e) => setForm({ ...form, owner_id: e.target.value })}
+            >
+              <option value="">— No owner linked —</option>
+              {owners.map(o => (
+                <option key={o.id} value={o.id}>
+                  {o.name}{o.company ? ` (${o.company})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <SectionHeading>Location</SectionHeading>
           <div className="form-group">
@@ -634,49 +695,108 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           </>)}
 
           {activeTab === 'pricing' && (<>
-          <SectionHeading>Price From</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="form-group"><label className="form-label">Price From</label><input type="number" className="form-input" value={form.price_from} onChange={(e) => setForm({ ...form, price_from: e.target.value })} min={0} step="0.01" /></div>
-            <div className="form-group"><label className="form-label">Currency</label>
-              <select className="form-input" value={form.price_currency} onChange={(e) => setForm({ ...form, price_currency: e.target.value })}>
-                <option value="ZAR">ZAR</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option>
-              </select>
-            </div>
-          </div>
-
           {isNew ? (
             <div className="editor-tab-empty">Save this property first to unlock detailed pricing (baselines, channel profiles, scenarios).</div>
           ) : (
             <>
               <SectionHeading>Baselines</SectionHeading>
               <div className="baseline-editor">
-                {baselines.map((bl) => (
-                  <div key={bl.id} className="baseline-row">
-                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}</div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Daily</label>
-                      <div style={{ fontSize: '0.875rem' }}>R{Number(bl.daily_rate).toLocaleString()}</div>
+                {baselines.map((bl) => {
+                  const edit = baselineEdits[bl.id];
+                  const editing = !bl.locked && !!edit;
+                  return (
+                    <div key={bl.id} className="baseline-row">
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}</div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Daily</label>
+                        {editing ? (
+                          <input
+                            type="number"
+                            className="form-input"
+                            value={edit.daily_rate}
+                            onChange={(e) => setBaselineEdits(prev => ({ ...prev, [bl.id]: { ...prev[bl.id], daily_rate: e.target.value } }))}
+                            min={0}
+                            step="0.01"
+                          />
+                        ) : (
+                          <div style={{ fontSize: '0.875rem' }}>R{Number(bl.daily_rate).toLocaleString()}</div>
+                        )}
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Monthly</label>
+                        {editing ? (
+                          <input
+                            type="number"
+                            className="form-input"
+                            value={edit.monthly_rate}
+                            onChange={(e) => setBaselineEdits(prev => ({ ...prev, [bl.id]: { ...prev[bl.id], monthly_rate: e.target.value } }))}
+                            min={0}
+                            step="0.01"
+                          />
+                        ) : (
+                          <div style={{ fontSize: '0.875rem' }}>R{Number(bl.monthly_rate).toLocaleString()}</div>
+                        )}
+                      </div>
+
+                      {/* Locked baselines are read-only; unlock first to edit.
+                          The button label spells out what clicking it will do
+                          so the action isn't hidden behind a lock emoji. */}
+                      {bl.locked ? (
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                          onClick={() => handleToggleBaselineLock(bl)}
+                          title="Unlock so you can edit these rates"
+                        >
+                          🔒 Unlock to edit
+                        </button>
+                      ) : editing ? (
+                        <>
+                          <button
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                            onClick={() => handleUpdateBaseline(bl)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                            onClick={() => setBaselineEdits(prev => { const next = { ...prev }; delete next[bl.id]; return next; })}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                            onClick={() => setBaselineEdits(prev => ({ ...prev, [bl.id]: { daily_rate: String(bl.daily_rate), monthly_rate: String(bl.monthly_rate) } }))}
+                          >
+                            ✏️ Edit rates
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                            onClick={() => handleToggleBaselineLock(bl)}
+                            title="Lock to prevent accidental changes"
+                          >
+                            🔓 Lock
+                          </button>
+                        </>
+                      )}
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }}
+                        onClick={() => handleDeleteBaseline(bl.id)}
+                        title="Delete this year's baseline"
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Monthly</label>
-                      <div style={{ fontSize: '0.875rem' }}>R{Number(bl.monthly_rate).toLocaleString()}</div>
-                    </div>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.6875rem', padding: '4px 8px' }}
-                      onClick={() => handleToggleBaselineLock(bl)}
-                    >
-                      {bl.locked ? '🔒' : '🔓'}
-                    </button>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }}
-                      onClick={() => handleDeleteBaseline(bl.id)}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="baseline-row" style={{ marginTop: '4px' }}>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Year</label>

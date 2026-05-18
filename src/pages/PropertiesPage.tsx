@@ -76,15 +76,32 @@ export default function PropertiesPage() {
 
   useEffect(() => { setPageTitle('Properties'); }, [setPageTitle]);
 
+  // Property → 2026 daily rate from baselines. Loaded once alongside the
+  // property list; the card displays the current-year daily rate, which
+  // is the team's source of truth (price_from on the property record is
+  // a separate placeholder field that pre-dated the baselines table).
+  const [dailyRateById, setDailyRateById] = useState<Record<string, number>>({});
+
   async function loadProperties() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('partner_properties')
-        .select('*')
-        .eq('partner_id', CT_RENTALS_PARTNER_ID)
-        .order('bedrooms', { ascending: false });
-
+      const [pRes, bRes] = await Promise.all([
+        supabase
+          .from('partner_properties')
+          .select('*')
+          .eq('partner_id', CT_RENTALS_PARTNER_ID)
+          .order('bedrooms', { ascending: false }),
+        supabase
+          .from('baselines')
+          .select('property_id, daily_rate')
+          .eq('year', new Date().getFullYear()),
+      ]);
+      if (bRes.data) {
+        const m: Record<string, number> = {};
+        for (const b of bRes.data) m[b.property_id] = Number(b.daily_rate);
+        setDailyRateById(m);
+      }
+      const { data, error } = pRes;
       if (error) throw error;
       setProperties((data as Property[]) || []);
     } catch (err) {
@@ -402,12 +419,16 @@ export default function PropertiesPage() {
                       <span className="property-card__stat">👤 {property.sleeps} guests</span>
                     )}
                   </div>
-                  {property.price_from != null && property.price_from > 0 && (
-                    <div className="property-card__price">
-                      {property.price_currency || 'ZAR'} {Number(property.price_from).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                      <span className="property-card__price-label"> / week</span>
-                    </div>
-                  )}
+                  {(() => {
+                    const daily = dailyRateById[property.id];
+                    if (!daily || daily <= 0) return null;
+                    return (
+                      <div className="property-card__price">
+                        {property.price_currency || 'ZAR'} {Number(daily).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        <span className="property-card__price-label"> / night</span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="property-card__footer">
                   <button

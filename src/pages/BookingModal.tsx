@@ -4,10 +4,10 @@
  * BookingModal -- Create / edit a booking
  */
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 import DateInput from '../components/DateInput';
-import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS } from './constants';
+import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 
 export default function BookingModal({ booking, properties, onClose, onSave, supabase, user, partnerId }) {
   const toast = useToast();
@@ -16,6 +16,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
 
   const [form, setForm] = useState({
     property_id: booking.property_id || '',
+    guest_id: booking.guest_id || '',
     guest_name: booking.guest_name || '',
     guest_email: booking.guest_email || '',
     guest_phone: booking.guest_phone || '',
@@ -39,6 +40,38 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Guests for the picker. Loaded once on mount; the modal is short-lived
+  // so we don't bother subscribing to updates.
+  const [guestOptions, setGuestOptions] = useState<any[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('guests')
+        .select('id, name, email, phone, country')
+        .eq('partner_id', partnerId || CT_RENTALS_PARTNER_ID)
+        .order('name');
+      if (!cancelled && data) setGuestOptions(data);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, partnerId]);
+
+  function pickGuest(id: string) {
+    if (!id) { setForm(f => ({ ...f, guest_id: '' })); return; }
+    const g = guestOptions.find((x: any) => x.id === id);
+    if (!g) return;
+    // Autofill the guest fields from the CRM record so the booking shows
+    // the right name even if the CRM record is later edited; we still
+    // store the FK so the link survives changes.
+    setForm(f => ({
+      ...f,
+      guest_id: g.id,
+      guest_name: g.name || f.guest_name,
+      guest_email: g.email || f.guest_email,
+      guest_phone: g.phone || f.guest_phone,
+      guest_nationality: g.country || f.guest_nationality,
+    }));
+  }
 
   async function handleSave() {
     if (!form.guest_name.trim()) { toast.error('Guest name is required'); return; }
@@ -52,6 +85,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
         partner_id: partnerId,
         property_id: form.property_id,
         enquiry_id: booking.enquiry_id || null,
+        guest_id: form.guest_id || null,
         guest_name: form.guest_name.trim(),
         guest_email: form.guest_email.trim() || null,
         guest_phone: form.guest_phone.trim() || null,
@@ -166,10 +200,24 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
           </div>
 
           <SectionHeading>Guest Details</SectionHeading>
+          <div className="form-group">
+            <label className="form-label">Guest (from CRM)</label>
+            <select className="form-input" value={form.guest_id} onChange={(e) => pickGuest(e.target.value)}>
+              <option value="">— Not linked / one-off guest —</option>
+              {guestOptions.map((g: any) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}{g.email ? ` · ${g.email}` : ''}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 4 }}>
+              Link a CRM guest so this stay shows up in their record. Leave unlinked for walk-ins; add them in CRM &rarr; Guests later.
+            </div>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">Guest Name *</label>
-              <input type="text" className="form-input" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} placeholder="Full name" />
+              <input type="text" className="form-input" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value, guest_id: '' })} placeholder="Full name" />
             </div>
             <div className="form-group">
               <label className="form-label">Nationality</label>
