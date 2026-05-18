@@ -150,6 +150,14 @@ export default function PropertiesPage() {
   }
 
   const columns = [
+    {
+      key: 'slug', label: 'ID', sortable: true, width: '90px',
+      render: (row: DataRow) => (
+        <span style={{ fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, monospace)', fontSize: '0.75rem', fontWeight: 600 }}>
+          {(row as Property).slug || '-'}
+        </span>
+      ),
+    },
     { key: 'property_name', label: 'Property Name', sortable: true },
     {
       key: 'suburb', label: 'Suburb', sortable: true, hideOnMobile: true,
