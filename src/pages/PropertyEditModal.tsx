@@ -4,13 +4,43 @@
  * PropertyEditModal -- Create / edit a property
  */
 
-import { useState, useEffect } from 'react';
-import ImageManager from '../components/ImageManager';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import GallerySectionsEditor, { deriveFlatColumns } from '../components/GallerySectionsEditor';
+import { useToast } from '../components/ToastProvider';
 import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS, PLATFORM_NAME_OPTIONS } from './constants';
 import type { Baseline, ChannelProfile } from '../types/pricing';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user }) {
+  const toast = useToast();
   const isNew = !property.id;
+
+  // Escape acts as a back button. Body scroll is locked while the editor
+  // is open — the editor renders via a portal at document.body level, so
+  // the underlying page shouldn't bleed through.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  // Track whether the body has scrolled past zero so the header can pick
+  // up a subtle shadow / shrink — gives a "stuck" feel rather than a flat,
+  // static bar.
+  const bodyRef = useRef(null);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    function onScroll() { setScrolled(el.scrollTop > 4); }
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
 
   const generateSlug = (name) =>
     name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -50,6 +80,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     image_metadata: (property.image_metadata && typeof property.image_metadata === 'object' && !Array.isArray(property.image_metadata))
       ? property.image_metadata
       : {},
+    // Section-grouped gallery (new canonical source). When the form is
+    // saved, hero_image_url, gallery_images, and image_metadata are
+    // derived from this on the fly so the brochure / proposal / public
+    // website readers keep working unchanged.
+    gallery_sections: Array.isArray(property.gallery_sections) ? property.gallery_sections : [],
     amenity_tags: parseAmenityTags(property.amenity_tags),
     booking_url: property.booking_url || '',
     listing_links: stringifyJSON(property.listing_links),
@@ -72,6 +107,43 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // ── Tabs ──
+  // Tabbed detail view per the UX spec. Overview is always available;
+  // tabs that need a saved property (baselines, proposals, etc.) show a
+  // friendly "save first" message instead of an empty UI.
+  const TABS = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'gallery', label: 'Gallery' },
+    { id: 'listing', label: 'Listing' },
+    { id: 'brochure', label: 'Brochure' },
+    { id: 'pricing', label: 'Pricing' },
+    { id: 'proposals', label: 'Proposals' },
+    { id: 'documents', label: 'Documents' },
+    { id: 'activity', label: 'Activity' },
+  ];
+  const [activeTab, setActiveTab] = useState('overview');
+
+  // ── Proposals for this property (Proposals tab) ──
+  const [proposals, setProposals] = useState([]);
+  const [proposalsLoading, setProposalsLoading] = useState(false);
+  useEffect(() => {
+    if (isNew || !property.id || activeTab !== 'proposals') return;
+    let cancelled = false;
+    setProposalsLoading(true);
+    (async () => {
+      const { data } = await supabase
+        .from('proposals')
+        .select('id, ref_code, guest_name, check_in, check_out, status, created_at')
+        .eq('property_id', property.id)
+        .order('created_at', { ascending: false });
+      if (!cancelled) {
+        setProposals(data || []);
+        setProposalsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, property.id, isNew, supabase]);
 
   // ── Baselines ──
   const currentYear = new Date().getFullYear();
@@ -96,7 +168,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   }, [property.id]);
 
   async function handleSaveBaseline() {
-    if (!newBaseline.daily_rate || !newBaseline.monthly_rate) { alert('Both daily and monthly rates are required'); return; }
+    if (!newBaseline.daily_rate || !newBaseline.monthly_rate) { toast.error('Both daily and monthly rates are required'); return; }
     try {
       const payload = {
         property_id: property.id,
@@ -115,9 +187,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     } catch (err) {
       const raw = err?.message || String(err);
       if (raw.includes('BASELINE_LOCKED')) {
-        alert('This baseline is locked. Unlock it first to make changes.');
+        toast.warning('This baseline is locked. Unlock it first to make changes.');
       } else {
-        alert('Failed to save baseline: ' + raw);
+        toast.error('Failed to save baseline: ' + raw);
       }
     }
   }
@@ -128,7 +200,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       if (error) throw error;
       setBaselines((prev) => prev.map((b) => (b.id === bl.id ? { ...b, locked: !b.locked } : b)));
     } catch (err) {
-      alert('Failed to update: ' + err.message);
+      toast.error('Failed to update: ' + err.message);
     }
   }
 
@@ -140,15 +212,15 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     } catch (err) {
       const raw = err?.message || String(err);
       if (raw.includes('BASELINE_LOCKED')) {
-        alert('This baseline is locked. Unlock it first to delete it.');
+        toast.warning('This baseline is locked. Unlock it first to delete it.');
       } else {
-        alert('Failed to delete: ' + raw);
+        toast.error('Failed to delete: ' + raw);
       }
     }
   }
 
   async function handleSaveChannel() {
-    if (!newChannel.platform_name) { alert('Platform name is required'); return; }
+    if (!newChannel.platform_name) { toast.error('Platform name is required'); return; }
     try {
       const payload = {
         property_id: property.id,
@@ -162,7 +234,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       setChannelProfiles((prev) => [...prev, data[0]]);
       setNewChannel({ platform_name: '', platform_fee_pct: '', platform_fixed_fee: '', notes: '' });
     } catch (err) {
-      alert('Failed to save channel: ' + err.message);
+      toast.error('Failed to save channel: ' + err.message);
     }
   }
 
@@ -172,7 +244,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       if (error) throw error;
       setChannelProfiles((prev) => prev.filter((c) => c.id !== id));
     } catch (err) {
-      alert('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     }
   }
 
@@ -192,7 +264,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   }
 
   async function handleSave() {
-    if (!form.property_name.trim()) { alert('Property name is required'); return; }
+    if (!form.property_name.trim()) { toast.error('Property name is required'); return; }
     setSaving(true);
     try {
       const payload = {
@@ -213,9 +285,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         sleeps: form.sleeps !== '' ? parseInt(form.sleeps, 10) || 0 : null,
         price_from: form.price_from !== '' ? parseFloat(form.price_from) || null : null,
         price_currency: form.price_currency || 'ZAR',
-        hero_image_url: form.hero_image_url.trim() || null,
-        gallery_images: safeParseJSON(form.gallery_images),
-        image_metadata: form.image_metadata && typeof form.image_metadata === 'object' ? form.image_metadata : {},
+        // Gallery: write the canonical sections column AND derive the
+        // flat columns the brochure / proposal / public website still
+        // read. Single edit surface, three columns kept in sync.
+        gallery_sections: form.gallery_sections,
+        ...deriveFlatColumns(form.gallery_sections),
         amenity_tags: parseAmenityTagsInput(form.amenity_tags),
         booking_url: form.booking_url.trim() || null,
         listing_links: safeParseJSON(form.listing_links),
@@ -244,10 +318,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         const { error } = await supabase.from('partner_properties').update(payload).eq('id', property.id);
         if (error) throw error;
       }
+      toast.success(isNew ? 'Property created' : 'Property saved');
       if (onSave) await onSave();
     } catch (err) {
       console.error('Error saving property:', err);
-      alert('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -261,27 +336,99 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       if (onSave) await onSave();
     } catch (err) {
       console.error('Error deleting property:', err);
-      alert('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     } finally {
       setDeleting(false);
     }
   }
 
   const SectionHeading = ({ children }) => (
-    <h3 style={{ margin: '1.5rem 0 0.75rem', fontSize: '0.875rem', fontWeight: 600, textTransform: 'uppercase', color: '#6B7280', letterSpacing: '0.05em' }}>
-      {children}
-    </h3>
+    <h3 className="editor-section-heading">{children}</h3>
   );
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '1100px', width: '95vw' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">{isNew ? 'Add Property' : 'Edit Property'}</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
+  // Brochure section — preview link + share actions for an existing property.
+  // The brochure is auto-generated from the photos + property fields, so this
+  // is a read-only section (no edit layout). Used inside the property modal.
+  const BrochureShare = ({ property, form }) => {
+    const [copied, setCopied] = useState(false);
+    const slug = property.slug || form.slug;
+    const url = slug
+      ? `${window.location.origin}/brochures/${encodeURIComponent(slug)}`
+      : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
+    const subject = encodeURIComponent(`${form.property_name || 'Property'} brochure`);
+    const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
+    const waText = encodeURIComponent(`Brochure for ${form.property_name || 'this property'}: ${url}`);
+    async function copy() {
+      try { await navigator.clipboard.writeText(url); }
+      catch { /* clipboard blocked — silently no-op */ }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+    return (
+      <div className="brochure-share">
+        <div className="brochure-share-url" title={url}>{url}</div>
+        <div className="brochure-share-actions">
+          <button type="button" className="btn btn-primary" onClick={copy} style={{ fontSize: '0.8125rem' }}>
+            {copied ? '✓ Link copied' : '🔗 Copy link'}
+          </button>
+          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={url} target="_blank" rel="noopener noreferrer">
+            👁 Open preview
+          </a>
+          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={`https://wa.me/?text=${waText}`} target="_blank" rel="noopener noreferrer">
+            💬 WhatsApp
+          </a>
+          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={`mailto:?subject=${subject}&body=${body}`}>
+            ✉️ Email
+          </a>
         </div>
+        <div className="brochure-share-hint">
+          The brochure pulls photos + details from this property automatically — there's no separate brochure layout to edit. Save your changes before sharing.
+        </div>
+      </div>
+    );
+  };
 
-        <div className="modal-body" style={{ maxHeight: '85vh', overflowY: 'auto' }}>
+  return createPortal((
+    <div className="page-editor">
+      <div className={`page-editor-header ${scrolled ? 'is-scrolled' : ''}`}>
+        <button className="page-editor-back" onClick={onClose} aria-label="Back to properties">
+          <span className="page-editor-back-arrow" aria-hidden>←</span>
+          Back to properties
+        </button>
+        <h2 className="page-editor-title">
+          {isNew ? 'New property' : form.property_name || 'Edit property'}
+        </h2>
+        <div className="page-editor-header-actions">
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      {/* Tab bar — matches the sub-nav style elsewhere so the editor feels
+          part of the platform rather than its own UI. */}
+      <div className="page-editor-tabs">
+        <div className="page-editor-tabs-inner">
+          <div className="subnav" role="tablist">
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === t.id}
+                className={`subnav-link ${activeTab === t.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="page-editor-body" ref={bodyRef}>
+        <div className="page-editor-card">
+          {activeTab === 'overview' && (<>
           <SectionHeading>Identity</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
@@ -395,7 +542,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             >+ Add Bedroom</button>
           </div>
 
-          <SectionHeading>Pricing</SectionHeading>
+          </>)}
+
+          {activeTab === 'pricing' && (<>
+          <SectionHeading>Price From</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group"><label className="form-label">Price From</label><input type="number" className="form-input" value={form.price_from} onChange={(e) => setForm({ ...form, price_from: e.target.value })} min={0} step="0.01" /></div>
             <div className="form-group"><label className="form-label">Currency</label>
@@ -405,7 +555,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             </div>
           </div>
 
-          {!isNew && (
+          {isNew ? (
+            <div className="editor-tab-empty">Save this property first to unlock detailed pricing (baselines, channel profiles, scenarios).</div>
+          ) : (
             <>
               <SectionHeading>Baselines</SectionHeading>
               <div className="baseline-editor">
@@ -493,25 +645,28 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               </div>
             </>
           )}
+          </>)}
 
-          <SectionHeading>Images</SectionHeading>
-          <ImageManager
+          {activeTab === 'gallery' && (<>
+          <SectionHeading>Photos</SectionHeading>
+          <GallerySectionsEditor
             propertyId={property.id || 'new'}
-            heroImage={form.hero_image_url || null}
-            galleryImages={(() => {
-              if (Array.isArray(form.gallery_images)) return form.gallery_images;
-              if (typeof form.gallery_images === 'string' && form.gallery_images.trim()) {
-                try { const parsed = JSON.parse(form.gallery_images); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
-              }
-              return [];
-            })()}
-            imageMetadata={form.image_metadata}
-            onHeroChange={(url) => setForm(prev => ({ ...prev, hero_image_url: url || '' }))}
-            onGalleryChange={(urls) => setForm(prev => ({ ...prev, gallery_images: JSON.stringify(urls) }))}
-            onImageMetadataChange={(meta) => setForm(prev => ({ ...prev, image_metadata: meta || {} }))}
+            sections={form.gallery_sections}
+            onChange={(next) => setForm(prev => ({ ...prev, gallery_sections: next }))}
             supabase={supabase}
           />
+          </>)}
 
+          {activeTab === 'brochure' && (<>
+          <SectionHeading>Brochure</SectionHeading>
+          {isNew ? (
+            <div className="editor-tab-empty">Save this property first — the brochure is auto-generated once it exists in the database.</div>
+          ) : (
+            <BrochureShare property={property} form={form} />
+          )}
+          </>)}
+
+          {activeTab === 'overview' && (<>
           <SectionHeading>Amenities</SectionHeading>
           {(() => {
             // Parse current tags
@@ -588,28 +743,102 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             );
           })()}
 
-          <SectionHeading>Links</SectionHeading>
+          </>)}
+
+          {activeTab === 'listing' && (<>
+          <SectionHeading>Publish status</SectionHeading>
+          <label className="editor-toggle">
+            <input
+              type="checkbox"
+              checked={!!form.is_published}
+              onChange={(e) => setForm({ ...form, is_published: e.target.checked })}
+            />
+            <span className="editor-toggle-track"><span className="editor-toggle-thumb" /></span>
+            <span className="editor-toggle-label">
+              {form.is_published ? 'Active — visible on the public site and brochures' : 'Archived — hidden from public listings'}
+            </span>
+          </label>
+
+          {!isNew && (
+            <>
+              <SectionHeading>Public URL</SectionHeading>
+              {(() => {
+                const slug = property.slug || form.slug;
+                const publicUrl = slug
+                  ? `${window.location.origin}/brochures/${encodeURIComponent(slug)}`
+                  : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
+                return (
+                  <div className="brochure-share">
+                    <div className="brochure-share-url" title={publicUrl}>{publicUrl}</div>
+                    <div className="brochure-share-actions">
+                      <a className="btn btn-primary" style={{ fontSize: '0.8125rem' }} href={publicUrl} target="_blank" rel="noopener noreferrer">
+                        👁 Open listing
+                      </a>
+                    </div>
+                    <div className="brochure-share-hint">
+                      A dedicated listing page is in production — for now the public brochure doubles as the property's public face.
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          <SectionHeading>External listings</SectionHeading>
           <div className="form-group"><label className="form-label">Booking URL</label><input type="url" className="form-input" value={form.booking_url} onChange={(e) => setForm({ ...form, booking_url: e.target.value })} placeholder="https://..." /></div>
           <div className="form-group"><label className="form-label">Listing Links (JSON)</label><textarea className="form-input" rows={3} value={form.listing_links} onChange={(e) => setForm({ ...form, listing_links: e.target.value })} placeholder='[{"platform": "airbnb", "url": "https://..."}]' /></div>
+          </>)}
 
-        </div>
-
-        <div className="modal-footer">
-          {!isNew && !showDeleteConfirm && (
-            <button className="btn btn-outline" style={{ color: '#dc2626' }} onClick={() => setShowDeleteConfirm(true)}>Delete</button>
-          )}
-          {!isNew && showDeleteConfirm && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ color: '#dc2626', fontSize: '0.875rem' }}>Delete this property?</span>
-              <button className="btn btn-outline" style={{ color: '#dc2626' }} onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting...' : 'Confirm Delete'}</button>
-              <button className="btn btn-ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
+          {activeTab === 'proposals' && (<>
+          <SectionHeading>Proposals for this property</SectionHeading>
+          {isNew ? (
+            <div className="editor-tab-empty">Save this property first to start tracking proposals against it.</div>
+          ) : proposalsLoading ? (
+            <div className="editor-tab-empty">Loading…</div>
+          ) : proposals.length === 0 ? (
+            <div className="editor-tab-empty">No proposals yet for this property. Create one from a matched enquiry.</div>
+          ) : (
+            <div className="editor-list">
+              {proposals.map(pr => (
+                <a
+                  key={pr.id}
+                  className="editor-list-row"
+                  href={`${window.location.origin}/proposal.html?ref=${pr.ref_code}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <div className="editor-list-main">
+                    <div className="editor-list-title">{pr.guest_name || 'Unnamed guest'}</div>
+                    <div className="editor-list-sub">
+                      {new Date(pr.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}
+                      {' → '}
+                      {new Date(pr.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </div>
+                  </div>
+                  <span className={`editor-list-badge editor-list-badge--${pr.status || 'draft'}`}>{pr.status || 'draft'}</span>
+                </a>
+              ))}
             </div>
           )}
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+          </>)}
+
+          {activeTab === 'documents' && (<>
+          <SectionHeading>Documents</SectionHeading>
+          <div className="editor-tab-empty">
+            <strong>Coming soon.</strong> Owner agreements, insurance, leases and any file stored against the property will live here.
+          </div>
+          </>)}
+
+          {activeTab === 'activity' && (<>
+          <SectionHeading>Activity</SectionHeading>
+          <div className="editor-tab-empty">
+            <strong>Coming soon.</strong> A chronological log of enquiries, proposals, bookings, status changes and notes for this property.
+          </div>
+          </>)}
+
         </div>
       </div>
+
     </div>
-  );
+  ), document.body);
 }

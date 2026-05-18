@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, Fragment, type ReactNode } from 'react';
 import { useLayout } from '../contexts/LayoutContext';
 import ToolbarActions from './ToolbarActions';
+import EmptyState from './EmptyState';
 
 // ---- Types ----
 
@@ -352,11 +353,11 @@ function DataTable({
 
       {/* Table */}
       {paginatedData.length === 0 ? (
-        <div className="empty-state">
-          {typeof emptyMessage === 'string' ? (
-            <p className="empty-state-message">{emptyMessage}</p>
-          ) : emptyMessage}
-        </div>
+        typeof emptyMessage === 'string' ? (
+          <EmptyState icon="🔎" title={emptyMessage} />
+        ) : (
+          <div className="empty-state">{emptyMessage}</div>
+        )
       ) : (
         <div className="mobile-table-scroll">
           <table className="data-table">

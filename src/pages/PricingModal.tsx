@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { useToast } from '../components/ToastProvider';
 import { calculatePricing } from '../lib/pricingEngine';
 import DataTable from '../components/DataTable';
 import { StatusBadge } from '../components/DataTable';
@@ -19,6 +20,7 @@ const SEASON_COLORS: Record<string, { color: string; bg: string }> = {
 };
 
 export default function PricingModal({ property, onClose, supabase }) {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'calculator' | 'proposals'>('calculator');
 
   // Data
@@ -157,7 +159,7 @@ export default function PricingModal({ property, onClose, supabase }) {
 
   // ── Save proposal ──
   async function handleCreateProposal() {
-    if (!baseline) { alert('No baseline set for this property. Add a baseline first.'); return; }
+    if (!baseline) { toast.error('No baseline set for this property. Add a baseline first.'); return; }
     setSaving(true);
     setSaveMessage('');
     try {
@@ -206,7 +208,7 @@ export default function PricingModal({ property, onClose, supabase }) {
       setTimeout(() => setSaveMessage(''), 3000);
     } catch (err) {
       console.error('Error creating proposal:', err);
-      alert('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     } finally {
       setSaving(false);
     }

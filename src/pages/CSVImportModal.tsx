@@ -6,6 +6,7 @@
  */
 
 import { useState, useRef } from 'react';
+import { useToast } from '../components/ToastProvider';
 
 const DB_COLUMNS = [
   { value: '', label: '-- Skip --' },
@@ -83,6 +84,7 @@ function autoMap(csvHeader) {
 }
 
 export default function CSVImportModal({ partnerId, onClose, onSave, supabase, user }) {
+  const toast = useToast();
   const fileRef = useRef(null);
   const [step, setStep] = useState('upload');
   const [dragOver, setDragOver] = useState(false);
@@ -99,7 +101,7 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
     reader.onload = (e) => {
       const text = e.target.result;
       const { headers, rows } = parseCSV(text);
-      if (headers.length === 0 || rows.length === 0) { alert('Could not parse CSV.'); return; }
+      if (headers.length === 0 || rows.length === 0) { toast.error('Could not parse CSV.'); return; }
       setCsvHeaders(headers);
       setCsvRows(rows);
       const autoMapping = {};
@@ -114,7 +116,7 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
     e.preventDefault(); setDragOver(false);
     const file = e.dataTransfer.files[0];
     if (file && (file.name.endsWith('.csv') || file.type === 'text/csv')) { handleFile(file); }
-    else { alert('Please drop a .csv file'); }
+    else { toast.error('Please drop a .csv file'); }
   }
 
   function updateMapping(csvHeader, dbColumn) { setMapping({ ...mapping, [csvHeader]: dbColumn }); }
@@ -134,7 +136,7 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
     const mapped = getMappedRows();
     const validated = validateRows(mapped);
     const validRows = validated.filter((r) => r._valid);
-    if (validRows.length === 0) { alert('No valid rows to import.'); return; }
+    if (validRows.length === 0) { toast.error('No valid rows to import.'); return; }
     setImporting(true); setImportProgress(0);
 
     const toInsert = validRows.map((row) => ({

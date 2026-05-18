@@ -234,7 +234,7 @@ export default function BrochureEditor({ property, onClose, onSave, supabase }) 
         Promise.resolve(onSave(updated)).catch(() => {});
       }
     } catch (err: any) {
-      alert('Failed to save brochure layout: ' + (err?.message || err));
+      toast.error('Failed to save brochure layout: ' + (err?.message || err));
     } finally {
       setSaving(false);
     }

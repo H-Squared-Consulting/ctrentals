@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useToast } from '../components/ToastProvider';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DateInput from '../components/DateInput';
@@ -12,6 +13,7 @@ import { SEASON_TAG_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import type { SeasonTag } from '../types/pricing';
 
 export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}) {
+  const toast = useToast();
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
@@ -51,8 +53,8 @@ export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}
   }, [supabase]);
 
   async function handleAdd() {
-    if (!newTag.start_date || !newTag.end_date) { alert('Start and end dates are required'); return; }
-    if (newTag.end_date <= newTag.start_date) { alert('End date must be after start date'); return; }
+    if (!newTag.start_date || !newTag.end_date) { toast.error('Start and end dates are required'); return; }
+    if (newTag.end_date <= newTag.start_date) { toast.error('End date must be after start date'); return; }
     setSaving(true);
     try {
       const payload = {
@@ -67,7 +69,7 @@ export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}
       setTags((prev) => [...prev, data[0]].sort((a, b) => a.start_date.localeCompare(b.start_date)));
       setNewTag({ name: 'Peak', start_date: '', end_date: '', multiplier: '1.5', property_id: '' });
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -79,7 +81,7 @@ export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}
       if (error) throw error;
       setTags((prev) => prev.filter((t) => t.id !== id));
     } catch (err) {
-      alert('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     }
   }
 

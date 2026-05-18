@@ -7,12 +7,30 @@
 const SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1udnhpdGV4Y2Rnb2h6Z3R2d3pnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MTM4NTMsImV4cCI6MjA4OTQ4OTg1M30.h2Y1nIxV1xkvCyeSOknAiu-SrjPwijsueaJel10JoA4';
 
+// Hostnames served as the neutral (agent-share) variant. Add the registered
+// domain here when it's chosen — until then we only fall back to the
+// ?brand=agent query param for local testing.
+const AGENT_HOSTS = [];
+
+function detectBrandMode(req) {
+  // Query param wins so we can test the agent variant locally without
+  // needing to own the neutral domain.
+  const qp = req.query && (req.query.brand || '');
+  if (qp === 'agent' || qp === 'direct') return qp;
+  const host = String(req.headers.host || '').toLowerCase().split(':')[0];
+  for (const h of AGENT_HOSTS) {
+    if (host === h || host.endsWith('.' + h)) return 'agent';
+  }
+  return 'direct';
+}
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 export default async function handler(req, res) {
   const slug = (req.query && req.query.slug) || '';
+  const brandMode = detectBrandMode(req);
   let title = 'Property Brochure';
   let description = 'View this property brochure';
   let image = '';

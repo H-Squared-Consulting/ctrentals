@@ -5,10 +5,12 @@
  */
 
 import { useState } from 'react';
+import { useToast } from '../components/ToastProvider';
 import DateInput from '../components/DateInput';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS } from './constants';
 
 export default function BookingModal({ booking, properties, onClose, onSave, supabase, user, partnerId }) {
+  const toast = useToast();
   const isNew = !booking.id;
   const isFromEnquiry = !!booking._fromEnquiry;
 
@@ -39,10 +41,10 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
   const [deleting, setDeleting] = useState(false);
 
   async function handleSave() {
-    if (!form.guest_name.trim()) { alert('Guest name is required'); return; }
-    if (!form.property_id) { alert('Please select a property'); return; }
-    if (!form.check_in || !form.check_out) { alert('Check-in and check-out dates are required'); return; }
-    if (form.check_out <= form.check_in) { alert('Check-out must be after check-in'); return; }
+    if (!form.guest_name.trim()) { toast.error('Guest name is required'); return; }
+    if (!form.property_id) { toast.error('Please select a property'); return; }
+    if (!form.check_in || !form.check_out) { toast.error('Check-in and check-out dates are required'); return; }
+    if (form.check_out <= form.check_in) { toast.error('Check-out must be after check-in'); return; }
 
     setSaving(true);
     try {
@@ -84,7 +86,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
       if (onSave) await onSave(isFromEnquiry ? booking.enquiry_id : undefined);
     } catch (err) {
       console.error('Error saving booking:', err);
-      alert('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -98,7 +100,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
       if (onSave) await onSave();
     } catch (err) {
       console.error('Error deleting booking:', err);
-      alert('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     } finally {
       setDeleting(false);
     }

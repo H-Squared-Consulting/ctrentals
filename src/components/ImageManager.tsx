@@ -168,7 +168,7 @@ export default function ImageManager({ propertyId, heroImage, galleryImages, ima
       }
 
       if (failures.length > 0) {
-        alert(
+        toast.error(
           `${newUrls.length} of ${files.length} image${files.length === 1 ? '' : 's'} uploaded.\n\n` +
           `Failed:\n• ${failures.join('\n• ')}`
         );

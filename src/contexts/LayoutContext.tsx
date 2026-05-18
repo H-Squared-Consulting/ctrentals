@@ -3,6 +3,10 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 interface LayoutContextValue {
   pageTitle: string;
   setPageTitle: (title: string) => void;
+  pageHeaderSlot: ReactNode | null;
+  setPageHeaderSlot: (node: ReactNode | null) => void;
+  pageHeaderHidden: boolean;
+  setPageHeaderHidden: (hidden: boolean) => void;
   isMobile: boolean;
 }
 
@@ -10,6 +14,8 @@ const LayoutContext = createContext<LayoutContextValue | null>(null);
 
 export function LayoutProvider({ children }: { children: ReactNode }) {
   const [pageTitle, setPageTitle] = useState('Properties');
+  const [pageHeaderSlot, setPageHeaderSlot] = useState<ReactNode | null>(null);
+  const [pageHeaderHidden, setPageHeaderHidden] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -21,7 +27,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <LayoutContext.Provider value={{ pageTitle, setPageTitle, isMobile }}>
+    <LayoutContext.Provider value={{ pageTitle, setPageTitle, pageHeaderSlot, setPageHeaderSlot, pageHeaderHidden, setPageHeaderHidden, isMobile }}>
       {children}
     </LayoutContext.Provider>
   );

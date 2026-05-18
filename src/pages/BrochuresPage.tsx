@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { CT_RENTALS_PARTNER_ID } from './constants';
+import EmptyState from '../components/EmptyState';
 
 interface Property {
   id: string;
@@ -36,10 +37,14 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
 
   async function loadProperties() {
     setLoading(true);
+    // Brochures only exist for active (published) properties. Archived ones
+    // are intentionally excluded — to bring one back, the user reactivates
+    // it on the Properties page.
     const { data, error } = await supabase
       .from('partner_properties')
       .select('id, slug, property_name, bedrooms, bathrooms, sleeps, suburb, city, hero_image_url, is_published')
       .eq('partner_id', CT_RENTALS_PARTNER_ID)
+      .eq('is_published', true)
       .order('property_name');
     if (!error && data) setProperties(data as Property[]);
     setLoading(false);
@@ -62,7 +67,13 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
     setTimeout(() => setCopied(null), 2000);
   }
 
-  if (loading) return <div className="page-loader"><div className="spinner" /></div>;
+  if (loading) {
+    return (
+      <div>
+        <div className="page-loader"><div className="spinner" /></div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -90,8 +101,14 @@ export default function BrochuresPage({ embedded }: { embedded?: boolean } = {})
       {/* Property Grid */}
       <div className="brochure-grid">
         {filtered.length === 0 ? (
-          <div className="empty-state" style={{ gridColumn: '1 / -1' }}>
-            <p className="empty-state-message">No properties found.</p>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <EmptyState
+              icon="📄"
+              title={properties.length === 0 ? 'No brochures yet' : 'No brochures match your search'}
+              description={properties.length === 0
+                ? 'Add a property — every property automatically gets a shareable brochure.'
+                : 'Try a different search term or clear your filters.'}
+            />
           </div>
         ) : (
           filtered.map(property => (

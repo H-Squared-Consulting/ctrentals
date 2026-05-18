@@ -5,11 +5,13 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { useToast } from '../components/ToastProvider';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import type { Agent } from '../types/pricing';
 
 export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
+  const toast = useToast();
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
@@ -41,7 +43,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => { if (supabase) loadAgents(); }, [supabase]);
 
   async function handleAdd() {
-    if (!newAgent.name.trim()) { alert('Agent name is required'); return; }
+    if (!newAgent.name.trim()) { toast.error('Agent name is required'); return; }
     setSaving(true);
     try {
       const payload = {
@@ -56,14 +58,14 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       setNewAgent({ name: '', company: '', email: '', default_commission_pct: '15' });
       setShowAddForm(false);
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     } finally {
       setSaving(false);
     }
   }
 
   async function handleSaveEdit() {
-    if (!editForm.name.trim()) { alert('Agent name is required'); return; }
+    if (!editForm.name.trim()) { toast.error('Agent name is required'); return; }
     try {
       const payload = {
         name: editForm.name.trim(),
@@ -79,7 +81,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       );
       setEditingId(null);
     } catch (err) {
-      alert('Failed to update: ' + err.message);
+      toast.error('Failed to update: ' + err.message);
     }
   }
 
@@ -90,7 +92,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       if (error) throw error;
       setAgents((prev) => prev.filter((a) => a.id !== id));
     } catch (err) {
-      alert('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     }
   }
 

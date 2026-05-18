@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { useToast } from '../components/ToastProvider';
 
 function generateRefCode() {
   const now = new Date();
@@ -25,6 +26,7 @@ function fmtDate(d) {
 }
 
 export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supabase, partnerId }) {
+  const toast = useToast();
   const [properties, setProperties] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -124,7 +126,7 @@ export default function ProposalGeneratorModal({ enquiry, onClose, onDone, supab
     const { data, error } = await supabase.from('proposals').insert(proposals).select('*, partner_properties(property_name)');
 
     if (error) {
-      alert('Failed to generate proposals: ' + error.message);
+      toast.error('Failed to generate proposals: ' + error.message);
       setGenerating(false);
       return;
     }

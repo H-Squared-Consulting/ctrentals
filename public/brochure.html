@@ -21,6 +21,26 @@
   var SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
   var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1udnhpdGV4Y2Rnb2h6Z3R2d3pnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MTM4NTMsImV4cCI6MjA4OTQ4OTg1M30.h2Y1nIxV1xkvCyeSOknAiu-SrjPwijsueaJel10JoA4';
 
+  // ── Brand mode ──
+  // 'direct' renders the branded variant (logo, company contact, book-direct
+  // CTA). 'agent' is the neutral variant served on the agent-share domain —
+  // identical content minus the branding, with an "Enquire through your
+  // agent" contact block. Until the agent domain is registered we pick the
+  // mode from a query param so it's testable locally.
+  // Once the neutral domain is live, swap the hostname check below for the
+  // real domain comparison.
+  var BRAND_MODE = (function() {
+    var qp = new URLSearchParams(window.location.search).get('brand');
+    if (qp === 'agent' || qp === 'direct') return qp;
+    var host = (window.location.hostname || '').toLowerCase();
+    // Add the agent-share hostnames here once chosen, e.g. 'stayview.co.za'.
+    var AGENT_HOSTS = [];
+    for (var i = 0; i < AGENT_HOSTS.length; i++) {
+      if (host === AGENT_HOSTS[i] || host.endsWith('.' + AGENT_HOSTS[i])) return 'agent';
+    }
+    return 'direct';
+  })();
+
   // ── Helpers ──
   function esc(str) {
     if (str == null) return '';
@@ -256,6 +276,14 @@
       '  font-size: 14px; color: var(--text-dark); text-align: center;',
       '  font-style: italic; font-weight: 500; padding: 4px 4px 0;',
       '}',
+      '.br-gallery-subheading {',
+      '  grid-column: 1 / -1;',
+      '  font-size: 18px; color: var(--text-dark); font-weight: 600;',
+      '  margin: 16px 0 8px; padding-bottom: 8px;',
+      '  border-bottom: 1px solid #E5E7EB;',
+      '  letter-spacing: 0.02em;',
+      '}',
+      '.br-gallery-subheading:first-child { margin-top: 0; }',
       '@media (max-width: 767px) {',
       '  .br-gallery { padding: 32px 24px; }',
       '  .br-gallery-grid { grid-template-columns: 1fr; }',
@@ -337,6 +365,16 @@
       /* ── Section 7: SHARE ── */
       '.br-share { background: var(--black); padding: 56px 40px; text-align: center; }',
       '.br-share-heading { color: var(--white); font-size: 24px; margin-bottom: 24px; }',
+
+      /* ── Section 7a: AGENT CONTACT (neutral / agent-share domain only) ── */
+      '.br-agent-contact { background: var(--linen); padding: 56px 40px; text-align: center; }',
+      '.br-agent-contact-heading { font-size: 24px; margin-bottom: 12px; color: var(--black); }',
+      '.br-agent-contact-body { font-size: 15px; color: #555; max-width: 480px; margin: 0 auto; line-height: 1.55; }',
+      '@media (max-width: 767px) {',
+      '  .br-agent-contact { padding: 40px 24px; }',
+      '  .br-agent-contact-heading { font-size: 20px; }',
+      '}',
+
       '.br-share-sub {',
       '  color: #666; font-size: 13px; margin-top: 20px;',
       '}',
@@ -460,6 +498,7 @@
     var items = queue.items;
     var propertyName = queue.propertyName;
     var i = 0;
+    var photoIdx = 0; // counts only photo items (for alt text + featured-slot)
     function step() {
       // Bail if a re-render swapped this grid out from under us (e.g. live preview).
       if (grid !== document.getElementById('br-gallery-grid')) return;
@@ -467,9 +506,16 @@
       var chunk = '';
       for (; i < end; i++) {
         var item = items[i];
-        var figClass = 'br-gallery-fig' + (i === 0 ? ' br-gallery-full' : '');
+        // Queue items can be either { heading } (section subtitle) or
+        // { url, caption } (an actual photo).
+        if (item && item.heading) {
+          chunk += '<h3 class="br-gallery-subheading">' + esc(item.heading) + '</h3>';
+          continue;
+        }
+        var figClass = 'br-gallery-fig' + (photoIdx === 0 ? ' br-gallery-full' : '');
+        photoIdx++;
         chunk += '<figure class="' + figClass + '">';
-        chunk += '<img src="' + esc(sizedImgUrl(item.url, 1200)) + '" alt="' + esc(propertyName) + ' - Photo ' + (i + 1) + '" loading="lazy">';
+        chunk += '<img src="' + esc(sizedImgUrl(item.url, 1200)) + '" alt="' + esc(propertyName) + ' - Photo ' + photoIdx + '" loading="lazy">';
         if (item.caption) {
           chunk += '<figcaption class="br-gallery-caption">' + esc(item.caption) + '</figcaption>';
         }
@@ -609,36 +655,88 @@
       html += '</section>';
     }
 
-    // Section 4: GALLERY — filter by show_in_brochure, render caption when set.
-    // For galleries this big (Villa Kilimani has 108 photos), the synchronous
-    // innerHTML assignment can stall the iframe long enough that the preview
-    // looks blank. We emit an empty grid here and stash the data on a window
-    // global; the post-render code below fills the grid in RAF-paced chunks
-    // so the iframe paints immediately and the photos stream in.
-    var visibleGallery = [];
-    for (var gi = 0; gi < gallery.length; gi++) {
-      var gm = imageMeta(imgMeta, gallery[gi]);
-      if (gm.show) visibleGallery.push({ url: gallery[gi], caption: gm.caption });
-    }
-    // Hard cap the gallery at a reasonable number of photos. Properties
-    // scraped from Airbnb can have 70+ photos; loading all of them in a
-    // single page kills the browser before anything paints. The first N in
-    // gallery_images is what mom has curated to the top of the lineup via
-    // the Brochure editor, so this is the photo set she wants to feature.
+    // Section 4: GALLERY
+    // The structured gallery_sections column (if present and non-empty) is
+    // the canonical source — render photos grouped by section with section
+    // names as subheadings. If the property still has only the legacy flat
+    // gallery_images, fall back to a single ungrouped grid.
     var HARD_CAP = 30;
     var PREVIEW_CAP = 24;
     var isPreviewMode = /[?&]preview=1\b/.test(window.location.search);
-    var galleryTruncated = false;
     var cap = isPreviewMode ? PREVIEW_CAP : HARD_CAP;
-    if (visibleGallery.length > cap) {
-      visibleGallery = visibleGallery.slice(0, cap);
-      galleryTruncated = true;
+    var galleryTruncated = false;
+
+    // Parse gallery_sections defensively. Supabase returns jsonb as a parsed
+    // object; the editor writes an array of { id, name, sort_order, photos }.
+    var sections = p.gallery_sections;
+    if (typeof sections === 'string') { try { sections = JSON.parse(sections); } catch(e) { sections = []; } }
+    if (!Array.isArray(sections)) sections = [];
+
+    // Build a flat list of visible non-hero photos, capped, grouped by section.
+    // We render in section order (already sorted by the editor), and only
+    // emit a section subheading when the section name isn't "Unsorted" — the
+    // legacy backfill drops everything into Unsorted, and surfacing that
+    // label adds noise rather than clarity.
+    var grouped = []; // [{ name, photos: [{url, caption}] }]
+    if (sections.length > 0) {
+      var taken = 0;
+      for (var si = 0; si < sections.length; si++) {
+        var sec = sections[si] || {};
+        var secPhotos = Array.isArray(sec.photos) ? sec.photos : [];
+        var rendered = [];
+        for (var spi = 0; spi < secPhotos.length; spi++) {
+          var ph = secPhotos[spi];
+          if (!ph || !ph.url) continue;
+          if (ph.is_hero) continue;             // hero appears in br-hero, not the gallery
+          if (ph.is_visible === false) continue; // explicitly hidden
+          // Allow image_metadata-style override (legacy) just in case.
+          var m = imageMeta(imgMeta, ph.url);
+          if (!m.show) continue;
+          if (taken >= cap) { galleryTruncated = true; break; }
+          rendered.push({ url: ph.url, caption: ph.caption || m.caption || '' });
+          taken++;
+        }
+        if (rendered.length > 0) {
+          grouped.push({ name: (sec.name || '').trim(), photos: rendered });
+        }
+        if (taken >= cap) break;
+      }
+    } else {
+      // Legacy fallback: flat gallery_images + image_metadata.
+      var flat = [];
+      for (var gi = 0; gi < gallery.length; gi++) {
+        var gm = imageMeta(imgMeta, gallery[gi]);
+        if (!gm.show) continue;
+        if (flat.length >= cap) { galleryTruncated = true; break; }
+        flat.push({ url: gallery[gi], caption: gm.caption });
+      }
+      if (flat.length > 0) grouped.push({ name: '', photos: flat });
     }
-    if (!cfg.hide('gallery') && visibleGallery.length > 0) {
-      window._brGalleryQueue = { items: visibleGallery, propertyName: p.property_name };
+
+    // Decide whether to render section headings: only when there's >1 group
+    // AND at least one group has a meaningful (non-"Unsorted") name.
+    var showHeadings = grouped.length > 1 && grouped.some(function(g) {
+      var n = (g.name || '').toLowerCase();
+      return n && n !== 'unsorted';
+    });
+
+    if (!cfg.hide('gallery') && grouped.length > 0) {
       html += '<section class="br-gallery reveal">';
       html += '<h2 class="br-gallery-heading">Gallery</h2>';
       html += '<div class="br-gallery-rule"></div>';
+      // Combine all photos into one queue for the chunked filler — section
+      // boundaries are encoded by interleaving subheading items.
+      var queue = [];
+      for (var gx = 0; gx < grouped.length; gx++) {
+        var g = grouped[gx];
+        if (showHeadings && g.name && g.name.toLowerCase() !== 'unsorted') {
+          queue.push({ heading: g.name });
+        }
+        for (var px = 0; px < g.photos.length; px++) {
+          queue.push(g.photos[px]);
+        }
+      }
+      window._brGalleryQueue = { items: queue, propertyName: p.property_name };
       html += '<div class="br-gallery-grid" id="br-gallery-grid"></div>';
       if (galleryTruncated && isPreviewMode) {
         html += '<div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-light);font-style:italic">Preview shows first ' + cap + ' photos.</div>';
@@ -663,8 +761,22 @@
 
     // Section 6: PRICING — removed (no pricing on brochures)
 
+    // Section 7a: AGENT CONTACT — only on the neutral (agent-share) variant.
+    // We swap a generic "speak to your agent" panel in for what will become
+    // the branded "book direct" CTA on the company-domain variant. This keeps
+    // the agent flow honest: the client sees nothing that would let them go
+    // around the agent.
+    if (BRAND_MODE === 'agent') {
+      html += '<section class="br-agent-contact reveal">';
+      html += '<h2 class="br-agent-contact-heading">Interested in this property?</h2>';
+      html += '<div class="br-agent-contact-body">Speak to your agent for availability, pricing and booking.</div>';
+      html += '</section>';
+    }
+
     // Section 7: SHARE
-    if (!cfg.hide('share')) {
+    // Hide the share section in agent mode so the recipient doesn't get a
+    // re-share button — the agent is the one doing the sharing.
+    if (!cfg.hide('share') && BRAND_MODE !== 'agent') {
       html += '<section class="br-share reveal">';
       html += '<h2 class="br-share-heading">Share This Property</h2>';
       html += '<button class="br-btn-primary" id="btn-copy-link">Copy Link</button>';

@@ -6,7 +6,6 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import { StatusBadge } from '../components/DataTable';
 import ProposalGeneratorModal from './ProposalGeneratorModal';
-import ProposalsPage from './ProposalsPage';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 
 interface Enquiry extends DataRow {
@@ -55,7 +54,6 @@ export default function EnquiriesPage() {
   const { setPageTitle } = useLayout();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'enquiries' | 'proposals'>('enquiries');
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +102,7 @@ export default function EnquiriesPage() {
 
   function handleConvertToBooking(enquiry: Enquiry) {
     setSelectedEnquiry(null);
-    navigate('/calendar', { state: { fromEnquiry: enquiry } });
+    navigate('/operations/bookings', { state: { fromEnquiry: enquiry } });
   }
 
   const columns = [
@@ -126,24 +124,15 @@ export default function EnquiriesPage() {
 
   return (
     <div>
-      {/* ── Tab bar ── */}
-      <div className="page-tabs">
-        <button className={`page-tab ${activeTab === 'enquiries' ? 'active' : ''}`} onClick={() => setActiveTab('enquiries')}>
-          Enquiries
-        </button>
-        <button className={`page-tab ${activeTab === 'proposals' ? 'active' : ''}`} onClick={() => setActiveTab('proposals')}>
-          Proposals
-        </button>
-        <div style={{ flex: 1 }} />
+      {/* Section sub-nav (Enquiries / Proposals / Bookings) lives in the
+       * page header — see SectionWrap in App.tsx. The toolbar here only
+       * carries the page-specific action. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--s-3)' }}>
         <button className="btn btn-primary" style={{ fontSize: '0.8125rem' }} onClick={() => navigate('/enquiry/new')}>
           + New Enquiry
         </button>
       </div>
 
-      {activeTab === 'proposals' && <ProposalsPage embedded />}
-
-      {activeTab === 'enquiries' && (
-      <>
       <DataTable
         columns={columns}
         data={enquiries}
@@ -260,8 +249,6 @@ export default function EnquiriesPage() {
           supabase={supabase}
           partnerId={CT_RENTALS_PARTNER_ID}
         />
-      )}
-      </>
       )}
     </div>
   );
