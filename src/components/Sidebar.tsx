@@ -98,15 +98,10 @@ export default function Sidebar() {
     () => NAV.find(item => matches(location.pathname, item)),
     [location.pathname],
   );
-  // Track which groups are open. Default: all collapsed. The active
-  // section auto-opens whenever the route lands inside it so the user
-  // can still see their context.
+  // Track which groups are open. All groups default to collapsed on
+  // page load/refresh — even the active one — so the sidebar starts
+  // tidy. Users open what they want by clicking.
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    if (activeItem?.children) {
-      setOpen(prev => ({ ...prev, [activeItem.to]: true }));
-    }
-  }, [activeItem]);
 
   function toggle(key: string) {
     setOpen(prev => ({ ...prev, [key]: !prev[key] }));
