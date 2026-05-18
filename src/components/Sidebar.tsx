@@ -70,7 +70,15 @@ const NAV: NavItem[] = [
       { to: '/reports/properties', label: 'Properties' },
     ],
   },
-  { to: '/settings', label: 'Settings', icon: '⚙️' },
+  {
+    to: '/settings',
+    label: 'Settings',
+    icon: '⚙️',
+    children: [
+      { to: '/settings/seasons', label: 'Seasons' },
+      { to: '/settings/channels', label: 'Channels' },
+    ],
+  },
 ];
 
 function matches(path: string, item: NavItem) {

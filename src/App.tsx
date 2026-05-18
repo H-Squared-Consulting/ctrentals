@@ -15,6 +15,8 @@ import ProposalsPage from './pages/ProposalsPage';
 import AgentsPage from './pages/AgentsPage';
 import GuestsPage from './pages/GuestsPage';
 import HomeOwnersPage from './pages/HomeOwnersPage';
+import SeasonTagsPage from './pages/SeasonTagsPage';
+import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -94,7 +96,9 @@ export function App() {
       <Route path="/reports/properties" element={<Page><SectionPlaceholder pageTitle="Properties Report" title="Property reports coming soon" description="Per-property occupancy, revenue and lead-source performance." icon="🏘" /></Page>} />
 
       {/* Settings */}
-      <Route path="/settings" element={<Page><SettingsPage /></Page>} />
+      <Route path="/settings" element={<Navigate to="/settings/seasons" replace />} />
+      <Route path="/settings/seasons" element={<Page><SettingsPage tab="seasons"><SeasonTagsPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/channels" element={<Page><SettingsPage tab="channels"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
 
       {/* Standalone form */}
       <Route path="/enquiry/new" element={<Page><EnquiryForm /></Page>} />

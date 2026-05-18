@@ -9,7 +9,7 @@ import { useToast } from '../components/ToastProvider';
 import { calculatePricing } from '../lib/pricingEngine';
 import DataTable from '../components/DataTable';
 import { StatusBadge } from '../components/DataTable';
-import { PRICING_PROPOSAL_STATUS_CONFIG, SEASON_TAG_OPTIONS, CALC_METHOD_OPTIONS, SCENARIO_TYPE_OPTIONS, PLATFORM_NAME_OPTIONS } from './constants';
+import { PRICING_PROPOSAL_STATUS_CONFIG, SEASON_TAG_OPTIONS, CALC_METHOD_OPTIONS, SCENARIO_TYPE_OPTIONS, PLATFORM_NAME_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import type { Baseline, SeasonTag, Agent, ChannelProfile, PricingProposal, VatSettings, PricingBreakdown } from '../types/pricing';
 
 const SEASON_COLORS: Record<string, { color: string; bg: string }> = {
@@ -77,7 +77,10 @@ export default function PricingModal({ property, onClose, supabase }) {
           supabase.from('baselines').select('*').eq('property_id', property.id).eq('year', currentYear).maybeSingle(),
           supabase.from('season_tags').select('*').or(`property_id.eq.${property.id},property_id.is.null`).order('start_date'),
           supabase.from('agents').select('*').order('name'),
-          supabase.from('channel_profiles').select('*').eq('property_id', property.id).order('platform_name'),
+          // Channel fees live in the global channel_defaults table (configured
+          // under Settings → Channels). Map the column names to the shape the
+          // calculator expects (platform_fee_pct / platform_fixed_fee).
+          supabase.from('channel_defaults').select('*').eq('partner_id', CT_RENTALS_PARTNER_ID).eq('is_active', true).order('platform_name'),
           supabase.from('pricing_proposals_with_computed_status').select('*').eq('property_id', property.id).order('created_at', { ascending: false }),
           supabase.from('vat_settings').select('*').limit(1).maybeSingle(),
         ]);
@@ -85,7 +88,15 @@ export default function PricingModal({ property, onClose, supabase }) {
         if (baselineRes.data) setBaseline(baselineRes.data);
         if (seasonRes.data) setSeasonTags(seasonRes.data);
         if (agentRes.data) setAgents(agentRes.data);
-        if (channelRes.data) setChannels(channelRes.data);
+        if (channelRes.data) {
+          setChannels(channelRes.data.map((d: any) => ({
+            id: d.id,
+            platform_name: d.platform_name,
+            platform_fee_pct: Number(d.fee_pct),
+            platform_fixed_fee: Number(d.fixed_fee),
+            notes: d.notes,
+          })));
+        }
         if (proposalRes.data) setProposals(proposalRes.data);
         if (vatRes.data) setVatSettings(vatRes.data);
 

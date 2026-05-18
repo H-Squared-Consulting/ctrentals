@@ -1,17 +1,21 @@
 /* eslint-disable */
 // @ts-nocheck
 /**
- * SettingsPage — currently surfaces business-wide configuration. Agents
- * moved to CRM (per the navigation spec), so Seasons is the only
- * setting today; inlined here without a tab bar.
+ * SettingsPage — thin wrapper. Sub-pages (Seasons, Channels) live in the
+ * sidebar dropdown now, so this just sets the page title from the active
+ * route and renders whatever child the route hands it.
  */
 
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useLayout } from '../contexts/LayoutContext';
-import SeasonTagsPage from './SeasonTagsPage';
 
-export default function SettingsPage() {
+const TITLES: Record<string, string> = {
+  seasons: 'Seasons',
+  channels: 'Channels',
+};
+
+export default function SettingsPage({ tab, children }: { tab: 'seasons' | 'channels'; children: ReactNode }) {
   const { setPageTitle } = useLayout();
-  useEffect(() => { setPageTitle('Settings'); }, [setPageTitle]);
-  return <SeasonTagsPage embedded />;
+  useEffect(() => { setPageTitle(TITLES[tab] || 'Settings'); }, [setPageTitle, tab]);
+  return <>{children}</>;
 }
