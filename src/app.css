@@ -3285,3 +3285,27 @@ select.form-input { cursor: pointer; }
 }
 .list-filter-select:hover { border-color: var(--text-light); }
 .list-filter-select:focus { outline: none; border-color: var(--color-primary); }
+
+/* Property-card Unique ID — small monospace tag next to the name so
+ * the team can spot the CTR code without opening the editor. */
+.property-card__name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: 2px;
+}
+.property-card__name-row .property-card__name { margin: 0; flex: 1; min-width: 0; }
+.property-card__uid {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 1.4;
+}

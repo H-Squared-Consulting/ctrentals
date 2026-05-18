@@ -519,8 +519,14 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               <input type="text" className="form-input" value={form.property_name} onChange={(e) => handleNameChange(e.target.value)} placeholder="e.g., Seaside Villa 12" />
             </div>
             <div className="form-group">
-              <label className="form-label">Slug</label>
-              <input type="text" className="form-input" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="seaside-villa-12" />
+              <label className="form-label">Unique ID</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.slug}
+                onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                placeholder="CTR0000"
+              />
             </div>
           </div>
           <div className="form-group">

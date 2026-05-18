@@ -365,7 +365,12 @@ export default function PropertiesPage() {
                   }
                 </div>
                 <div className="property-card__body">
-                  <h3 className="property-card__name">{property.property_name}</h3>
+                  <div className="property-card__name-row">
+                    <h3 className="property-card__name">{property.property_name}</h3>
+                    {property.slug && (
+                      <span className="property-card__uid" title="Unique ID">{property.slug}</span>
+                    )}
+                  </div>
                   {property.suburb && (
                     <p className="property-card__location">{[property.suburb, property.city].filter(Boolean).join(', ')}</p>
                   )}
