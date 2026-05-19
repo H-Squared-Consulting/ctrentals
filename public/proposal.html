@@ -527,17 +527,15 @@
     html += '</section>';
 
     // Section 2 - PERSONAL GREETING
+    // First name only for warmth — full name on file is for ops, not the salutation.
+    var firstName = (p.guest_name || '').trim().split(/\s+/)[0] || p.guest_name || '';
     html += '<section class="pos-greeting reveal">';
     html += '<div class="pos-greeting-meta">Prepared ' + esc(fmtDate(p.created_at)) + ' &nbsp;|&nbsp; Ref: ' + esc(p.ref_code) + '</div>';
     html += '<div class="pos-greeting-rule"></div>';
-    html += '<div class="pos-greeting-dear">Dear ' + esc(p.guest_name) + ',</div>';
+    html += '<div class="pos-greeting-dear">Dear ' + esc(firstName) + ',</div>';
     html += '<p class="pos-greeting-body">' + (isAgent
-      ? 'Please find below a property proposal for your client\'s requirements — ' +
-        esc(p.guests_total) + ' guest' + (p.guests_total != 1 ? 's' : '') + ', ' +
-        esc(fmtDateShort(p.check_in)) + ' to ' + esc(fmtDateShort(p.check_out)) + '.'
-      : 'We\'ve selected this property based on your requirements for ' +
-        esc(p.guests_total) + ' guest' + (p.guests_total != 1 ? 's' : '') + ', ' +
-        esc(fmtDateShort(p.check_in)) + ' to ' + esc(fmtDateShort(p.check_out)) + '.'
+      ? 'Please find a proposal for ' + esc(pr.property_name) + ' below.'
+      : 'Please find your proposal for ' + esc(pr.property_name) + ' below.'
     ) + '</p>';
     if (p.notes) {
       html += '<div class="pos-greeting-notes">' + esc(p.notes) + '</div>';
@@ -598,57 +596,116 @@
     }
 
     // Section 6 - PRICING
+    // Pull live from the linked pricing snapshot (pricing_proposals) — that's
+    // the source of truth for what was negotiated. Fall back to the property's
+    // price_from / week only when no snapshot exists (legacy proposals).
+    var pricing = p.pricing_proposals || null;
+    var perNightRand = pricing ? Math.round(Number(pricing.client_price_excl_vat)) : null;
+    var nightlyTotal = perNightRand != null && nights > 0 ? perNightRand * nights : null;
+    var fmtR = function(n) { return 'R' + Number(n).toLocaleString('en-ZA'); };
+
+    // Each row renders only when the underlying field is populated, so an
+    // agent quote with no dates set just shows the per-night price, while a
+    // guest proposal generated from an enquiry shows the full stay context.
+    var hasDates = Boolean(p.check_in && p.check_out);
+    var hasGuests = p.guests_total != null;
+    var hasStayContext = hasDates || hasGuests;
+
     html += '<section class="pos-pricing reveal">';
-    html += '<h2 class="pos-pricing-heading">Your Stay</h2>';
+    html += '<h2 class="pos-pricing-heading">' + (hasStayContext ? 'Your Stay' : 'Pricing') + '</h2>';
     html += '<div class="pos-pricing-card">';
-    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-in</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_in)) + '</span></div>';
-    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-out</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_out)) + '</span></div>';
-    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Duration</span><span class="pos-pricing-value">' + esc(nights) + ' night' + (nights != 1 ? 's' : '') + '</span></div>';
-    html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Guests</span><span class="pos-pricing-value">' + esc(p.guests_total) + ' total</span></div>';
-    if (pr.price_from) {
+
+    if (hasDates) {
+      html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-in</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_in)) + '</span></div>';
+      html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Check-out</span><span class="pos-pricing-value">' + esc(fmtDate(p.check_out)) + '</span></div>';
+      html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Duration</span><span class="pos-pricing-value">' + esc(nights) + ' night' + (nights != 1 ? 's' : '') + '</span></div>';
+    }
+    if (hasGuests) {
+      html += '<div class="pos-pricing-row"><span class="pos-pricing-label">Guests</span><span class="pos-pricing-value">' + esc(p.guests_total) + ' total</span></div>';
+    }
+
+    if (perNightRand != null) {
+      // Headline per-night rate — what the guest will pay.
+      html += '<div class="pos-pricing-price">';
+      html += '<div class="pos-pricing-amount">' + esc(fmtR(perNightRand)) + '</div>';
+      html += '<div class="pos-pricing-per">per night</div>';
+      html += '</div>';
+
+      // Stay total renders only when actual dates were provided — never
+      // synthesise a total from defaults.
+      if (hasDates && nightlyTotal != null) {
+        html += '<div class="pos-pricing-row" style="margin-top:8px;padding-top:8px;border-top:1px dashed #ddd;">';
+        html += '<span class="pos-pricing-label">Stay total (' + esc(nights) + ' night' + (nights != 1 ? 's' : '') + ')</span>';
+        html += '<span class="pos-pricing-value"><strong>' + esc(fmtR(nightlyTotal)) + '</strong></span>';
+        html += '</div>';
+      }
+
+      // Agent-only note: reassure the agent that the headline price already
+      // includes their commission. No numbers — just a discreet line so they
+      // know not to add their cut on top. Hidden when commission is 0 (e.g.
+      // a one-off zero-commission deal) and on guest-facing proposals.
+      if (isAgent) {
+        var ownerNet = Math.round(Number(pricing.owner_net));
+        var ctrTake = Math.round(Number(pricing.company_take));
+        var agentTake = perNightRand - ownerNet - ctrTake;
+        if (agentTake > 0) {
+          // Reuses .pos-greeting-notes so the styling (cream bg, gold left
+          // border, italic) matches the brand language used elsewhere on the
+          // proposal page rather than introducing a foreign yellow alert.
+          html += '<div class="pos-greeting-notes" style="margin-top:18px;">';
+          html += '<strong>Please note:</strong> the rate shown is inclusive of the agreed commission, payable by Southern Escapes upon successful booking.';
+          html += '</div>';
+        }
+      }
+    } else if (pr.price_from) {
+      // Legacy proposals with no linked pricing snapshot — fall back to the
+      // property's listed rate. New proposals from the calculator always have
+      // a snapshot, so this path will phase out.
       html += '<div class="pos-pricing-price">';
       html += '<div class="pos-pricing-amount">From ' + esc(currencySymbol) + esc(Number(pr.price_from).toLocaleString()) + '</div>';
       html += '<div class="pos-pricing-per">per week</div>';
       html += '</div>';
     }
-    if (p.budget_min || p.budget_max) {
+
+    if (!isAgent && (p.budget_min || p.budget_max)) {
       html += '<div class="pos-pricing-budget">Your budget: R' + esc(Number(p.budget_min || 0).toLocaleString()) + ' &ndash; R' + esc(Number(p.budget_max || 0).toLocaleString()) + '</div>';
     }
     html += '</div>';
     html += '</section>';
 
-    // Section 7 - LOCATION
-    html += '<section class="pos-location reveal">';
-    html += '<h2 class="pos-location-heading">Location</h2>';
-    html += '<p class="pos-location-address">' + esc(locationParts.join(', ') || 'Location details available on request') + '</p>';
-    html += '</section>';
+    // Section 7 - LOCATION removed — already surfaced in the Property
+    // Overview stat cards (Bedrooms / Bathrooms / Sleeps / Location) at the
+    // top of the page. Showing it again created redundancy.
 
-    // Section 8 - NEXT STEPS
-    html += '<section class="pos-steps reveal">';
-    html += '<h2 class="pos-steps-heading">Next Steps</h2>';
-    html += '<ol class="pos-steps-list">';
-    var steps = [
-      'Review this proposal',
-      'Let us know if you\'re interested',
-      'We\'ll confirm availability and send booking details',
-      'Secure your stay'
-    ];
-    for (var s = 0; s < steps.length; s++) {
-      html += '<li class="pos-step-item"><span class="pos-step-num">' + (s + 1) + '</span><span class="pos-step-text">' + esc(steps[s]) + '</span></li>';
+    // Section 8 - CTA
+    // Guests see "I'm Interested" / Share Proposal as before. Agents get a
+    // forward-to-client flow instead: a clean brochure URL they can send on,
+    // letting them quote their client however they prefer.
+    if (isAgent) {
+      var brochureUrl = pr.slug
+        ? window.location.origin + '/brochures/' + encodeURIComponent(pr.slug)
+        : null;
+      html += '<section class="pos-cta reveal">';
+      html += '<h2 class="pos-cta-heading">Send to your client</h2>';
+      html += '<div class="pos-cta-buttons">';
+      if (brochureUrl) {
+        html += '<button id="btn-copy-brochure" class="pos-btn-share" data-url="' + esc(brochureUrl) + '">🔗 Copy Brochure Link</button>';
+      } else {
+        html += '<span style="font-size:13px;color:#888;">Brochure link unavailable — contact CT Rentals.</span>';
+      }
+      html += '</div>';
+      html += '</section>';
+    } else {
+      var alreadyInterested = (p.status === 'interested');
+      html += '<section class="pos-cta reveal">';
+      html += '<h2 class="pos-cta-heading">Interested in ' + esc(pr.property_name) + '?</h2>';
+      html += '<div class="pos-cta-buttons">';
+      html += '<button id="btn-interested" class="pos-btn-interested"' + (alreadyInterested ? ' disabled' : '') + '>' +
+        (alreadyInterested ? 'Interest Registered' : 'I\'m Interested') + '</button>';
+      html += '<button id="btn-share" class="pos-btn-share">Share Proposal</button>';
+      html += '</div>';
+      html += '</section>';
     }
-    html += '</ol>';
-    html += '</section>';
-
-    // Section 9 - CTA
-    var alreadyInterested = (p.status === 'interested');
-    html += '<section class="pos-cta reveal">';
-    html += '<h2 class="pos-cta-heading">Interested in ' + esc(pr.property_name) + '?</h2>';
-    html += '<div class="pos-cta-buttons">';
-    html += '<button id="btn-interested" class="pos-btn-interested"' + (alreadyInterested ? ' disabled' : '') + '>' +
-      (alreadyInterested ? 'Interest Registered' : 'I\'m Interested') + '</button>';
-    html += '<button id="btn-share" class="pos-btn-share">Share Proposal</button>';
-    html += '</div>';
-    html += '</section>';
 
     // Section 10 - CONTACT (only for branded/direct client proposals)
     if (!isAgent) {
@@ -716,6 +773,24 @@
       });
     }
 
+    // ── Button: Copy Brochure Link (agent CTA only) ──
+    var btnCopyBrochure = el('btn-copy-brochure');
+    if (btnCopyBrochure) {
+      btnCopyBrochure.addEventListener('click', function() {
+        var url = btnCopyBrochure.getAttribute('data-url');
+        if (!url) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function() {
+            showToast('Brochure link copied — paste it to your client');
+          }).catch(function() {
+            fallbackCopy(url);
+          });
+        } else {
+          fallbackCopy(url);
+        }
+      });
+    }
+
     function fallbackCopy(text) {
       var ta = document.createElement('textarea');
       ta.value = text;
@@ -746,7 +821,9 @@
     var encodedRef = encodeURIComponent(ref);
 
     // Step 1: Fetch proposal
-    sbGet('proposals?ref_code=eq.' + encodedRef + '&select=*&limit=1')
+    // PostgREST nested select pulls the linked pricing_proposals row in one trip
+    // so the Your Stay block can render per-night pricing without a second call.
+    sbGet('proposals?ref_code=eq.' + encodedRef + '&select=*,pricing_proposals(*)&limit=1')
       .then(function(proposals) {
         if (!proposals || proposals.length === 0) {
           showError('not_found');

@@ -10,6 +10,11 @@ import GallerySectionsEditor, { deriveFlatColumns } from '../components/GalleryS
 import { useToast } from '../components/ToastProvider';
 import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS } from './constants';
 import type { Baseline } from '../types/pricing';
+import ProposalDetailModal from '../components/ProposalDetailModal';
+import SendProposalDialog from '../components/SendProposalDialog';
+import PricingModal from './PricingModal';
+import { fmtRand } from '../lib/pricingEngine';
+import { notifyPipelineChanged } from '../lib/pipelineEvents';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user }) {
   const toast = useToast();
@@ -223,25 +228,59 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [activeTab, setActiveTab] = useState('overview');
 
   // ── Proposals for this property (Proposals tab) ──
+  // Joins through pricing_proposals via the FK so the row can surface the
+  // per-night price + Owner/CTR breakdown when clicked. Without the join the
+  // tab is just names + dates, no commercial context.
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState(null);
+  const [editPricingFor, setEditPricingFor] = useState(null);
+  /** Proposal in the inline-send confirmation dialog. */
+  const [sendingProposal, setSendingProposal] = useState(null);
+  /** Open PricingModal in create mode → starts a new proposal scoped to
+   *  this property without bouncing the user out to Pipeline. */
+  const [creatingProposal, setCreatingProposal] = useState(false);
+
+  async function refetchProposals() {
+    const { data } = await supabase
+      .from('proposals')
+      .select('*, pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take)')
+      .eq('property_id', property.id)
+      .order('created_at', { ascending: false });
+    const mapped = (data || []).map((p) => ({
+      ...p,
+      property_name: property.property_name,
+      guest_price: p.pricing_proposals?.client_price_excl_vat ?? null,
+      scenario_type: p.pricing_proposals?.scenario_type ?? null,
+      season_tag: p.pricing_proposals?.season_tag ?? null,
+      owner_net: p.pricing_proposals?.owner_net ?? null,
+      company_take: p.pricing_proposals?.company_take ?? null,
+    }));
+    setProposals(mapped);
+  }
+
   useEffect(() => {
     if (isNew || !property.id || activeTab !== 'proposals') return;
     let cancelled = false;
     setProposalsLoading(true);
     (async () => {
-      const { data } = await supabase
-        .from('proposals')
-        .select('id, ref_code, guest_name, check_in, check_out, status, created_at')
-        .eq('property_id', property.id)
-        .order('created_at', { ascending: false });
-      if (!cancelled) {
-        setProposals(data || []);
-        setProposalsLoading(false);
-      }
+      await refetchProposals();
+      if (!cancelled) setProposalsLoading(false);
     })();
     return () => { cancelled = true; };
   }, [activeTab, property.id, isNew, supabase]);
+
+  /** Inline outcome flip — matches Pipeline's "Mark Booked" / Cancel UX.
+   *  No confirmation dialog; the action is a single intentional click and
+   *  Reopen lives in the proposal detail modal if it needs reversing. */
+  async function setProposalOutcome(proposalId, outcome) {
+    const update = outcome === 'booked' || outcome === 'cancelled'
+      ? { status: outcome }
+      : { status: 'draft' };
+    await supabase.from('proposals').update(update).eq('id', proposalId);
+    notifyPipelineChanged();
+    refetchProposals();
+  }
 
   // ── Baselines ──
   const currentYear = new Date().getFullYear();
@@ -1013,35 +1052,35 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           </>)}
 
           {activeTab === 'proposals' && (<>
-          <SectionHeading>Proposals for this property</SectionHeading>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+            <SectionHeading>Proposals for this property</SectionHeading>
+            {!isNew && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ fontSize: '0.75rem', flexShrink: 0 }}
+                onClick={() => setCreatingProposal(true)}
+              >
+                + New Proposal
+              </button>
+            )}
+          </div>
           {isNew ? (
             <div className="editor-tab-empty">Save this property first to start tracking proposals against it.</div>
           ) : proposalsLoading ? (
             <div className="editor-tab-empty">Loading…</div>
           ) : proposals.length === 0 ? (
-            <div className="editor-tab-empty">No proposals yet for this property. Create one from a matched enquiry.</div>
-          ) : (
-            <div className="editor-list">
-              {proposals.map(pr => (
-                <a
-                  key={pr.id}
-                  className="editor-list-row"
-                  href={`${window.location.origin}/proposal.html?ref=${pr.ref_code}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <div className="editor-list-main">
-                    <div className="editor-list-title">{pr.guest_name || 'Unnamed guest'}</div>
-                    <div className="editor-list-sub">
-                      {new Date(pr.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}
-                      {' → '}
-                      {new Date(pr.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </div>
-                  </div>
-                  <span className={`editor-list-badge editor-list-badge--${pr.status || 'draft'}`}>{pr.status || 'draft'}</span>
-                </a>
-              ))}
+            <div className="editor-tab-empty">
+              No proposals yet for this property. Use <strong>+ New Proposal</strong> above to start one.
             </div>
+          ) : (
+            <PropertyProposalsList
+              proposals={proposals}
+              onOpen={setSelectedProposal}
+              onSend={setSendingProposal}
+              onMarkBooked={(p) => setProposalOutcome(p.id, 'booked')}
+              onCancel={(p) => setProposalOutcome(p.id, 'cancelled')}
+            />
           )}
           </>)}
 
@@ -1062,6 +1101,173 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         </div>
       </div>
 
+      {selectedProposal && (
+        <ProposalDetailModal
+          proposal={selectedProposal}
+          supabase={supabase}
+          onClose={() => setSelectedProposal(null)}
+          onChange={refetchProposals}
+          onEditPricing={async () => {
+            if (!selectedProposal.pricing_proposal_id) return;
+            const { data } = await supabase
+              .from('pricing_proposals')
+              .select('*')
+              .eq('id', selectedProposal.pricing_proposal_id)
+              .single();
+            if (data) {
+              setEditPricingFor(data);
+              setSelectedProposal(null);
+            }
+          }}
+        />
+      )}
+
+      {editPricingFor && (
+        <PricingModal
+          property={{ id: property.id, property_name: property.property_name }}
+          supabase={supabase}
+          editPricingProposal={editPricingFor}
+          onClose={() => setEditPricingFor(null)}
+          onPricingSaved={() => { setEditPricingFor(null); refetchProposals(); }}
+        />
+      )}
+
+      {creatingProposal && (
+        <PricingModal
+          property={{ id: property.id, property_name: property.property_name }}
+          supabase={supabase}
+          onClose={() => { setCreatingProposal(false); refetchProposals(); }}
+        />
+      )}
+
+      {sendingProposal && (
+        <SendProposalDialog
+          proposal={{
+            id: sendingProposal.id,
+            ref_code: sendingProposal.ref_code,
+            property_name: property.property_name,
+            guest_name: sendingProposal.guest_name,
+            guest_email: sendingProposal.guest_email,
+            guest_phone: sendingProposal.guest_phone,
+            is_agent: !!sendingProposal.is_agent,
+          }}
+          supabase={supabase}
+          onClose={() => setSendingProposal(null)}
+          onSent={() => { setSendingProposal(null); refetchProposals(); }}
+        />
+      )}
+
     </div>
   ), document.body);
+}
+
+// ─── Proposals list (grouped by Pipeline stage) ─────────────────────────
+// Mirrors the Pipeline page so users can act on a proposal without leaving
+// the property editor. Stages match the Kanban column labels exactly so
+// the mental model is consistent.
+
+const PROPERTY_PROPOSAL_STAGES = [
+  { key: 'quoted',     label: 'Proposal created', tone: 'draft' },
+  { key: 'sent',       label: 'Proposal Sent',    tone: 'sent' },
+  { key: 'interested', label: 'Interested',       tone: 'interested' },
+  { key: 'closed',     label: 'Closed',           tone: 'closed' },
+];
+
+function stageForProposal(p) {
+  if (p.status === 'booked' || p.status === 'cancelled' || p.status === 'expired' || p.status === 'archived') return 'closed';
+  if (p.status === 'interested') return 'interested';
+  if (p.status === 'sent' || p.status === 'viewed') return 'sent';
+  return 'quoted'; // draft (or anything unknown)
+}
+
+function PropertyProposalsList({ proposals, onOpen, onSend, onMarkBooked, onCancel }) {
+  // Group proposals by Pipeline stage. Empty stages are skipped to avoid a
+  // wall of empty section headers — but the order matches Pipeline so the
+  // user's eye lands where they expect.
+  const grouped = {};
+  for (const p of proposals) {
+    const stage = stageForProposal(p);
+    (grouped[stage] = grouped[stage] || []).push(p);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {PROPERTY_PROPOSAL_STAGES.filter(s => grouped[s.key]?.length).map(stage => (
+        <div key={stage.key}>
+          <div style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '6px' }}>
+            {stage.label} <span style={{ color: 'var(--text-light)', fontWeight: 400 }}>({grouped[stage.key].length})</span>
+          </div>
+          <div className="editor-list">
+            {grouped[stage.key].map(pr => (
+              <PropertyProposalRow
+                key={pr.id}
+                proposal={pr}
+                stage={stage.key}
+                onOpen={onOpen}
+                onSend={onSend}
+                onMarkBooked={onMarkBooked}
+                onCancel={onCancel}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PropertyProposalRow({ proposal: pr, stage, onOpen, onSend, onMarkBooked, onCancel }) {
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(pr); };
+
+  // Stage-appropriate primary action — same logic the Pipeline card uses.
+  // Drafts get Send; interested gets Mark Booked + Cancel; sent stays silent
+  // (the next move is the recipient's). Closed/booked/cancelled show no
+  // inline action — open the detail modal to reopen if needed.
+  const actions = [];
+  if (stage === 'quoted') {
+    actions.push({ label: '📤 Send proposal', primary: true, onClick: onSend });
+  } else if (stage === 'interested') {
+    actions.push({ label: '✓ Mark Booked', primary: true, onClick: onMarkBooked, color: '#065F46' });
+    actions.push({ label: '✕ Cancel', primary: false, onClick: onCancel, color: '#991B1B' });
+  }
+
+  return (
+    <div
+      className="editor-list-row"
+      onClick={() => onOpen(pr)}
+      style={{ cursor: 'pointer' }}
+    >
+      <div className="editor-list-main">
+        <div className="editor-list-title">
+          {pr.guest_name || 'Unnamed recipient'}
+          {pr.is_agent && <span className="status-badge" style={{ background: '#E0E7FF', color: '#3730A3', marginLeft: '6px', fontSize: '0.5625rem' }}>Agent</span>}
+        </div>
+        <div className="editor-list-sub">
+          {pr.check_in && pr.check_out
+            ? <>{new Date(pr.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })} → {new Date(pr.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+            : <span style={{ color: 'var(--text-light)' }}>No dates set</span>}
+          {pr.guest_price != null && (
+            <span style={{ marginLeft: '10px', color: 'var(--text)' }}>
+              · <strong>{fmtRand(pr.guest_price)}</strong> / night
+              {pr.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {pr.scenario_type}</span>}
+            </span>
+          )}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        {actions.map((a, i) => (
+          <button
+            key={i}
+            type="button"
+            className={a.primary ? 'btn btn-outline' : 'btn btn-ghost'}
+            style={{ fontSize: '0.6875rem', padding: '4px 10px', whiteSpace: 'nowrap', color: a.color, borderColor: a.color }}
+            onClick={stop(a.onClick)}
+          >
+            {a.label}
+          </button>
+        ))}
+        <span className={`editor-list-badge editor-list-badge--${pr.status || 'draft'}`}>{pr.status || 'draft'}</span>
+      </div>
+    </div>
+  );
 }

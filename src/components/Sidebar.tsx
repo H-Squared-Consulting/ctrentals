@@ -35,8 +35,7 @@ const NAV: NavItem[] = [
     icon: '📋',
     aliases: ['/enquiry'],
     children: [
-      { to: '/operations/enquiries', label: 'Enquiries' },
-      { to: '/operations/proposals', label: 'Proposals' },
+      { to: '/operations/pipeline', label: 'Pipeline' },
       { to: '/operations/bookings', label: 'Bookings' },
     ],
   },

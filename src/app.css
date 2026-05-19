@@ -1925,6 +1925,473 @@ select.form-input { cursor: pointer; }
   padding: 3px 0;
 }
 
+/* ─── PricingWidget ─── */
+.pricing-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pricing-widget--loading {
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+.pricing-widget--compact .pricing-section {
+  padding: 8px 0;
+}
+.pricing-widget-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+.pricing-widget-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pricing-widget-toolbar-right {
+  display: flex;
+  gap: 4px;
+}
+.pricing-field--overridden {
+  background: #FEF3C7 !important;
+  border-color: #FCD34D !important;
+}
+.pricing-warning {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  border-radius: var(--radius-sm);
+  color: #92400E;
+  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pricing-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.pricing-actions .btn { flex: 1; }
+.pricing-breakdown-row--platform {
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  margin-top: 4px;
+}
+/* ─── Operations → Proposals (Kanban + Table) ─── */
+.proposals-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.proposals-view-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--border-light);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+}
+.proposals-stale-badge {
+  padding: 4px 10px;
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FCD34D;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.proposals-kanban {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  /* Each column scrolls inside its own lane. Without a bounded height the
+     page-level scroll moves all four columns together — useless once one
+     column gets busy. 220px accounts for app header + toolbar + page padding;
+     min-height keeps the empty state reasonable on a fresh install. */
+  height: calc(100vh - 220px);
+  min-height: 480px;
+  align-items: stretch;
+}
+.proposals-kanban-col {
+  background: var(--border-light);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.proposals-kanban-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Sticky so the user always sees which column they're in while scrolling. */
+  position: sticky;
+  top: 0;
+  background: var(--border-light);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.proposals-kanban-header strong { font-size: 0.875rem; }
+.proposals-kanban-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  background: var(--bg);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.proposals-kanban-sub {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+  font-weight: 400;
+}
+/* Body wrapper holds the scroll lane plus the overflow affordances. The
+   fade + "↓ N more" pill sit on top of the scroll lane via position:
+   absolute, so they don't disturb the card layout. */
+.proposals-kanban-bodywrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.proposals-kanban-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  /* Reserve space below the last card so the morepill never covers it. */
+  scroll-padding-bottom: 32px;
+}
+.proposals-kanban-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, rgba(243,244,246,0), var(--border-light) 85%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+.proposals-kanban-fade--visible { opacity: 1; }
+.proposals-kanban-morepill {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  background: var(--text, #111);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  z-index: 2;
+  white-space: nowrap;
+  transition: transform 0.05s, opacity 0.15s;
+}
+.proposals-kanban-morepill:hover { opacity: 0.9; }
+.proposals-kanban-morepill:active { transform: translateX(-50%) scale(0.95); }
+.proposals-kanban-empty {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+  padding: 24px 8px;
+  font-style: italic;
+}
+
+.proposal-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+/* Dense two-row layout — the default for Pipeline cards. Row 1 = client +
+   price; row 2 = dates · property · primary action. Drops card height by
+   roughly half versus the old four-row layout, so most columns fit without
+   needing to scroll at all. */
+.proposal-card--dense { gap: 2px; }
+/* Compact — kicks in once a column hits COMPACT_THRESHOLD. Even tighter
+   padding, smaller meta text. Full info is one click away in the deal modal. */
+.proposal-card--compact {
+  padding: 5px 8px;
+}
+.proposal-card--compact .proposal-card-name { font-size: 0.75rem; }
+.proposal-card--compact .proposal-card-price { font-size: 0.75rem; }
+.proposal-card--compact .proposal-card-meta { font-size: 0.625rem; }
+.proposal-card--compact .proposal-card-action {
+  font-size: 0.625rem;
+  padding: 2px 6px;
+}
+.proposal-card:hover {
+  border-color: var(--text-light);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+.proposal-card--stale {
+  border-left: 3px solid #DC2626;
+}
+.proposal-card--closed {
+  opacity: 0.6;
+}
+.proposal-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.proposal-card-guest {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.proposal-card-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.proposal-card-stale-dot {
+  width: 8px;
+  height: 8px;
+  background: #DC2626;
+  border-radius: 50%;
+  display: inline-block;
+}
+.proposal-card-agent {
+  font-size: 0.5625rem;
+  padding: 1px 6px;
+  background: #E0E7FF;
+  color: #3730A3;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proposal-card-viewed {
+  font-size: 0.6875rem;
+  color: #065F46;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.proposal-card-ref {
+  font-family: monospace;
+  font-size: 0.625rem;
+  color: var(--text-light);
+}
+.proposal-card-property {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.proposal-card-dates {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+}
+.proposal-card-price {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.proposal-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.proposal-card-meta {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.proposal-card-meta-sep { color: var(--text-light); }
+.proposal-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.proposal-card-action {
+  font-size: 0.6875rem;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s;
+}
+.proposal-card-action:hover {
+  background: var(--border-light);
+  border-color: var(--text-light);
+  color: var(--text);
+}
+.proposal-card-action--advance {
+  color: var(--color-primary, #1E40AF);
+  border-color: var(--color-primary, #1E40AF);
+  font-weight: 600;
+}
+
+.proposals-closed {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Brief highlight when the user lands on a Pipeline column from Home —
+   fades back to neutral so it doesn't feel sticky. */
+@keyframes proposals-kanban-flash {
+  0%   { box-shadow: 0 0 0 2px var(--color-primary, #1E40AF); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.proposals-kanban-col--flash {
+  animation: proposals-kanban-flash 1.4s ease-out;
+}
+
+/* Pipeline deal card — proposals mini-list inside a card */
+.deal-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.deal-proposal-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.6875rem;
+  gap: 8px;
+}
+.deal-proposal-name {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deal-proposal-price {
+  font-weight: 600;
+  color: var(--text);
+}
+.deal-proposal-more {
+  font-size: 0.625rem;
+  color: var(--text-light);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+@media (max-width: 1024px) {
+  .proposals-kanban {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ─── New Enquiry form (/enquiry/new) ─── */
+.enquiry-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.enquiry-section {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.enquiry-section:first-of-type { padding-top: 0; }
+.enquiry-section:last-of-type { border-bottom: none; padding-bottom: 0; }
+.enquiry-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.enquiry-section-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+.enquiry-section-sub {
+  font-size: 0.75rem;
+  color: var(--text-light);
+}
+.enquiry-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.enquiry-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.enquiry-grid-4 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 12px;
+}
+.enquiry-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
+@media (max-width: 700px) {
+  .enquiry-grid-2,
+  .enquiry-grid-3,
+  .enquiry-grid-4 { grid-template-columns: 1fr; }
+}
+
 /* Proposal detail sub-row */
 .pricing-proposal-detail {
   padding: 10px 16px;
@@ -3374,3 +3841,157 @@ select.form-input { cursor: pointer; }
   font-family: inherit;
 }
 .multi-picker-clear:hover { color: var(--color-primary); }
+
+/* ─── Home dashboard ───
+ * Visual language mirrors the Pipeline kanban: muted cards, a small count
+ * pill, no shouty colour accents. Keeps the page calm — Home is a status
+ * view, not an alerting view. */
+.home-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+  max-width: 1100px;
+}
+.home-summary {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.home-quick-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.home-section-title {
+  margin: 0;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.home-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+@media (max-width: 1024px) {
+  .home-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.home-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--s-3) 14px;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.home-card:hover {
+  border-color: var(--text-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.home-card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-1);
+}
+.home-card-tonedot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.home-card-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.home-card-count {
+  margin-left: auto;
+  padding: 1px 8px;
+  background: var(--border-light);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.home-card-sub {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+}
+.home-card--warn    .home-card-tonedot { background: #DC2626; }
+.home-card--info    .home-card-tonedot { background: #1E40AF; }
+.home-card--neutral .home-card-tonedot { background: var(--text-light); }
+.home-card--good    .home-card-tonedot { background: #065F46; }
+.home-card--empty .home-card-tonedot { opacity: 0.35; }
+.home-card--empty .home-card-label   { color: var(--text-secondary); font-weight: 500; }
+
+.home-attention {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.home-attention-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, background 0.1s;
+}
+.home-attention-row:hover {
+  border-color: var(--text-light);
+  background: var(--border-light);
+}
+.home-attention-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.home-attention-dot--enquiry_stale   { background: #DC2626; }
+.home-attention-dot--draft_stale     { background: #92400E; }
+.home-attention-dot--interested_soon { background: #065F46; }
+.home-attention-text { flex: 1; min-width: 0; }
+.home-attention-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.home-attention-detail {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+.home-attention-arrow {
+  font-size: 0.875rem;
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+.home-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  background: var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+.home-empty strong { color: var(--text); font-size: 0.875rem; }

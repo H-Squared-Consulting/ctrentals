@@ -12,10 +12,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SendBrochurePicker from './SendBrochurePicker';
+import NewProposalLauncher from './NewProposalLauncher';
 
 export default function Fab() {
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [proposalLauncherOpen, setProposalLauncherOpen] = useState(false);
   const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +41,7 @@ export default function Fab() {
   function trigger(action: 'enquiry' | 'proposal' | 'brochure') {
     setOpen(false);
     if (action === 'enquiry') navigate('/enquiry/new');
-    else if (action === 'proposal') navigate('/enquiry/new?intent=proposal');
+    else if (action === 'proposal') setProposalLauncherOpen(true);
     else if (action === 'brochure') setPickerOpen(true);
   }
 
@@ -74,6 +76,10 @@ export default function Fab() {
 
       {pickerOpen && (
         <SendBrochurePicker onClose={() => setPickerOpen(false)} />
+      )}
+
+      {proposalLauncherOpen && (
+        <NewProposalLauncher onClose={() => setProposalLauncherOpen(false)} />
       )}
     </>
   );
