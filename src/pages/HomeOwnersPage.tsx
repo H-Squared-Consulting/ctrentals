@@ -22,7 +22,7 @@ interface HomeOwner {
   email: string | null;
   phone: string | null;
   company: string | null;
-  default_commission_pct: number | null;
+  vat_number: string | null;
   payment_notes: string | null;
   notes: string | null;
   created_at: string;
@@ -34,7 +34,7 @@ interface PropertyLite {
   owner_id: string | null;
 }
 
-const EMPTY_FORM = { name: '', email: '', phone: '', company: '', default_commission_pct: '', payment_notes: '', notes: '' };
+const EMPTY_FORM = { name: '', email: '', phone: '', company: '', vat_number: '', payment_notes: '', notes: '' };
 
 export default function HomeOwnersPage() {
   const { supabase } = useAuth();
@@ -93,7 +93,7 @@ export default function HomeOwnersPage() {
       email: o.email || '',
       phone: o.phone || '',
       company: o.company || '',
-      default_commission_pct: o.default_commission_pct != null ? String(o.default_commission_pct) : '',
+      vat_number: o.vat_number || '',
       payment_notes: o.payment_notes || '',
       notes: o.notes || '',
     });
@@ -109,7 +109,7 @@ export default function HomeOwnersPage() {
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         company: form.company.trim() || null,
-        default_commission_pct: form.default_commission_pct ? parseFloat(form.default_commission_pct) : null,
+        vat_number: form.vat_number.trim() || null,
         payment_notes: form.payment_notes.trim() || null,
         notes: form.notes.trim() || null,
         updated_at: new Date().toISOString(),
@@ -193,9 +193,9 @@ export default function HomeOwnersPage() {
               <tr>
                 <th>Name</th>
                 <th>Company</th>
+                <th>VAT No.</th>
                 <th>Email</th>
                 <th>Phone</th>
-                <th style={{ textAlign: 'right' }}>Commission</th>
                 <th style={{ textAlign: 'center' }}>Properties</th>
               </tr>
             </thead>
@@ -206,9 +206,9 @@ export default function HomeOwnersPage() {
                   <tr key={o.id} onClick={() => openEdit(o)} style={{ cursor: 'pointer' }}>
                     <td><strong>{o.name}</strong></td>
                     <td>{o.company || <span className="text-light">-</span>}</td>
+                    <td>{o.vat_number || <span className="text-light">-</span>}</td>
                     <td>{o.email || <span className="text-light">-</span>}</td>
                     <td>{o.phone || <span className="text-light">-</span>}</td>
-                    <td style={{ textAlign: 'right' }}>{o.default_commission_pct != null ? `${o.default_commission_pct}%` : <span className="text-light">-</span>}</td>
                     <td style={{ textAlign: 'center' }}>{portfolio.length || <span className="text-light">-</span>}</td>
                   </tr>
                 );
@@ -245,8 +245,8 @@ export default function HomeOwnersPage() {
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Default commission %</label>
-                <input className="form-input" type="number" step="0.1" min="0" max="100" value={form.default_commission_pct} onChange={(e) => setForm({ ...form, default_commission_pct: e.target.value })} placeholder="e.g. 20" />
+                <label className="form-label">VAT No.</label>
+                <input className="form-input" value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="Only required if listed under a company" />
               </div>
               <div className="form-group">
                 <label className="form-label">Payment notes</label>

@@ -109,22 +109,51 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Owner dropdown options for the Overview tab. Loaded once; updates
-  // from the CRM page happen on a separate route so we don't need to
-  // keep this in sync within a single editor session.
+  // Owner dropdown options for the Overview tab. Reloadable so an
+  // owner created via the inline + button shows up immediately.
   const [owners, setOwners] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from('home_owners')
-        .select('id, name, company')
-        .eq('partner_id', partnerId)
-        .order('name');
-      if (!cancelled && data) setOwners(data);
-    })();
-    return () => { cancelled = true; };
-  }, [supabase, partnerId]);
+  async function loadOwners() {
+    const { data } = await supabase
+      .from('home_owners')
+      .select('id, name, company, vat_number')
+      .eq('partner_id', partnerId)
+      .order('name');
+    if (data) setOwners(data);
+  }
+  useEffect(() => { loadOwners(); }, [supabase, partnerId]);
+
+  // Inline "Create owner" form state. Lightweight: name + company +
+  // VAT + email + phone. Full record can be filled in later from the
+  // CRM page if needed.
+  const [showOwnerCreate, setShowOwnerCreate] = useState(false);
+  const [ownerDraft, setOwnerDraft] = useState({ name: '', company: '', vat_number: '', email: '', phone: '' });
+  const [creatingOwner, setCreatingOwner] = useState(false);
+  async function createOwnerInline() {
+    if (!ownerDraft.name.trim()) { toast.error('Owner name is required'); return; }
+    setCreatingOwner(true);
+    try {
+      const payload = {
+        partner_id: partnerId,
+        name: ownerDraft.name.trim(),
+        company: ownerDraft.company.trim() || null,
+        vat_number: ownerDraft.vat_number.trim() || null,
+        email: ownerDraft.email.trim() || null,
+        phone: ownerDraft.phone.trim() || null,
+      };
+      const { data, error } = await supabase.from('home_owners').insert(payload).select().single();
+      if (error) throw error;
+      // Refresh dropdown and auto-link the new owner to this property.
+      await loadOwners();
+      setForm(f => ({ ...f, owner_id: data.id }));
+      setOwnerDraft({ name: '', company: '', vat_number: '', email: '', phone: '' });
+      setShowOwnerCreate(false);
+      toast.success(`${data.name} added and linked`);
+    } catch (err) {
+      toast.error('Failed to create owner: ' + (err?.message || err));
+    } finally {
+      setCreatingOwner(false);
+    }
+  }
   // Two-click confirm so a stray click doesn't permanently retire a
   // property. Auto-resets after a few seconds.
   const [confirmingArchive, setConfirmingArchive] = useState(false);
@@ -553,11 +582,22 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Owner</label>
+            <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Owner</span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+                onClick={() => setShowOwnerCreate(s => !s)}
+              >
+                {showOwnerCreate ? '× Cancel' : '+ New owner'}
+              </button>
+            </label>
             <select
               className="form-input"
               value={form.owner_id}
               onChange={(e) => setForm({ ...form, owner_id: e.target.value })}
+              disabled={showOwnerCreate}
             >
               <option value="">— No owner linked —</option>
               {owners.map(o => (
@@ -566,6 +606,44 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                 </option>
               ))}
             </select>
+
+            {showOwnerCreate && (
+              <div style={{ marginTop: 'var(--s-3)', padding: 'var(--s-3)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 'var(--s-2)' }}>
+                  Quick add — the full record can be edited later in CRM &rarr; Home Owners.
+                </div>
+                <div className="form-group" style={{ marginBottom: 'var(--s-2)' }}>
+                  <label className="form-label">Name *</label>
+                  <input className="form-input" autoFocus value={ownerDraft.name} onChange={(e) => setOwnerDraft({ ...ownerDraft, name: e.target.value })} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-2)' }}>
+                  <div className="form-group" style={{ marginBottom: 'var(--s-2)' }}>
+                    <label className="form-label">Company</label>
+                    <input className="form-input" value={ownerDraft.company} onChange={(e) => setOwnerDraft({ ...ownerDraft, company: e.target.value })} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 'var(--s-2)' }}>
+                    <label className="form-label">VAT No.</label>
+                    <input className="form-input" value={ownerDraft.vat_number} onChange={(e) => setOwnerDraft({ ...ownerDraft, vat_number: e.target.value })} placeholder="Only if listed under a company" />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-2)' }}>
+                  <div className="form-group" style={{ marginBottom: 'var(--s-2)' }}>
+                    <label className="form-label">Email</label>
+                    <input className="form-input" type="email" value={ownerDraft.email} onChange={(e) => setOwnerDraft({ ...ownerDraft, email: e.target.value })} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 'var(--s-2)' }}>
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" value={ownerDraft.phone} onChange={(e) => setOwnerDraft({ ...ownerDraft, phone: e.target.value })} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--s-2)' }}>
+                  <button type="button" className="btn btn-ghost" onClick={() => setShowOwnerCreate(false)} disabled={creatingOwner}>Cancel</button>
+                  <button type="button" className="btn btn-primary" onClick={createOwnerInline} disabled={creatingOwner}>
+                    {creatingOwner ? 'Adding…' : 'Add owner'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <SectionHeading>Location</SectionHeading>

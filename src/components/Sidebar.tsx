@@ -47,7 +47,6 @@ const NAV: NavItem[] = [
     children: [
       { to: '/crm/guests', label: 'Guests' },
       { to: '/crm/home-owners', label: 'Home Owners' },
-      { to: '/crm/agents', label: 'Agents' },
     ],
   },
   {
@@ -77,6 +76,7 @@ const NAV: NavItem[] = [
     children: [
       { to: '/settings/seasons', label: 'Seasons' },
       { to: '/settings/channels', label: 'Channels' },
+      { to: '/settings/agents', label: 'Agents' },
     ],
   },
 ];

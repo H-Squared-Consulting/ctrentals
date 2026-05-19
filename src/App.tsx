@@ -81,7 +81,7 @@ export function App() {
       <Route path="/crm" element={<Navigate to="/crm/guests" replace />} />
       <Route path="/crm/guests" element={<Page><GuestsPage /></Page>} />
       <Route path="/crm/home-owners" element={<Page><HomeOwnersPage /></Page>} />
-      <Route path="/crm/agents" element={<Page><AgentsPage /></Page>} />
+      <Route path="/crm/agents" element={<Navigate to="/settings/agents" replace />} />
 
       {/* Finance */}
       <Route path="/finance" element={<Navigate to="/finance/pricing" replace />} />
@@ -99,6 +99,7 @@ export function App() {
       <Route path="/settings" element={<Navigate to="/settings/seasons" replace />} />
       <Route path="/settings/seasons" element={<Page><SettingsPage tab="seasons"><SeasonTagsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/channels" element={<Page><SettingsPage tab="channels"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/agents" element={<Page><SettingsPage tab="agents"><AgentsPage embedded /></SettingsPage></Page>} />
 
       {/* Standalone form */}
       <Route path="/enquiry/new" element={<Page><EnquiryForm /></Page>} />
