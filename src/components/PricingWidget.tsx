@@ -32,14 +32,31 @@ export type SolveMode = 'guest' | 'base';
 
 /** Full immutable snapshot of the widget's current state. Emitted to host
  * callbacks (Create Proposal / Share Calc) so the host can persist. */
+/** A single agent's slot inside a proposal. `pct` is the effective
+ *  commission used in this proposal (defaults to the agent's Settings
+ *  default; overridable per-proposal without writing back to Settings). */
+export interface SnapshotAgent {
+  id: string;
+  pct: number;
+  /** Snapshot of the agent's display fields at the time of save — used by
+   *  CreateProposalModal to pre-fill recipient info for the lead agent
+   *  and by the proposal page to render names without an extra join. */
+  name: string;
+  email: string | null;
+  company: string | null;
+}
+
 export interface PricingSnapshot {
   propertyId: string;
   scenarioType: ScenarioType;
+  /** Legacy single-agent id. Mirrors agents[0]?.id when scenarioType ===
+   *  'agent', else null. Kept so existing consumers that only read
+   *  agent_id (CreateProposalModal pre-fill, etc.) still work. */
   agentId: string | null;
-  /** Contact info of the selected agent, copied from Settings → Agents.
-   *  Lets the CreateProposal modal pre-fill name/email instead of asking
-   *  the ladies to retype data we already have on file. Only set when
-   *  scenarioType === 'agent' and an agent is selected. */
+  /** Multi-agent split. Empty array for non-agent scenarios. */
+  agents: SnapshotAgent[];
+  /** Contact info of the *lead* agent (agents[0]), copied from Settings.
+   *  Used by CreateProposalModal to pre-fill recipient name/email. */
   agentContact: { name: string; email: string | null; company: string | null } | null;
   channelId: string | null;
   baseline: number;
@@ -109,9 +126,24 @@ export default function PricingWidget({
   const [scenarioType, setScenarioType] = useState<ScenarioType>(
     (initialSnapshot?.scenario_type as ScenarioType) || 'direct'
   );
-  const [selectedAgentId, setSelectedAgentId] = useState(initialSnapshot?.agent_id || '');
+  // Multi-agent split. Each entry is { id, pct } where pct is the effective
+  // % to use *for this proposal*. In System mode the rows are read-only and
+  // their pct mirrors the agent's Settings default; Override mode lets the
+  // user adjust each pct without writing back to Settings.
+  //
+  // Edit-mode hydration: prefer `agents` (the new column); fall back to the
+  // legacy `agent_id` for rows saved before multi-agent existed.
+  const [selectedAgents, setSelectedAgents] = useState<Array<{ id: string; pct: number }>>(() => {
+    if (initialSnapshot?.agents && initialSnapshot.agents.length > 0) {
+      return initialSnapshot.agents.map(a => ({ id: a.id, pct: Number(a.pct) || 0 }));
+    }
+    if (initialSnapshot?.agent_id) {
+      return [{ id: initialSnapshot.agent_id, pct: 0 }];
+    }
+    return [];
+  });
   const [selectedChannelId, setSelectedChannelId] = useState(initialSnapshot?.channel_profile_id || '');
-  const [selectedSeason, setSelectedSeason] = useState(initialSnapshot?.season_tag || '');
+  const [selectedSeason, setSelectedSeason] = useState(initialSnapshot?.season_tag || 'Normal');
 
   // Override fields (string-typed so the input can be cleared without
   // coercing to NaN). Empty string = no override.
@@ -119,7 +151,6 @@ export default function PricingWidget({
     initialSnapshot?.reduced_baseline != null ? String(initialSnapshot.reduced_baseline) : ''
   );
   const [overrideCtr, setOverrideCtr] = useState('');
-  const [overrideAgent, setOverrideAgent] = useState('');
   const [overridePlatformFee, setOverridePlatformFee] = useState('');
   const [solveFor, setSolveFor] = useState<SolveMode>('guest');
   const [targetGuest, setTargetGuest] = useState('');
@@ -153,15 +184,9 @@ export default function PricingWidget({
           })));
         }
 
-        // Auto-detect current season — but only if we don't already have one
-        // from initialSnapshot (edit mode), so we don't clobber the user's choice.
-        if (!initialSnapshot?.season_tag && seasonRes.data?.length) {
-          const today = new Date().toISOString().split('T')[0];
-          const active = seasonRes.data.find(
-            (s: SeasonTag) => s.start_date <= today && s.end_date >= today
-          );
-          if (active) setSelectedSeason(active.name);
-        }
+        // Default season stays at 'Normal' until the user picks one. We
+        // used to auto-detect from today's date, but that surprised users
+        // who expected the calculator to open at the resting state.
       } catch (err) {
         console.error('PricingWidget load error:', err);
       } finally {
@@ -172,9 +197,27 @@ export default function PricingWidget({
   }, [supabase, property?.id, currentYear]);
 
   // ── Derived ──
-  const activeAgent = useMemo(
-    () => agents.find((a) => a.id === selectedAgentId) || null,
-    [agents, selectedAgentId]
+  // Once the Agents catalogue has loaded, seed any selected-agent rows
+  // whose pct is still 0 with that agent's Settings default. Only runs
+  // while in System mode — Override-mode pcts are explicit user input
+  // and shouldn't be silently overwritten.
+  useEffect(() => {
+    if (!agents.length || selectedAgents.length === 0) return;
+    setSelectedAgents(prev =>
+      prev.map(sa => {
+        if (sa.pct !== 0) return sa;
+        const a = agents.find(x => x.id === sa.id);
+        return a ? { ...sa, pct: Number(a.default_commission_pct) } : sa;
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents]);
+
+  // Lead agent (first in the array) — used for the recipient pre-fill in
+  // CreateProposalModal and the back-compat agent_id we still write.
+  const leadAgent = useMemo(
+    () => (selectedAgents[0] ? agents.find(a => a.id === selectedAgents[0].id) || null : null),
+    [agents, selectedAgents]
   );
 
   const activeChannel = useMemo(
@@ -183,7 +226,9 @@ export default function PricingWidget({
   );
 
   const seasonMultiplier = useMemo(() => {
-    if (!selectedSeason) return 1;
+    // "Normal" and the empty value are the calculator's 1.0× resting state.
+    // Named seasons read their multiplier from the season_tags table.
+    if (!selectedSeason || selectedSeason === 'Normal') return 1;
     const tag = seasonTags.find((s) => s.name === selectedSeason);
     return tag ? tag.multiplier : 1;
   }, [seasonTags, selectedSeason]);
@@ -191,11 +236,23 @@ export default function PricingWidget({
   // CTR cut for the scenario (constant; overridable in Override mode).
   const systemCtrPct = CTR_DEFAULT[scenarioType];
 
-  // Agent commission — read LIVE from Settings → Agents (no hardcoding).
-  // Falls back to 0 if no agent selected so the calc doesn't pretend.
-  const systemAgentPct = scenarioType === 'agent' && activeAgent
-    ? Number(activeAgent.default_commission_pct)
-    : 0;
+  // Agent commission — sum across every selected agent.
+  // System mode reads each agent's Settings default; Override mode uses the
+  // per-row pct (which the user can edit). Falls back to 0 when no agents
+  // are picked so the calc doesn't pretend.
+  const systemAgentPct = useMemo(() => {
+    if (scenarioType !== 'agent') return 0;
+    return selectedAgents.reduce((sum, sa) => {
+      // Skip rows where the user hasn't picked an agent yet — they
+      // shouldn't contribute to the calc.
+      if (!sa.id) return sum;
+      const def = agents.find(a => a.id === sa.id);
+      const pct = mode === 'override'
+        ? sa.pct
+        : (def ? Number(def.default_commission_pct) : sa.pct);
+      return sum + (Number.isFinite(pct) ? pct : 0);
+    }, 0);
+  }, [scenarioType, selectedAgents, agents, mode]);
 
   const systemPlatformFeePct = scenarioType === 'platform' && activeChannel
     ? activeChannel.platform_fee_pct
@@ -218,7 +275,10 @@ export default function PricingWidget({
       platformFixedFee: systemPlatformFixedFee,
       reducedBaseline: mode === 'override' && overrideBase !== '' ? Number(overrideBase) / seasonMultiplier : null,
       reducedCtrPct: mode === 'override' && overrideCtr !== '' ? Number(overrideCtr) : null,
-      reducedAgentPct: mode === 'override' && overrideAgent !== '' ? Number(overrideAgent) : null,
+      // Per-agent override % is baked into systemAgentPct (see useMemo above);
+      // no separate reducedAgentPct needed now that each row is independently
+      // editable in Override mode.
+      reducedAgentPct: null,
       solveFor: mode === 'override' ? solveFor : 'guest',
       targetGuestPrice: mode === 'override' && solveFor === 'base' && targetGuest !== '' ? Number(targetGuest) : null,
       vatEnabled: false,  // VAT is out of scope for the v1 widget; kept available in the engine for other consumers.
@@ -227,17 +287,38 @@ export default function PricingWidget({
   }, [
     baseline, scenarioType, systemCtrPct, systemAgentPct, seasonMultiplier,
     systemPlatformFeePct, systemPlatformFixedFee,
-    mode, overrideBase, overrideCtr, overrideAgent, solveFor, targetGuest,
+    mode, overrideBase, overrideCtr, solveFor, targetGuest,
   ]);
 
   // ── Snapshot builder for callbacks ──
   function buildSnapshot(): PricingSnapshot {
+    // Resolve each selected agent against the loaded catalogue so we can
+    // store name/email/company alongside the id — downstream consumers
+    // (CreateProposalModal pre-fill, proposal page) read these without an
+    // extra query.
+    const resolvedAgents: SnapshotAgent[] = scenarioType === 'agent'
+      ? selectedAgents
+          .filter(sa => !!sa.id)  // drop any rows the user never picked
+          .map(sa => {
+            const a = agents.find(x => x.id === sa.id);
+            const effPct = mode === 'override' ? sa.pct : (a ? Number(a.default_commission_pct) : sa.pct);
+            return {
+              id: sa.id,
+              pct: effPct,
+              name: a?.name || '',
+              email: a?.email || null,
+              company: a?.company || null,
+            };
+          })
+      : [];
+
     return {
       propertyId: property.id,
       scenarioType,
-      agentId: scenarioType === 'agent' ? selectedAgentId || null : null,
-      agentContact: scenarioType === 'agent' && activeAgent
-        ? { name: activeAgent.name, email: activeAgent.email, company: activeAgent.company }
+      agentId: scenarioType === 'agent' ? (resolvedAgents[0]?.id || null) : null,
+      agents: resolvedAgents,
+      agentContact: resolvedAgents[0]
+        ? { name: resolvedAgents[0].name, email: resolvedAgents[0].email, company: resolvedAgents[0].company }
         : null,
       channelId: scenarioType === 'platform' ? selectedChannelId || null : null,
       baseline: baseline?.daily_rate ?? 0,
@@ -249,7 +330,7 @@ export default function PricingWidget({
       platformFixedFee: systemPlatformFixedFee,
       reducedBaseline: mode === 'override' && overrideBase !== '' ? Number(overrideBase) : null,
       reducedCtrPct: mode === 'override' && overrideCtr !== '' ? Number(overrideCtr) : null,
-      reducedAgentPct: mode === 'override' && overrideAgent !== '' ? Number(overrideAgent) : null,
+      reducedAgentPct: null,
       totalMarginPct: breakdown.totalMarginPct,
       breakdown,
     };
@@ -258,7 +339,6 @@ export default function PricingWidget({
   function resetOverrides() {
     setOverrideBase('');
     setOverrideCtr('');
-    setOverrideAgent('');
     setOverridePlatformFee('');
     setTargetGuest('');
     setSolveFor('guest');
@@ -325,7 +405,6 @@ export default function PricingWidget({
             onChange={(e) => setSelectedSeason(e.target.value)}
             style={{ width: 'auto' }}
           >
-            <option value="">No season (1.0x)</option>
             {SEASON_TAG_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
@@ -378,19 +457,119 @@ export default function PricingWidget({
 
             {scenarioType === 'agent' && (
               <div className="form-group" style={{ marginTop: '8px' }}>
-                <label className="form-label">Agent</label>
-                <select
-                  className="form-input"
-                  value={selectedAgentId}
-                  onChange={(e) => setSelectedAgentId(e.target.value)}
-                >
-                  <option value="">-- Select agent --</option>
-                  {agents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}{a.company ? ` — ${a.company}` : ''} ({a.default_commission_pct}%)
-                    </option>
-                  ))}
-                </select>
+                <label className="form-label">
+                  Agents
+                  {selectedAgents.length > 0 && (
+                    <span style={{ marginLeft: '6px', fontSize: '0.625rem', color: 'var(--text-light)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+                      {selectedAgents.length} · total {systemAgentPct.toFixed(1)}%
+                    </span>
+                  )}
+                </label>
+                <div className="pricing-agents-list">
+                  {selectedAgents.map((sa, idx) => {
+                    const def = agents.find(a => a.id === sa.id);
+                    // Show the current selection plus every agent not already
+                    // picked by another row — keeps the dropdown short and
+                    // prevents the same agent being selected twice.
+                    const remaining = agents.filter(a =>
+                      a.id === sa.id || !selectedAgents.some(s => s.id === a.id)
+                    );
+                    const displayPct = mode === 'override' ? sa.pct : (def ? Number(def.default_commission_pct) : sa.pct);
+                    const unset = !sa.id;
+                    return (
+                      <div key={idx} className="pricing-agent-row">
+                        <select
+                          className="form-input"
+                          value={sa.id}
+                          onChange={(e) => {
+                            const newId = e.target.value;
+                            const newDef = agents.find(a => a.id === newId);
+                            setSelectedAgents(prev => prev.map((row, i) =>
+                              i === idx
+                                ? { id: newId, pct: newDef ? Number(newDef.default_commission_pct) : 0 }
+                                : row
+                            ));
+                          }}
+                          style={{ flex: 1 }}
+                        >
+                          <option value="">-- Select agent --</option>
+                          {remaining.map(a => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}{a.company ? ` — ${a.company}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {mode === 'override' && !unset ? (
+                          <input
+                            type="number"
+                            className="form-input pricing-field--overridden"
+                            value={sa.pct}
+                            onChange={(e) => {
+                              const v = e.target.value === '' ? 0 : Number(e.target.value);
+                              setSelectedAgents(prev => prev.map((row, i) =>
+                                i === idx ? { ...row, pct: v } : row
+                              ));
+                            }}
+                            min={0}
+                            max={80}
+                            step={0.5}
+                            style={{ width: '70px' }}
+                            title="Override commission % for this proposal only — does not change Settings"
+                          />
+                        ) : (
+                          <span
+                            className="pricing-agent-pct"
+                            title={unset ? 'Pick an agent to see their commission' : 'Default commission from Settings → Agents'}
+                          >
+                            {unset ? '—' : `${displayPct.toFixed(1)}%`}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="pricing-agent-remove"
+                          onClick={() => setSelectedAgents(prev => prev.filter((_, i) => i !== idx))}
+                          title="Remove agent"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    // System mode is single-agent: button only shows when
+                    // no agent is selected yet (lets the user pick the first
+                    // one). To add more, the user has to flip to Override
+                    // — the existing selection carries over.
+                    // Override mode allows any number of agents up to the
+                    // catalogue size.
+                    const filledCount = selectedAgents.filter(sa => sa.id).length;
+                    const canAdd = mode === 'override'
+                      ? agents.length > filledCount
+                      : selectedAgents.length === 0;
+                    if (!canAdd) return null;
+                    return (
+                      <button
+                        type="button"
+                        className="btn btn-ghost pricing-agent-add"
+                        onClick={() => {
+                          setSelectedAgents(prev => [...prev, { id: '', pct: 0 }]);
+                        }}
+                      >
+                        + Add agent
+                      </button>
+                    );
+                  })()}
+                  {mode !== 'override' && selectedAgents.filter(sa => sa.id).length >= 1 && agents.length > 1 && (
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', padding: '2px 2px' }}>
+                      Switch to Override to add more agents and adjust splits.
+                    </div>
+                  )}
+                  {selectedAgents.length === 0 && agents.length === 0 && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+                      No agents in Settings yet. Add one via Settings → Agents.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -481,18 +660,8 @@ export default function PricingWidget({
               </div>
 
               {scenarioType === 'agent' && (
-                <div className="form-group">
-                  <label className="form-label">Agent %</label>
-                  <input
-                    type="number"
-                    className={`form-input ${overrideAgent !== '' ? 'pricing-field--overridden' : ''}`}
-                    value={overrideAgent}
-                    onChange={(e) => setOverrideAgent(e.target.value)}
-                    placeholder={String(systemAgentPct)}
-                    min={0}
-                    max={80}
-                    step={0.5}
-                  />
+                <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', padding: '4px 2px' }}>
+                  Edit each agent's commission % directly in the Agents row above.
                 </div>
               )}
 
@@ -526,16 +695,35 @@ export default function PricingWidget({
                 {fmtRand(ctrTakeDisp)}
               </span>
             </div>
-            {scenarioType === 'agent' && (
-              <div className="pricing-breakdown-row">
-                <span className="pricing-breakdown-label">
-                  Agent earns{activeAgent ? ` (${activeAgent.name})` : ''} ({overrideAgent !== '' ? overrideAgent : systemAgentPct}%)
-                </span>
-                <span className="pricing-breakdown-value">
-                  {agentTakeDisp > 0 ? fmtRand(agentTakeDisp) : '—'}
-                </span>
-              </div>
-            )}
+            {scenarioType === 'agent' && (() => {
+              const filled = selectedAgents.filter(sa => !!sa.id);
+              return filled.length === 0 ? (
+                <div className="pricing-breakdown-row">
+                  <span className="pricing-breakdown-label">Agent earns</span>
+                  <span className="pricing-breakdown-value">—</span>
+                </div>
+              ) : (
+                filled.map((sa) => {
+                  const def = agents.find(a => a.id === sa.id);
+                  const effPct = mode === 'override' ? sa.pct : (def ? Number(def.default_commission_pct) : sa.pct);
+                  // Each agent's share of the total agent take, proportional
+                  // to their pct. Rounded to nearest rand for display.
+                  const share = systemAgentPct > 0
+                    ? Math.round((effPct / systemAgentPct) * agentTakeDisp)
+                    : 0;
+                  return (
+                    <div key={sa.id} className="pricing-breakdown-row">
+                      <span className="pricing-breakdown-label">
+                        {def ? def.name : 'Agent'} earns ({effPct.toFixed(1)}%)
+                      </span>
+                      <span className="pricing-breakdown-value">
+                        {share > 0 ? fmtRand(share) : '—'}
+                      </span>
+                    </div>
+                  );
+                })
+              );
+            })()}
             {scenarioType === 'platform' && (
               <div className="pricing-breakdown-row pricing-breakdown-row--platform">
                 <span className="pricing-breakdown-label">
@@ -563,7 +751,7 @@ export default function PricingWidget({
                 <button
                   className="btn btn-primary"
                   onClick={() => onCreateProposal(buildSnapshot())}
-                  disabled={saving || (scenarioType === 'agent' && !selectedAgentId)}
+                  disabled={saving || (scenarioType === 'agent' && selectedAgents.filter(sa => !!sa.id).length === 0)}
                 >
                   {saving ? 'Saving…' : (actionLabel || 'Create Proposal')}
                 </button>

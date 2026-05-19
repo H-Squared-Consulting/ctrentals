@@ -107,6 +107,7 @@ export default function CreateProposalModal({
         property_id: snapshot.propertyId,
         scenario_type: snapshot.scenarioType,
         agent_id: snapshot.agentId,
+        agents: snapshot.agents.map(a => ({ id: a.id, pct: a.pct })),
         channel_profile_id: snapshot.channelId,
         baseline_used: snapshot.baseline,
         baseline_mode: 'daily' as const,

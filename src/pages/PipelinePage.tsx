@@ -58,6 +58,7 @@ interface ProposalRow {
   season_tag: string | null;
   owner_net: number | null;
   company_take: number | null;
+  agents: Array<{ id: string; pct: number }> | null;
 }
 
 interface EnquirySide {
@@ -202,6 +203,7 @@ function mapProposalRow(p: any): ProposalRow {
     season_tag: p.pricing_proposals?.season_tag ?? null,
     owner_net: p.pricing_proposals?.owner_net ?? null,
     company_take: p.pricing_proposals?.company_take ?? null,
+    agents: p.pricing_proposals?.agents ?? null,
   };
 }
 
@@ -257,14 +259,14 @@ export default function PipelinePage() {
       // Enquiries with all their proposals + property + pricing joined.
       supabase
         .from('enquiries')
-        .select('*, proposals(*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take))')
+        .select('*, proposals(*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents))')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .order('created_at', { ascending: false }),
       // Proposals created without an enquiry (FAB flow) — these are deals
       // in their own right.
       supabase
         .from('proposals')
-        .select('*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take)')
+        .select('*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .is('enquiry_id', null)
         .order('created_at', { ascending: false }),

@@ -159,14 +159,21 @@ export default function ChannelDefaultsPage({ embedded }: { embedded?: boolean }
                 <tr key={r.id} style={{ opacity: r.is_active ? 1 : 0.6 }}>
                   <td><strong>{r.platform_name}</strong></td>
                   <td style={{ textAlign: 'right' }}>
+                    {/* String-backed value so the user can clear the field
+                        and type a fresh number; leading zero would otherwise
+                        stick because Number("") === 0. */}
                     <input
                       className="form-input"
                       type="number"
                       min={0}
                       max={100}
                       step="0.1"
-                      value={r.fee_pct}
-                      onChange={(e) => setRows(prev => prev.map(x => x.id === r.id ? { ...x, fee_pct: Number(e.target.value) } : x))}
+                      value={r.fee_pct === 0 ? '' : r.fee_pct}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRows(prev => prev.map(x => x.id === r.id ? { ...x, fee_pct: v === '' ? 0 : Number(v) } : x));
+                      }}
                       onBlur={(e) => updateField(r, { fee_pct: parseFloat(e.target.value) || 0 })}
                       style={{ width: 90, textAlign: 'right' }}
                     />
@@ -177,8 +184,12 @@ export default function ChannelDefaultsPage({ embedded }: { embedded?: boolean }
                       type="number"
                       min={0}
                       step="0.01"
-                      value={r.fixed_fee}
-                      onChange={(e) => setRows(prev => prev.map(x => x.id === r.id ? { ...x, fixed_fee: Number(e.target.value) } : x))}
+                      value={r.fixed_fee === 0 ? '' : r.fixed_fee}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRows(prev => prev.map(x => x.id === r.id ? { ...x, fixed_fee: v === '' ? 0 : Number(v) } : x));
+                      }}
                       onBlur={(e) => updateField(r, { fixed_fee: parseFloat(e.target.value) || 0 })}
                       style={{ width: 110, textAlign: 'right' }}
                     />
@@ -193,10 +204,9 @@ export default function ChannelDefaultsPage({ embedded }: { embedded?: boolean }
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.75rem' }}
+                      className={`status-pill ${r.is_active ? 'status-pill--active' : 'status-pill--inactive'}`}
                       onClick={() => updateField(r, { is_active: !r.is_active })}
-                      title={r.is_active ? 'Mark inactive' : 'Reactivate'}
+                      title={r.is_active ? 'Click to mark inactive' : 'Click to reactivate'}
                     >
                       {r.is_active ? 'Active' : 'Inactive'}
                     </button>

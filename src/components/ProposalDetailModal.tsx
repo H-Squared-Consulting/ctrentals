@@ -11,7 +11,7 @@
  *   - opening the calculator in edit mode when the user clicks Edit Pricing
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StatusBadge } from './DataTable';
 import { useToast } from './ToastProvider';
 import { fmtRand } from '../lib/pricingEngine';
@@ -42,6 +42,9 @@ export interface ProposalForDetail {
   season_tag?: string | null;
   owner_net?: number | null;
   company_take?: number | null;
+  /** Multi-agent split stored on pricing_proposals.agents. Each entry is
+   *  the agent id + their commission % used for this proposal. */
+  agents?: Array<{ id: string; pct: number }> | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
@@ -85,6 +88,27 @@ export default function ProposalDetailModal({
 }: ProposalDetailModalProps) {
   const toast = useToast();
   const [copied, setCopied] = useState(false);
+
+  // Resolve agent ids → names so the breakdown can show each agent by
+  // name rather than just their pct. JSONB on pricing_proposals only
+  // stores { id, pct }; the names live on the `agents` table. One small
+  // lookup per modal open keeps things simple.
+  const [agentNames, setAgentNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!proposal.agents || proposal.agents.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const ids = proposal.agents!.map(a => a.id).filter(Boolean);
+      if (!ids.length) return;
+      const { data } = await supabase.from('agents').select('id,name').in('id', ids);
+      if (!cancelled && data) {
+        const map: Record<string, string> = {};
+        for (const row of data) map[row.id] = row.name;
+        setAgentNames(map);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [proposal.agents, supabase]);
 
   async function handleCopy() {
     try {
@@ -182,12 +206,32 @@ export default function ProposalDetailModal({
                     <span className="pricing-breakdown-value">{fmtRand(ctrTake)}</span>
                   </div>
                 )}
-                {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (
-                  <div className="pricing-breakdown-row">
-                    <span className="pricing-breakdown-label">Agent commission</span>
-                    <span className="pricing-breakdown-value">{fmtRand(agentTake)}</span>
-                  </div>
-                )}
+                {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (() => {
+                  // Per-agent rows if the proposal has a multi-agent split;
+                  // otherwise fall back to the single aggregate line so old
+                  // pre-multi-agent proposals still render.
+                  const splits = proposal.agents?.filter(a => !!a.id) || [];
+                  const totalPct = splits.reduce((s, a) => s + (Number(a.pct) || 0), 0);
+                  if (splits.length === 0 || totalPct <= 0) {
+                    return (
+                      <div className="pricing-breakdown-row">
+                        <span className="pricing-breakdown-label">Agent commission</span>
+                        <span className="pricing-breakdown-value">{fmtRand(agentTake)}</span>
+                      </div>
+                    );
+                  }
+                  return splits.map(sa => {
+                    const share = Math.round((Number(sa.pct) / totalPct) * agentTake);
+                    return (
+                      <div key={sa.id} className="pricing-breakdown-row">
+                        <span className="pricing-breakdown-label">
+                          {agentNames[sa.id] || 'Agent'} ({Number(sa.pct).toFixed(1)}%)
+                        </span>
+                        <span className="pricing-breakdown-value">{fmtRand(share)}</span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           ) : (

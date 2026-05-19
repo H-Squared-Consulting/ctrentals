@@ -1822,9 +1822,9 @@ select.form-input { cursor: pointer; }
   transition: var(--transition);
 }
 .pricing-toggle-btn.active {
-  background: var(--surface);
-  color: var(--color-primary);
-  box-shadow: var(--shadow-sm);
+  background: var(--color-primary, #1E40AF);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   font-weight: 600;
 }
 .pricing-toggle-btn:hover:not(.active) { color: var(--text); }
@@ -3995,3 +3995,65 @@ select.form-input { cursor: pointer; }
   color: var(--text-secondary);
 }
 .home-empty strong { color: var(--text); font-size: 0.875rem; }
+
+/* Status pill — clickable active/inactive toggle with clear colour
+ * coding so the current state is obvious at a glance. */
+.status-pill {
+  display: inline-block;
+  padding: 4px 12px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.12s ease;
+}
+.status-pill:hover { filter: brightness(0.95); }
+.status-pill--active   { background: #D1FAE5; color: #065F46; border-color: #A7F3D0; }
+.status-pill--inactive { background: #FEF3C7; color: #92400E; border-color: #FCD34D; }
+
+/* Multi-agent picker inside the Pricing widget */
+.pricing-agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pricing-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pricing-agent-pct {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  background: var(--border-light);
+  border-radius: 4px;
+  min-width: 52px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.pricing-agent-remove {
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.pricing-agent-remove:hover {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+.pricing-agent-add {
+  font-size: 0.75rem;
+  align-self: flex-start;
+  padding: 4px 8px;
+}

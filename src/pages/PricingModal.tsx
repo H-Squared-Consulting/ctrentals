@@ -60,6 +60,10 @@ export default function PricingModal({
       const payload = {
         scenario_type: snap.scenarioType,
         agent_id: snap.agentId,
+        // Multi-agent split — Postgres JSONB column; pg-driver serialises the
+        // array straight through. Empty array for non-agent scenarios so we
+        // don't leave stale data on row.
+        agents: snap.agents.map(a => ({ id: a.id, pct: a.pct })),
         channel_profile_id: snap.channelId,
         baseline_used: snap.baseline,
         baseline_mode: 'daily' as const,

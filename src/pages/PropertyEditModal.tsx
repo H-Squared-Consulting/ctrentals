@@ -272,7 +272,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   async function refetchProposals() {
     const { data } = await supabase
       .from('proposals')
-      .select('*, pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take)')
+      .select('*, pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)')
       .eq('property_id', property.id)
       .order('created_at', { ascending: false });
     const mapped = (data || []).map((p) => ({
@@ -283,6 +283,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       season_tag: p.pricing_proposals?.season_tag ?? null,
       owner_net: p.pricing_proposals?.owner_net ?? null,
       company_take: p.pricing_proposals?.company_take ?? null,
+      agents: p.pricing_proposals?.agents ?? null,
     }));
     setProposals(mapped);
   }

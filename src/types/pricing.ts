@@ -52,11 +52,23 @@ export type PricingProposalStatus = 'draft' | 'live' | 'accepted' | 'expired' | 
  *     rows; new rows always write `'margin'` / `'daily'` so the view doesn't
  *     break.
  */
+/** Multi-agent split row stored on pricing_proposals.agents JSONB. */
+export interface ProposalAgent {
+  id: string;
+  pct: number;
+}
+
 export interface PricingProposal {
   id: string;
   property_id: string;
   scenario_type: 'direct' | 'agent' | 'platform';
+  /** Legacy single-agent reference. Kept for back-compat on rows written
+   *  before multi-agent was added. New writes leave this NULL and use the
+   *  `agents` array as the source of truth. */
   agent_id: string | null;
+  /** Per-proposal agent split: each entry's pct is the effective commission
+   *  for this proposal (defaults from Settings, optionally overridden). */
+  agents: ProposalAgent[];
   channel_profile_id: string | null;
   baseline_used: number;
   baseline_mode: 'daily' | 'monthly';
