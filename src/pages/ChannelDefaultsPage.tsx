@@ -33,7 +33,7 @@ export default function ChannelDefaultsPage({ embedded }: { embedded?: boolean }
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState({ platform_name: '', fee_pct: '', fixed_fee: '0', notes: '' });
 
-  useEffect(() => { if (!embedded) setPageTitle('Channel Defaults'); }, [setPageTitle, embedded]);
+  useEffect(() => { if (!embedded) setPageTitle('Platforms'); }, [setPageTitle, embedded]);
 
   async function load() {
     setLoading(true);

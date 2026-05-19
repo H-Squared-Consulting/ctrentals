@@ -74,7 +74,7 @@ const NAV: NavItem[] = [
     icon: '⚙️',
     children: [
       { to: '/settings/seasons', label: 'Seasons' },
-      { to: '/settings/channels', label: 'Channels' },
+      { to: '/settings/platforms', label: 'Platforms' },
       { to: '/settings/agents', label: 'Agents' },
     ],
   },

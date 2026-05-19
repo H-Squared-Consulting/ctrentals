@@ -11,11 +11,11 @@ import { useLayout } from '../contexts/LayoutContext';
 
 const TITLES: Record<string, string> = {
   seasons: 'Seasons',
-  channels: 'Channels',
+  platforms: 'Platforms',
   agents: 'Agents',
 };
 
-export default function SettingsPage({ tab, children }: { tab: 'seasons' | 'channels' | 'agents'; children: ReactNode }) {
+export default function SettingsPage({ tab, children }: { tab: 'seasons' | 'platforms' | 'agents'; children: ReactNode }) {
   const { setPageTitle } = useLayout();
   useEffect(() => { setPageTitle(TITLES[tab] || 'Settings'); }, [setPageTitle, tab]);
   return <>{children}</>;

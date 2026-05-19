@@ -102,7 +102,8 @@ export function App() {
       {/* Settings */}
       <Route path="/settings" element={<Navigate to="/settings/seasons" replace />} />
       <Route path="/settings/seasons" element={<Page><SettingsPage tab="seasons"><SeasonTagsPage embedded /></SettingsPage></Page>} />
-      <Route path="/settings/channels" element={<Page><SettingsPage tab="channels"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/platforms" element={<Page><SettingsPage tab="platforms"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/channels" element={<Navigate to="/settings/platforms" replace />} />
       <Route path="/settings/agents" element={<Page><SettingsPage tab="agents"><AgentsPage embedded /></SettingsPage></Page>} />
 
       {/* Standalone form */}

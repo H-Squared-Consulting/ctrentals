@@ -47,8 +47,12 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  const generateSlug = (name) =>
-    name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // CTR codes are the team's canonical property identifier (CTR0001, CTR0002…).
+  // Generated at create time from `MAX(slug)` on the existing rows; locked
+  // thereafter so the number on the team's master spreadsheet always lines
+  // up with whatever's in the database. The old behaviour derived an
+  // address-based kebab slug from the property name — abandoned because it
+  // (a) drifted as names were edited and (b) didn't match the spreadsheet.
 
   const parseAmenityTags = (tags) => {
     if (Array.isArray(tags)) return tags.join(', ');
@@ -167,6 +171,30 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     const t = setTimeout(() => setConfirmingArchive(false), 5000);
     return () => clearTimeout(t);
   }, [confirmingArchive]);
+
+  // Auto-allocate the next CTR code for newly-created properties. Runs once
+  // per mount: queries the highest existing CTR#### across all properties
+  // (archived included — we never reuse a number), bumps it, zero-pads to
+  // 4 digits. The field shows the result immediately and stays disabled
+  // through save so the user never types a duplicate.
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('partner_properties')
+        .select('slug')
+        .like('slug', 'CTR%')
+        .order('slug', { ascending: false })
+        .limit(1);
+      const lastSlug: string | undefined = data?.[0]?.slug;
+      const lastNum = lastSlug ? parseInt(lastSlug.replace(/\D/g, ''), 10) : 0;
+      const next = `CTR${String((isNaN(lastNum) ? 0 : lastNum) + 1).padStart(4, '0')}`;
+      if (!cancelled) setForm(f => ({ ...f, slug: next }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
 
   async function handleArchive() {
     if (isNew || !property.id) return;
@@ -377,9 +405,8 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   }
 
   function handleNameChange(value) {
-    const updates = { property_name: value };
-    if (isNew || !form.slug) updates.slug = generateSlug(value);
-    setForm({ ...form, ...updates });
+    // Slug stays put — CTR codes are independent of the property name now.
+    setForm({ ...form, property_name: value });
   }
 
   function parseAmenityTagsInput(str) {
@@ -398,7 +425,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       const payload = {
         partner_id: partnerId,
         property_name: form.property_name.trim(),
-        slug: form.slug.trim() || generateSlug(form.property_name),
+        slug: form.slug.trim(),
         tagline: form.tagline.trim() || null,
         description: form.description.trim() || null,
         property_type: form.property_type || null,
@@ -596,13 +623,21 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               <input type="text" className="form-input" value={form.property_name} onChange={(e) => handleNameChange(e.target.value)} placeholder="e.g., Seaside Villa 12" />
             </div>
             <div className="form-group">
-              <label className="form-label">Unique ID</label>
+              <label className="form-label">
+                Unique ID
+                <span style={{ marginLeft: '6px', fontSize: '0.625rem', color: 'var(--text-light)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+                  🔒 auto-generated
+                </span>
+              </label>
               <input
                 type="text"
                 className="form-input"
                 value={form.slug}
-                onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                placeholder="CTR0000"
+                readOnly
+                disabled
+                title="Locked — CTR codes are auto-allocated and must match the team spreadsheet."
+                style={{ background: 'var(--border-light)', cursor: 'not-allowed', color: 'var(--text-secondary)' }}
+                placeholder={isNew ? 'Allocating…' : 'CTR0000'}
               />
             </div>
           </div>
