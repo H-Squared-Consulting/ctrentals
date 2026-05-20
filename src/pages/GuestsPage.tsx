@@ -162,6 +162,21 @@ export default function GuestsPage() {
     }
   }
 
+  /** Inline-row delete — same flow as the modal Delete, but doesn't open
+   *  the edit modal first. Stops propagation so the row click doesn't fire. */
+  async function deleteGuest(g: Guest, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!confirm(`Delete ${g.name}? This cannot be undone.`)) return;
+    try {
+      const { error } = await supabase.from('guests').delete().eq('id', g.id);
+      if (error) throw error;
+      toast.success('Guest deleted');
+      await load();
+    } catch (err: any) {
+      toast.error('Failed to delete: ' + (err?.message || err));
+    }
+  }
+
   return (
     <div>
       <div className="card" style={{ marginBottom: 16 }}>
@@ -213,6 +228,7 @@ export default function GuestsPage() {
                 <th>Phone</th>
                 <th>Country</th>
                 <th>Source</th>
+                <th style={{ width: 48 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -223,6 +239,16 @@ export default function GuestsPage() {
                   <td>{g.phone || <span className="text-light">-</span>}</td>
                   <td>{g.country || <span className="text-light">-</span>}</td>
                   <td>{g.source || <span className="text-light">-</span>}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button
+                      type="button"
+                      className="home-owner-row-delete"
+                      onClick={(e) => deleteGuest(g, e)}
+                      title="Delete guest"
+                    >
+                      ×
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
