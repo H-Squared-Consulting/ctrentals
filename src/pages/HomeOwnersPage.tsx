@@ -8,7 +8,7 @@
  * Overview tab). Revenue/payout summary is deferred until Finance is
  * built — those need the invoices table to exist first.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { useToast } from '../components/ToastProvider';
@@ -48,6 +48,11 @@ export default function HomeOwnersPage() {
   const [editing, setEditing] = useState<HomeOwner | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  // Property assignment state for the edit/add modal. Diffed against the
+  // current portfolio on save so we only touch the rows that actually change.
+  const [selectedPropertyIds, setSelectedPropertyIds] = useState<Set<string>>(new Set());
+  const [propertyPickerSearch, setPropertyPickerSearch] = useState('');
+  const [propertyPickerOpen, setPropertyPickerOpen] = useState(false);
 
   useEffect(() => { setPageTitle('Home Owners'); }, [setPageTitle]);
 
@@ -85,6 +90,8 @@ export default function HomeOwnersPage() {
   function openAdd() {
     setEditing({ id: '', partner_id: CT_RENTALS_PARTNER_ID } as HomeOwner);
     setForm(EMPTY_FORM);
+    setSelectedPropertyIds(new Set());
+    setPropertyPickerSearch('');
   }
   function openEdit(o: HomeOwner) {
     setEditing(o);
@@ -97,6 +104,9 @@ export default function HomeOwnersPage() {
       payment_notes: o.payment_notes || '',
       notes: o.notes || '',
     });
+    // Seed the picker with whatever properties currently point at this owner.
+    setSelectedPropertyIds(new Set((portfolioByOwner[o.id] || []).map(p => p.id)));
+    setPropertyPickerSearch('');
   }
 
   async function save() {
@@ -114,21 +124,65 @@ export default function HomeOwnersPage() {
         notes: form.notes.trim() || null,
         updated_at: new Date().toISOString(),
       };
+      let ownerId = editing.id;
       if (editing.id) {
         const { error } = await supabase.from('home_owners').update(payload).eq('id', editing.id);
         if (error) throw error;
-        toast.success('Owner updated');
       } else {
-        const { error } = await supabase.from('home_owners').insert(payload);
+        const { data, error } = await supabase.from('home_owners').insert(payload).select('id').single();
         if (error) throw error;
-        toast.success('Owner added');
+        ownerId = data.id;
       }
+
+      // Property assignment diff — only touch rows whose ownership changed.
+      // Add  = id selected now, was NOT linked before  → set owner_id = ownerId
+      // Drop = id NOT selected now, WAS linked before → set owner_id = null
+      const originalIds = new Set((portfolioByOwner[editing.id] || []).map(p => p.id));
+      const toAdd: string[] = [];
+      const toDrop: string[] = [];
+      for (const id of selectedPropertyIds) if (!originalIds.has(id)) toAdd.push(id);
+      for (const id of originalIds) if (!selectedPropertyIds.has(id)) toDrop.push(id);
+      if (toAdd.length > 0) {
+        const { error } = await supabase
+          .from('partner_properties')
+          .update({ owner_id: ownerId, updated_at: new Date().toISOString() })
+          .in('id', toAdd);
+        if (error) throw error;
+      }
+      if (toDrop.length > 0) {
+        const { error } = await supabase
+          .from('partner_properties')
+          .update({ owner_id: null, updated_at: new Date().toISOString() })
+          .in('id', toDrop);
+        if (error) throw error;
+      }
+
+      toast.success(editing.id ? 'Owner updated' : 'Owner added');
       setEditing(null);
       await load();
     } catch (err) {
       toast.error('Failed to save: ' + (err?.message || err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** Inline-row delete. Same flow as the modal's Delete button but skips
+   *  opening the modal. Confirms before destroying. */
+  async function deleteOwner(o: HomeOwner, e: React.MouseEvent) {
+    e.stopPropagation();
+    const linked = portfolioByOwner[o.id]?.length || 0;
+    const msg = linked > 0
+      ? `Delete ${o.name}? ${linked} propert${linked === 1 ? 'y' : 'ies'} will be unlinked (the properties themselves stay).`
+      : `Delete ${o.name}?`;
+    if (!confirm(msg)) return;
+    try {
+      const { error } = await supabase.from('home_owners').delete().eq('id', o.id);
+      if (error) throw error;
+      toast.success('Owner deleted');
+      await load();
+    } catch (err: any) {
+      toast.error('Failed to delete: ' + (err?.message || err));
     }
   }
 
@@ -197,6 +251,7 @@ export default function HomeOwnersPage() {
                 <th>Email</th>
                 <th>Phone</th>
                 <th style={{ textAlign: 'center' }}>Properties</th>
+                <th style={{ width: 48 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -210,6 +265,16 @@ export default function HomeOwnersPage() {
                     <td>{o.email || <span className="text-light">-</span>}</td>
                     <td>{o.phone || <span className="text-light">-</span>}</td>
                     <td style={{ textAlign: 'center' }}>{portfolio.length || <span className="text-light">-</span>}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        className="home-owner-row-delete"
+                        onClick={(e) => deleteOwner(o, e)}
+                        title="Delete owner"
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -257,14 +322,22 @@ export default function HomeOwnersPage() {
                 <textarea className="form-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
               </div>
 
-              {editing.id && portfolioByOwner[editing.id]?.length > 0 && (
-                <div style={{ marginTop: 'var(--s-2)' }}>
-                  <div className="form-label">Linked properties</div>
-                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.875rem' }}>
-                    {portfolioByOwner[editing.id].map(p => <li key={p.id}>{p.property_name}</li>)}
-                  </ul>
-                </div>
-              )}
+              {/* Property assignment — pick which properties belong to this
+                  owner. Combobox: input toggles a dropdown of all available
+                  properties; typing filters; click closes after adding one
+                  so the user can add several in sequence without the list
+                  taking over the modal. Diff is applied on save. */}
+              <PropertyPicker
+                allProperties={properties}
+                owners={owners}
+                editingOwnerId={editing.id}
+                selectedIds={selectedPropertyIds}
+                onChange={setSelectedPropertyIds}
+                search={propertyPickerSearch}
+                setSearch={setPropertyPickerSearch}
+                open={propertyPickerOpen}
+                setOpen={setPropertyPickerOpen}
+              />
             </div>
             <div className="modal-footer">
               {editing.id && (
@@ -275,6 +348,130 @@ export default function HomeOwnersPage() {
               <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Property picker (combobox) ─────────────────────────────────────────
+// Input doubles as a search field — focus opens the full dropdown, typing
+// filters. Click-outside closes. Picking a property keeps the dropdown
+// open so the user can add several in a row without re-clicking.
+
+function PropertyPicker({
+  allProperties, owners, editingOwnerId, selectedIds, onChange, search, setSearch, open, setOpen,
+}: {
+  allProperties: PropertyLite[];
+  owners: HomeOwner[];
+  editingOwnerId: string;
+  selectedIds: Set<string>;
+  onChange: (next: Set<string>) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, setOpen]);
+
+  const q = search.trim().toLowerCase();
+  const avail = allProperties
+    .filter(p => !selectedIds.has(p.id))
+    .filter(p => !q || p.property_name.toLowerCase().includes(q));
+
+  return (
+    <div className="property-picker" ref={rootRef}>
+      <div className="property-picker-label">
+        <span>Linked properties</span>
+        <span className="property-picker-count">{selectedIds.size} selected</span>
+      </div>
+
+      {selectedIds.size > 0 && (
+        <div className="property-picker-chips">
+          {Array.from(selectedIds).map(id => {
+            const p = allProperties.find(x => x.id === id);
+            if (!p) return null;
+            return (
+              <span key={id} className="home-owner-property-chip">
+                {p.property_name}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = new Set(selectedIds);
+                    next.delete(id);
+                    onChange(next);
+                  }}
+                  title="Unlink"
+                >×</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="property-picker-combo">
+        <input
+          className="form-input"
+          placeholder={open ? 'Type to filter…' : 'Click to add a property'}
+          value={search}
+          onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
+          onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+        />
+        <button
+          type="button"
+          className="property-picker-chevron"
+          onClick={() => setOpen(!open)}
+          tabIndex={-1}
+          aria-label={open ? 'Close' : 'Open'}
+        >
+          {open ? '▴' : '▾'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="property-picker-dropdown">
+          {avail.length === 0 ? (
+            <div className="property-picker-empty">
+              {q ? 'No matches.' : 'All properties already linked.'}
+            </div>
+          ) : (
+            avail.map(p => {
+              const otherOwnerId = p.owner_id && p.owner_id !== editingOwnerId ? p.owner_id : null;
+              const otherOwner = otherOwnerId ? owners.find(o => o.id === otherOwnerId) : null;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="property-picker-option"
+                  onClick={() => {
+                    const next = new Set(selectedIds);
+                    next.add(p.id);
+                    onChange(next);
+                    setSearch('');
+                  }}
+                >
+                  <span>{p.property_name}</span>
+                  {otherOwner && (
+                    <span className="property-picker-warn">currently {otherOwner.name}</span>
+                  )}
+                </button>
+              );
+            })
+          )}
         </div>
       )}
     </div>

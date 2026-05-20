@@ -151,7 +151,19 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       };
       const { data, error } = await supabase.from('home_owners').insert(payload).select().single();
       if (error) throw error;
-      // Refresh dropdown and auto-link the new owner to this property.
+
+      // Immediately persist the link to partner_properties.owner_id so the
+      // user doesn't have to remember to click Save on the property editor
+      // afterwards. For brand-new properties (no id yet) we just stash the
+      // id on the form — handleSave's payload writes owner_id on insert.
+      if (!isNew && property.id) {
+        const { error: linkErr } = await supabase
+          .from('partner_properties')
+          .update({ owner_id: data.id, updated_at: new Date().toISOString() })
+          .eq('id', property.id);
+        if (linkErr) throw linkErr;
+      }
+
       await loadOwners();
       setForm(f => ({ ...f, owner_id: data.id }));
       setOwnerDraft({ name: '', company: '', vat_number: '', email: '', phone: '' });

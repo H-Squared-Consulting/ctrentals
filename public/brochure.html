@@ -33,8 +33,11 @@
     var qp = new URLSearchParams(window.location.search).get('brand');
     if (qp === 'agent' || qp === 'direct') return qp;
     var host = (window.location.hostname || '').toLowerCase();
-    // Add the agent-share hostnames here once chosen, e.g. 'stayview.co.za'.
-    var AGENT_HOSTS = [];
+    // Hostnames that should serve the un-branded "agent" variant. The
+    // branded domain (southernescapes.co.za) is treated as 'direct' by
+    // omission. Subdomain matching ('.endsWith') covers any future
+    // per-agent subdomains on the neutral domain.
+    var AGENT_HOSTS = ['ctvilla.co.za'];
     for (var i = 0; i < AGENT_HOSTS.length; i++) {
       if (host === AGENT_HOSTS[i] || host.endsWith('.' + AGENT_HOSTS[i])) return 'agent';
     }

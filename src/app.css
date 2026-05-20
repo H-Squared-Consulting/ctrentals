@@ -4057,3 +4057,136 @@ select.form-input { cursor: pointer; }
   align-self: flex-start;
   padding: 4px 8px;
 }
+
+/* Home Owners — inline row delete + property assignment picker */
+.home-owner-row-delete {
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-light);
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0;
+}
+.home-owner-row-delete:hover {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
+  color: #991B1B;
+}
+.home-owner-property-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  font-size: 0.75rem;
+  background: var(--border-light);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+}
+.home-owner-property-chip button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-light);
+  font-size: 0.875rem;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 999px;
+}
+.home-owner-property-chip button:hover {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+/* Property picker (combobox) — used inside the Home Owner modal */
+.property-picker { position: relative; }
+.property-picker-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.property-picker-count {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--text-light);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.property-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.property-picker-combo { position: relative; }
+.property-picker-combo .form-input { padding-right: 36px; }
+.property-picker-chevron {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-light);
+  cursor: pointer;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.property-picker-chevron:hover { background: var(--border-light); color: var(--text); }
+.property-picker-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 10;
+}
+.property-picker-empty {
+  padding: 10px 12px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+}
+.property-picker-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-light);
+}
+.property-picker-option:last-child { border-bottom: none; }
+.property-picker-option:hover { background: var(--border-light); }
+.property-picker-warn {
+  font-size: 0.625rem;
+  color: #92400E;
+  padding: 1px 6px;
+  background: #FEF3C7;
+  border-radius: 999px;
+}
