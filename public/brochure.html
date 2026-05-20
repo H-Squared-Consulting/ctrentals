@@ -170,9 +170,11 @@
       '}',
       '.br-hero-content { position: relative; z-index: 1; }',
       '.br-hero-brand {',
-      '  color: var(--gold); font-size: 12px; letter-spacing: 3px;',
-      '  text-transform: uppercase; margin-bottom: 12px;',
+      '  color: var(--gold); font-size: 20px; letter-spacing: 4px; font-weight: 600;',
+      '  text-transform: uppercase; margin-bottom: 16px;',
+      '  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);',
       '}',
+      '@media (max-width: 640px) { .br-hero-brand { font-size: 16px; letter-spacing: 3px; } }',
       '.br-hero-title {',
       '  color: var(--white); font-size: 38px; line-height: 1.2;',
       '  background: linear-gradient(90deg, var(--white) 0%, var(--white) 40%, var(--gold-light) 50%, var(--white) 60%, var(--white) 100%);',
@@ -373,6 +375,9 @@
       '.br-agent-contact { background: var(--linen); padding: 56px 40px; text-align: center; }',
       '.br-agent-contact-heading { font-size: 24px; margin-bottom: 12px; color: var(--black); }',
       '.br-agent-contact-body { font-size: 15px; color: #555; max-width: 480px; margin: 0 auto; line-height: 1.55; }',
+      '.br-contact-links { display: inline-flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 4px; }',
+      '.br-contact-btn { display: inline-flex; align-items: center; padding: 10px 16px; background: var(--white); color: var(--black); border: 1px solid var(--border, #E5E5E5); border-radius: 999px; text-decoration: none; font-size: 14px; font-weight: 500; transition: background 0.15s, border-color 0.15s; }',
+      '.br-contact-btn:hover { background: var(--gold-light, #F5E9D0); border-color: var(--gold, #C5A572); }',
       '@media (max-width: 767px) {',
       '  .br-agent-contact { padding: 40px 24px; }',
       '  .br-agent-contact-heading { font-size: 20px; }',
@@ -582,7 +587,12 @@
     }
     html += '<div class="br-hero-overlay"></div>';
     html += '<div class="br-hero-content">';
-    // No branding on brochures
+    // Branded variant shows the company label above the property name; the
+    // neutral (agent-share) variant keeps the hero clean so nothing on the
+    // brochure leaks the company brand to the agent's client.
+    if (BRAND_MODE === 'direct') {
+      html += '<div class="br-hero-brand">CT Rentals</div>';
+    }
     html += '<h1 class="br-hero-title">' + esc(p.property_name) + '</h1>';
     if (p.tagline) {
       html += '<div class="br-hero-tagline">' + esc(p.tagline) + '</div>';
@@ -774,6 +784,19 @@
       html += '<h2 class="br-agent-contact-heading">Interested in this property?</h2>';
       html += '<div class="br-agent-contact-body">Speak to your agent for availability, pricing and booking.</div>';
       html += '</section>';
+    } else {
+      // Branded "Book Direct" panel — only appears on the company domain.
+      // Mirrors the proposal page's contact block so the two surfaces feel
+      // consistent; same phone / email / WhatsApp endpoints.
+      html += '<section class="br-agent-contact reveal">';
+      html += '<h2 class="br-agent-contact-heading">Book Direct with CT Rentals</h2>';
+      html += '<div class="br-agent-contact-body" style="margin-bottom:16px">Speak to our team for availability, pricing and to secure your booking.</div>';
+      html += '<div class="br-contact-links">';
+      html += '<a href="tel:+27218130813" class="br-contact-btn">+27 21 813 0813</a>';
+      html += '<a href="mailto:info@ctrentals.co.za" class="br-contact-btn">info@ctrentals.co.za</a>';
+      html += '<a href="https://wa.me/27218130813" target="_blank" rel="noopener" class="br-contact-btn">WhatsApp</a>';
+      html += '</div>';
+      html += '</section>';
     }
 
     // Section 7: SHARE
@@ -787,11 +810,15 @@
       html += '</section>';
     }
 
-    // Section 8: FOOTER
+    // Section 8: FOOTER — branded on the company domain, neutral elsewhere
     html += '<footer class="br-footer">';
-    // No branding in footer
-    // No tagline
-    html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' All rights reserved.</div>';
+    if (BRAND_MODE === 'direct') {
+      html += '<div class="br-footer-brand">CT Rentals</div>';
+      html += '<div class="br-footer-tagline">Cape Town Holiday Rentals</div>';
+      html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' CT Rentals. All rights reserved.</div>';
+    } else {
+      html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' All rights reserved.</div>';
+    }
     html += '</footer>';
 
     return html;

@@ -4190,3 +4190,18 @@ select.form-input { cursor: pointer; }
   background: #FEF3C7;
   border-radius: 999px;
 }
+
+/* Unsaved-changes badge in the Property Editor header */
+.page-editor-unsaved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FCD34D;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}

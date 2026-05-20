@@ -20,19 +20,28 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const toast = useToast();
   const isNew = !property.id;
 
+  // Unsaved-changes guard. We snapshot the initial form on mount and any
+  // close attempt (Escape, Back button, click on the X) gets routed through
+  // requestClose() which shows a confirm dialog when the form is dirty.
+  // The snapshot is refreshed after a successful Save so the user can keep
+  // editing without false-positive prompts.
+  const initialFormRef = useRef(null);
+  const [unsavedPrompt, setUnsavedPrompt] = useState(false);
+
   // Escape acts as a back button. Body scroll is locked while the editor
   // is open — the editor renders via a portal at document.body level, so
   // the underlying page shouldn't bleed through.
   useEffect(() => {
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    function onKey(e) { if (e.key === 'Escape') requestClose(); }
     document.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Track whether the body has scrolled past zero so the header can pick
   // up a subtle shadow / shrink — gives a "stuck" feel rather than a flat,
@@ -117,6 +126,35 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Snapshot the form the first time it renders so the dirty check has a
+  // stable baseline. Updated again after each successful Save.
+  useEffect(() => {
+    if (initialFormRef.current === null) initialFormRef.current = form;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cheap deep compare via JSON. Form is shallow and primitive-heavy, so
+  // serialisation is fine; if we ever add a Map/Set we'll need a real diff.
+  const isDirty = useMemo(() => {
+    if (!initialFormRef.current) return false;
+    try {
+      return JSON.stringify(form) !== JSON.stringify(initialFormRef.current);
+    } catch {
+      return false;
+    }
+  }, [form]);
+
+  /** Routes every close path through here so a dirty form pops the confirm
+   *  dialog instead of slipping out without saving. Clean forms close
+   *  immediately. */
+  function requestClose() {
+    if (isDirty) {
+      setUnsavedPrompt(true);
+      return;
+    }
+    onClose();
+  }
   const [deleting, setDeleting] = useState(false);
   // Owner dropdown options for the Overview tab. Reloadable so an
   // owner created via the inline + button shows up immediately.
@@ -488,6 +526,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         const { error } = await supabase.from('partner_properties').update(payload).eq('id', property.id);
         if (error) throw error;
       }
+      // Refresh the dirty baseline so the user can keep editing without
+      // false-positive "unsaved changes" prompts.
+      initialFormRef.current = form;
       toast.success(isNew ? 'Property created' : 'Property saved');
       if (onSave) await onSave();
     } catch (err) {
@@ -561,7 +602,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   return createPortal((
     <div className="page-editor">
       <div className={`page-editor-header ${scrolled ? 'is-scrolled' : ''}`}>
-        <button className="page-editor-back" onClick={onClose} aria-label="Back to properties">
+        <button className="page-editor-back" onClick={requestClose} aria-label="Back to properties">
           <span className="page-editor-back-arrow" aria-hidden>←</span>
           Back to properties
         </button>
@@ -599,8 +640,13 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               </button>
             )
           )}
+          {isDirty && !saving && (
+            <span className="page-editor-unsaved-badge" title="You have unsaved changes">
+              ● Unsaved
+            </span>
+          )}
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : (isDirty ? 'Save changes' : 'Save')}
           </button>
         </div>
       </div>
@@ -1203,6 +1249,50 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           onClose={() => setSendingProposal(null)}
           onSent={() => { setSendingProposal(null); refetchProposals(); }}
         />
+      )}
+
+      {/* Unsaved changes confirm — only path out of the editor when the
+          form is dirty. Save persists then exits; Discard exits without
+          touching the DB; Cancel keeps the user in the editor. */}
+      {unsavedPrompt && (
+        <div className="modal-overlay" onClick={() => setUnsavedPrompt(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Unsaved changes</h2>
+              <button className="modal-close" onClick={() => setUnsavedPrompt(false)}>&times;</button>
+            </div>
+            <div className="modal-body" style={{ padding: 'var(--s-4)' }}>
+              <p style={{ margin: 0, fontSize: '0.875rem' }}>
+                You have changes that haven't been saved. Save them now, or
+                discard and leave the editor as it was?
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-danger"
+                onClick={() => { setUnsavedPrompt(false); onClose(); }}
+                disabled={saving}
+              >
+                Discard changes
+              </button>
+              <div style={{ flex: 1 }} />
+              <button className="btn btn-ghost" onClick={() => setUnsavedPrompt(false)} disabled={saving}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  await handleSave();
+                  setUnsavedPrompt(false);
+                  onClose();
+                }}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : 'Save & leave'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

@@ -5,6 +5,7 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import PropertyEditModal from './PropertyEditModal';
 import PricingModal from './PricingModal';
+import BrochureShareMenu from '../components/BrochureShareMenu';
 import EmptyState from '../components/EmptyState';
 import { SkeletonGrid } from '../components/Skeleton';
 import { useToast } from '../components/ToastProvider';
@@ -48,21 +49,11 @@ export default function PropertiesPage() {
   const [bathCounts, setBathCounts] = useState<number[]>([]);
   const [sleepCounts, setSleepCounts] = useState<number[]>([]);
   const [suburbFilter, setSuburbFilter] = useState<string>('');
-  // Transient "✓ Copied" state on the property card's Copy link button.
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  function brochureUrl(p: Property) {
-    return p.slug
-      ? `${window.location.origin}/brochures/${encodeURIComponent(p.slug)}`
-      : `${window.location.origin}/brochure.html?id=${encodeURIComponent(p.id)}`;
-  }
-  async function copyBrochureLink(p: Property) {
-    try { await navigator.clipboard.writeText(brochureUrl(p)); }
-    catch { /* clipboard blocked — fall through */ }
-    setCopiedId(p.id);
-    toast.success(`Link to ${p.property_name} copied`);
-    setTimeout(() => setCopiedId(null), 2000);
-  }
+  // Property whose Share dialog (Branded / Agent variant picker) is open.
+  // Both the card's Copy and Preview buttons route here so the user picks
+  // which brochure variant before sharing — otherwise the choice silently
+  // defaults to branded.
+  const [sharingProperty, setSharingProperty] = useState<Property | null>(null);
   // Status filter — default Active, with explicit options for the other
   // two buckets plus an "All" view. Replaces the prior pair of checkboxes
   // so the toolbar stays on one line.
@@ -446,27 +437,14 @@ export default function PropertiesPage() {
                     💰 Pricing
                   </button>
                   {property.is_published && (
-                    <>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: '0.75rem' }}
-                        onClick={(e) => { e.stopPropagation(); copyBrochureLink(property); }}
-                        title="Copy brochure link to clipboard"
-                      >
-                        {copiedId === property.id ? '✓ Copied' : '🔗 Copy link'}
-                      </button>
-                      <a
-                        className="btn btn-ghost"
-                        style={{ fontSize: '0.75rem' }}
-                        href={brochureUrl(property)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Open brochure preview in a new tab"
-                      >
-                        👁 Preview
-                      </a>
-                    </>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.75rem' }}
+                      onClick={(e) => { e.stopPropagation(); setSharingProperty(property); }}
+                      title="Share brochure — pick branded or agent variant"
+                    >
+                      🔗 Share
+                    </button>
                   )}
                 </div>
               </div>
@@ -503,25 +481,13 @@ export default function PropertiesPage() {
                   💰
                 </span>
                 {r.is_published && (
-                  <>
-                    <span
-                      className="action-icon"
-                      onClick={(e: React.MouseEvent) => { e.stopPropagation(); copyBrochureLink(r); }}
-                      title={copiedId === r.id ? 'Copied!' : 'Copy brochure link'}
-                    >
-                      {copiedId === r.id ? '✓' : '🔗'}
-                    </span>
-                    <a
-                      className="action-icon"
-                      href={brochureUrl(r)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                      title="Preview brochure"
-                    >
-                      👁
-                    </a>
-                  </>
+                  <span
+                    className="action-icon"
+                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSharingProperty(r); }}
+                    title="Share brochure"
+                  >
+                    🔗
+                  </span>
                 )}
               </div>
             );
@@ -541,6 +507,14 @@ export default function PropertiesPage() {
           property={pricingProperty}
           onClose={() => setPricingProperty(null)}
           supabase={supabase}
+        />
+      )}
+
+      {/* ── Share Brochure (variant picker) ── */}
+      {sharingProperty && (
+        <BrochureShareMenu
+          property={sharingProperty}
+          onClose={() => setSharingProperty(null)}
         />
       )}
 
