@@ -2410,9 +2410,12 @@ select.form-input { cursor: pointer; }
   flex-direction: column;
   gap: 8px;
 }
+/* 6 cols: season label · daily · monthly · primary action · secondary · delete.
+   Season column is wide enough to hold a "2026/2027" label without truncating
+   to two lines. */
 .baseline-row {
   display: grid;
-  grid-template-columns: 80px 1fr 1fr auto auto;
+  grid-template-columns: 120px 1fr 1fr auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -4204,4 +4207,133 @@ select.form-input { cursor: pointer; }
   font-size: 0.6875rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* Settings → Pricing — inline baseline editor.
+   Each cell is an always-on input that looks like a value until focused. */
+.baseline-cell { padding: 4px 6px; }
+.baseline-cell-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 180px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: text;
+  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  float: right;
+}
+.baseline-cell-field:hover { border-color: var(--text-light); }
+.baseline-cell-field:focus-within {
+  border-color: var(--color-primary, #1E40AF);
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.15);
+}
+/* Locked = page is view-only. Strip the cursor and hover affordance so
+   it's obvious the cell isn't interactive. */
+.baseline-cell-field--locked {
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+.baseline-cell-field--locked:hover { border-color: transparent; }
+.baseline-cell-readonly {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+/* Pending edit highlight — amber so changed cells stand out against the
+   unchanged ones at a glance. */
+.baseline-cell-field--pending {
+  border-color: #F59E0B;
+  background: #FFFBEB;
+}
+.baseline-cell-field--pending:hover { border-color: #D97706; }
+.baseline-cell-field--pending:focus-within {
+  border-color: #D97706;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+.pricing-dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FCD34D;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.baseline-cell-prefix {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+.baseline-cell-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: right;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.baseline-cell-input::placeholder {
+  color: var(--text-light);
+  font-weight: 400;
+}
+.baseline-cell-spinner {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+@keyframes baseline-cell-saved {
+  0%   { background: #D1FAE5; border-color: #6EE7B7; }
+  100% { background: var(--bg); border-color: var(--border); }
+}
+.baseline-cell--saved .baseline-cell-field {
+  animation: baseline-cell-saved 1.2s ease-out;
+}
+
+/* Property Editor — view-only affordance */
+.page-editor-viewonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  padding: 3px 10px;
+  background: var(--border-light);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+/* Slight visual cue on top of fieldset's native disabled greying so the
+   user can tell the form is locked at a glance. */
+.page-editor-card--view input,
+.page-editor-card--view select,
+.page-editor-card--view textarea {
+  background: var(--border-light);
+  cursor: not-allowed;
+}
+
+/* Neutralise fieldset's UA defaults so it inherits its parent's layout
+   (we only use it for the `disabled` propagation in view-only mode). */
+.page-editor-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
 }

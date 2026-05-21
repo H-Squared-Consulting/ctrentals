@@ -16,9 +16,20 @@ import PricingModal from './PricingModal';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 
-export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user }) {
+export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user, initialMode = 'edit' }) {
   const toast = useToast();
   const isNew = !property.id;
+
+  // Two operating modes:
+  //   - 'view' opens the editor read-only — every input is disabled and
+  //     only an "Edit" button lives in the header. Used when the user
+  //     clicks anywhere on the property card.
+  //   - 'edit' is the original behaviour — used when the user clicks the
+  //     explicit Edit button on the card or for new-property creation.
+  // The mode lives in component state (not just a prop) so the user can
+  // flip from view → edit without us tearing the editor down.
+  const [mode, setMode] = useState(isNew ? 'edit' : initialMode);
+  const viewOnly = mode === 'view';
 
   // Unsaved-changes guard. We snapshot the initial form on mount and any
   // close attempt (Escape, Back button, click on the X) gets routed through
@@ -608,8 +619,25 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         </button>
         <h2 className="page-editor-title">
           {isNew ? 'New property' : form.property_name || 'Edit property'}
+          {viewOnly && (
+            <span className="page-editor-viewonly-badge" title="View-only — click Edit to make changes">
+              👁 View only
+            </span>
+          )}
         </h2>
         <div className="page-editor-header-actions">
+          {viewOnly ? (
+            // View-only entry point lands the user here with everything
+            // locked. They can flip to edit from this single button —
+            // mirrors the property card's explicit Edit affordance.
+            <button
+              className="btn btn-primary"
+              onClick={() => setMode('edit')}
+              title="Switch to edit mode"
+            >
+              ✏️ Edit
+            </button>
+          ) : (<>
           {!isNew && (
             form.is_archived ? (
               <button
@@ -648,6 +676,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : (isDirty ? 'Save changes' : 'Save')}
           </button>
+          </>)}
         </div>
       </div>
 
@@ -673,7 +702,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       </div>
 
       <div className="page-editor-body" ref={bodyRef}>
-        <div className="page-editor-card">
+        <div className={`page-editor-card ${viewOnly ? 'page-editor-card--view' : ''}`}>
+        <fieldset
+          disabled={viewOnly}
+          className="page-editor-fieldset"
+        >
           {activeTab === 'overview' && (<>
           <SectionHeading>Identity</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -880,7 +913,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                   const editing = !bl.locked && !!edit;
                   return (
                     <div key={bl.id} className="baseline-row">
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}</div>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}/{bl.year + 1}</div>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label">Daily</label>
                         {editing ? (
@@ -973,9 +1006,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                 })}
                 <div className="baseline-row" style={{ marginTop: '4px' }}>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Year</label>
-                    <select className="form-input" value={newBaseline.year} onChange={(e) => setNewBaseline({ ...newBaseline, year: Number(e.target.value) })} style={{ width: '80px' }}>
-                      {[currentYear, currentYear + 1].map((y) => (<option key={y} value={y}>{y}</option>))}
+                    <label className="form-label">Season</label>
+                    <select className="form-input" value={newBaseline.year} onChange={(e) => setNewBaseline({ ...newBaseline, year: Number(e.target.value) })}>
+                      {[currentYear, currentYear + 1].map((y) => (<option key={y} value={y}>{y}/{y + 1}</option>))}
                     </select>
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
@@ -1192,6 +1225,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           </div>
           </>)}
 
+        </fieldset>
         </div>
       </div>
 

@@ -88,8 +88,10 @@ export function App() {
       <Route path="/crm/agents" element={<Navigate to="/settings/agents" replace />} />
 
       {/* Finance */}
-      <Route path="/finance" element={<Navigate to="/finance/pricing" replace />} />
-      <Route path="/finance/pricing" element={<Page><FinancePricingPage /></Page>} />
+      <Route path="/finance" element={<Navigate to="/finance/contracts" replace />} />
+      {/* Pricing moved to Settings — keep the old URL alive so any deep
+          links / bookmarks land on the new home. */}
+      <Route path="/finance/pricing" element={<Navigate to="/settings/pricing" replace />} />
       <Route path="/finance/contracts" element={<Page><SectionPlaceholder pageTitle="Contracts" title="Contracts coming soon" description="Owner agreements and guest contracts tracked alongside the property record." icon="📄" /></Page>} />
       <Route path="/finance/invoices" element={<Page><SectionPlaceholder pageTitle="Invoices" title="Invoices coming soon" description="Issue, track and reconcile invoices against bookings and owner payouts." icon="🧾" /></Page>} />
 
@@ -100,7 +102,8 @@ export function App() {
       <Route path="/reports/properties" element={<Page><SectionPlaceholder pageTitle="Properties Report" title="Property reports coming soon" description="Per-property occupancy, revenue and lead-source performance." icon="🏘" /></Page>} />
 
       {/* Settings */}
-      <Route path="/settings" element={<Navigate to="/settings/seasons" replace />} />
+      <Route path="/settings" element={<Navigate to="/settings/pricing" replace />} />
+      <Route path="/settings/pricing" element={<Page><SettingsPage tab="pricing"><FinancePricingPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/seasons" element={<Page><SettingsPage tab="seasons"><SeasonTagsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/platforms" element={<Page><SettingsPage tab="platforms"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/channels" element={<Navigate to="/settings/platforms" replace />} />

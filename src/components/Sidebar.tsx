@@ -53,7 +53,6 @@ const NAV: NavItem[] = [
     label: 'Finance',
     icon: '💰',
     children: [
-      { to: '/finance/pricing', label: 'Pricing' },
       { to: '/finance/contracts', label: 'Contracts' },
       { to: '/finance/invoices', label: 'Invoices' },
     ],
@@ -73,6 +72,7 @@ const NAV: NavItem[] = [
     label: 'Settings',
     icon: '⚙️',
     children: [
+      { to: '/settings/pricing', label: 'Pricing' },
       { to: '/settings/seasons', label: 'Seasons' },
       { to: '/settings/platforms', label: 'Platforms' },
       { to: '/settings/agents', label: 'Agents' },

@@ -62,6 +62,9 @@ export default function PropertiesPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editingProperty, setEditingProperty] = useState<any | null>(null);
+  /** Edit vs view-only entry point. Card click → view; Edit button → edit;
+   *  + Add Property → edit (new properties are inherently edits). */
+  const [editorMode, setEditorMode] = useState<'view' | 'edit'>('edit');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pricingProperty, setPricingProperty] = useState<any | null>(null);
 
@@ -247,6 +250,7 @@ export default function PropertiesPage() {
         onSave={async () => { setEditingProperty(null); await loadProperties(); }}
         supabase={supabase}
         user={user}
+        initialMode={editorMode}
       />
     );
   }
@@ -339,7 +343,7 @@ export default function PropertiesPage() {
               </button>
             </div>
             <button className="btn btn-ghost" onClick={() => loadProperties()}>↻ Refresh</button>
-            <button className="btn btn-primary" onClick={() => setEditingProperty({})}>+ Add Property</button>
+            <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ Add Property</button>
           </div>
         </div>
       </div>
@@ -362,7 +366,7 @@ export default function PropertiesPage() {
                     : 'Try a different search term, or switch the status filter.'
                 }
                 action={properties.length === 0 ? (
-                  <button className="btn btn-primary" onClick={() => setEditingProperty({})}>+ Add property</button>
+                  <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ Add property</button>
                 ) : null}
               />
             </div>
@@ -371,7 +375,7 @@ export default function PropertiesPage() {
               <div
                 key={property.id}
                 className="property-card"
-                onClick={() => setEditingProperty(property)}
+                onClick={() => { setEditorMode('view'); setEditingProperty(property); }}
               >
                 <div className="property-card__image">
                   {property.hero_image_url ? (
@@ -425,7 +429,7 @@ export default function PropertiesPage() {
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: '0.75rem' }}
-                    onClick={(e) => { e.stopPropagation(); setEditingProperty(property); }}
+                    onClick={(e) => { e.stopPropagation(); setEditorMode('edit'); setEditingProperty(property); }}
                   >
                     ✏️ Edit
                   </button>
@@ -468,7 +472,7 @@ export default function PropertiesPage() {
               <div style={{ display: 'flex', gap: '4px' }}>
                 <span
                   className="action-icon"
-                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditingProperty(r); }}
+                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditorMode('edit'); setEditingProperty(r); }}
                   title="Edit property"
                 >
                   ✏️
@@ -492,7 +496,7 @@ export default function PropertiesPage() {
               </div>
             );
           }}
-          onRowClick={(row: DataRow) => setEditingProperty(row as Property)}
+          onRowClick={(row: DataRow) => { setEditorMode('view'); setEditingProperty(row as Property); }}
           pageSize={25}
           emptyMessage={`No ${statusFilter === 'all' ? '' : statusFilter} properties.`}
         />
