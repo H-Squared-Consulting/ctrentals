@@ -52,10 +52,76 @@ function Page({ children }: { children: React.ReactNode }) {
   return <ProtectedRoute><AppLayout>{children}</AppLayout></ProtectedRoute>;
 }
 
+/** Hostnames where the admin portal is allowed to render. Anything else
+ *  (the public-facing southernescapes.co.za / ctvilla.co.za apex + www)
+ *  gets the holding page below. Public-facing static assets like
+ *  /brochure.html and /proposal.html sit outside React and continue to
+ *  serve everywhere — only the React app's portal routes are gated.
+ *
+ *  Adding a host here is the only step needed to "let new people in"
+ *  (e.g. when a future admin.xyz domain comes online). */
+const ADMIN_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  'admin.southernescapes.co.za',
+  'ctrentals.vercel.app', // the project preview / fallback URL
+]);
+
+function isAdminHost(): boolean {
+  if (typeof window === 'undefined') return true;
+  const h = window.location.hostname.toLowerCase();
+  if (ADMIN_HOSTS.has(h)) return true;
+  // Allow any vercel.app subdomain (preview deploys).
+  if (h.endsWith('.vercel.app')) return true;
+  return false;
+}
+
+/** Holding page shown on the public domain until the marketing site is
+ *  built. No portal links — there's nothing here to find for someone
+ *  who lands on southernescapes.co.za. */
+function ComingSoon() {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '40px 20px',
+      textAlign: 'center',
+      fontFamily: 'system-ui, sans-serif',
+      background: '#FAFAF7',
+      color: '#1A1A1A',
+    }}>
+      <div style={{ fontSize: '12px', letterSpacing: '4px', textTransform: 'uppercase', color: '#C5A572', marginBottom: '16px' }}>
+        Southern Escapes
+      </div>
+      <h1 style={{ fontSize: 'clamp(28px, 5vw, 48px)', margin: '0 0 12px', fontWeight: 500 }}>
+        Coming soon
+      </h1>
+      <p style={{ fontSize: '15px', color: '#555', maxWidth: '420px', margin: '0 0 24px', lineHeight: 1.5 }}>
+        Our new home is being built. For enquiries and reservations, please get in touch.
+      </p>
+      <a
+        href="mailto:info@ctrentals.co.za"
+        style={{ color: '#1E40AF', textDecoration: 'none', fontSize: '14px', fontWeight: 500 }}
+      >
+        info@ctrentals.co.za
+      </a>
+    </div>
+  );
+}
+
 export function App() {
   const { user, loading } = useAuth();
 
   if (loading) return <LoadingSpinner fullScreen />;
+
+  // Gate the entire portal to the admin host(s). Static public pages
+  // (brochure.html, proposal.html) live outside React and are unaffected.
+  if (!isAdminHost()) {
+    return <ComingSoon />;
+  }
 
   return (
     <Routes>
