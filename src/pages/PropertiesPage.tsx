@@ -65,6 +65,9 @@ export default function PropertiesPage() {
   /** Edit vs view-only entry point. Card click → view; Edit button → edit;
    *  + Add Property → edit (new properties are inherently edits). */
   const [editorMode, setEditorMode] = useState<'view' | 'edit'>('edit');
+  /** Per-row "busy" flag while a publish toggle is in flight. Keeps the
+   *  button disabled so a stray double-click can't fire two updates. */
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pricingProperty, setPricingProperty] = useState<any | null>(null);
 
@@ -109,6 +112,36 @@ export default function PropertiesPage() {
     if (supabase) loadProperties();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
+
+  /** Flip is_published with a confirm. Archived properties are left alone
+   *  — they're in a different bucket and need Unarchive from the editor
+   *  before they can be published again. */
+  async function toggleActive(property: Property, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (property.is_archived) return;
+    const next = !property.is_published;
+    const verb = next ? 'activate' : 'deactivate';
+    if (!confirm(`${verb[0].toUpperCase() + verb.slice(1)} ${property.property_name}? ${next ? 'It will appear on the public site again.' : 'It will be hidden from the public site.'}`)) {
+      return;
+    }
+    setTogglingId(property.id);
+    try {
+      const { error } = await supabase
+        .from('partner_properties')
+        .update({ is_published: next, updated_at: new Date().toISOString() })
+        .eq('id', property.id);
+      if (error) throw error;
+      // Optimistic local update so the badge + button flip without a refetch flicker.
+      setProperties(prev => prev.map(p =>
+        p.id === property.id ? ({ ...p, is_published: next } as Property) : p
+      ));
+      toast.success(`${property.property_name} ${next ? 'activated' : 'deactivated'}`);
+    } catch (err: any) {
+      toast.error('Failed: ' + (err?.message || err));
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   const inactiveCount = useMemo(
     () => properties.filter(p => !p.is_archived && !p.is_published).length,
@@ -448,6 +481,19 @@ export default function PropertiesPage() {
                       title="Share brochure — pick branded or agent variant"
                     >
                       🔗 Share
+                    </button>
+                  )}
+                  {!property.is_archived && (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.75rem', marginLeft: 'auto', color: property.is_published ? 'var(--text-light)' : '#065F46' }}
+                      onClick={(e) => toggleActive(property, e)}
+                      disabled={togglingId === property.id}
+                      title={property.is_published ? 'Deactivate — hides from the public site' : 'Activate — show on the public site'}
+                    >
+                      {togglingId === property.id
+                        ? '…'
+                        : property.is_published ? '⏸ Deactivate' : '▶ Activate'}
                     </button>
                   )}
                 </div>
