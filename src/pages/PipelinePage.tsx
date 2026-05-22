@@ -23,6 +23,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DataTable, { StatusBadge } from '../components/DataTable';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import type { DataRow } from '../components/DataTable';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import ProposalDetailModal from '../components/ProposalDetailModal';
@@ -77,6 +78,10 @@ interface EnquirySide {
   budget_max: number | null;
   notes: string | null;
   status: string;
+  /** Pipeline-level status driving the kanban column. Present once the
+   *  workflow rebuild migration has been applied; absent on older rows,
+   *  in which case dealStage() derives it from status + linked proposals. */
+  deal_status: string | null;
   created_at: string;
 }
 
@@ -103,11 +108,28 @@ interface Deal {
 }
 
 const STAGES = [
-  { key: 'to_quote',   label: 'Enquiry',          description: 'Needs a proposal',       emptyMsg: 'Nothing pending' },
-  { key: 'quoted',     label: 'Proposal created', description: 'Drafts not yet sent',    emptyMsg: 'No drafts' },
-  { key: 'sent',       label: 'Proposal Sent',    description: 'Out with the recipient', emptyMsg: 'Nothing awaiting response' },
-  { key: 'interested', label: 'Interested',       description: 'Close the sale',         emptyMsg: 'No active leads' },
+  { key: 'new',        label: 'New',        description: 'Arrived, untouched',           emptyMsg: 'Nothing new' },
+  { key: 'drafting',   label: 'Drafting',   description: 'Proposal being written',       emptyMsg: 'No drafts in flight' },
+  { key: 'ready',      label: 'Ready',      description: 'Written, awaiting send',       emptyMsg: 'Nothing ready' },
+  { key: 'sent',       label: 'Sent',       description: 'Out with the client',          emptyMsg: 'Nothing awaiting response' },
+  { key: 'stalled',    label: 'Stalled',    description: '5+ days no client response',   emptyMsg: 'Nothing stalled' },
+  { key: 'interested', label: 'Interested', description: 'Client engaged, close it',     emptyMsg: 'No live leads' },
+  { key: 'won',        label: 'Won',        description: 'Booked',                       emptyMsg: 'No wins yet' },
+  { key: 'lost',       label: 'Lost',       description: 'Closed, not booked',           emptyMsg: 'No losses' },
 ] as const;
+
+/** Top-border accent per stage. References CSS tokens defined in app.css
+ *  so colour theming stays in one place if the brand palette shifts. */
+const STAGE_ACCENT: Record<string, string> = {
+  new:        'var(--info)',
+  drafting:   'var(--text-secondary)',
+  ready:      'var(--warning)',
+  sent:       'var(--info)',
+  stalled:    'var(--color-accent-warm)',
+  interested: 'var(--success)',
+  won:        'var(--color-primary)',
+  lost:       'var(--text-light)',
+};
 
 /** Cards are dense by default (two-row layout: client + price; dates +
  *  property + action). Once a column tips past this, switch to an even
@@ -123,6 +145,10 @@ const PROPOSAL_STATUS_CONFIG: Record<string, { label: string; bg: string; color:
 };
 
 const STALE_DAYS = 3;
+/** A deal in Sent for this many days auto-flips visually to Stalled.
+ *  Pre-migration this is computed from the newest proposal's sent_at;
+ *  post-migration it can be driven by stored deal_status. */
+const STALLED_DAYS = 5;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -140,27 +166,96 @@ function daysSince(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
 }
 
-const INACTIVE_PROPOSAL_STATUSES = new Set(['expired', 'archived', 'booked', 'cancelled']);
+/** Normalise free-text user input to Title Case so "hayley", "HAYLEY"
+ *  and "HaYley" all render as "Hayley". Handles spaces, hyphens and
+ *  apostrophes (Jean-Paul, O'Brien) without bespoke logic. */
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
+
+function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
+  if (!checkIn || !checkOut) return null;
+  const ms = new Date(checkOut).getTime() - new Date(checkIn).getTime();
+  return ms > 0 ? Math.round(ms / (1000 * 60 * 60 * 24)) : null;
+}
+
+function fmtRelative(iso: string): string {
+  const days = daysSince(iso);
+  if (days < 1) return 'Today';
+  if (days === 1) return '1d ago';
+  if (days < 7) return `${days}d ago`;
+  if (days < 14) return '1w ago';
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 60) return '1mo ago';
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+// Proposal statuses that no longer drive deal activity. Includes BOTH
+// the pre-migration values (expired, archived, booked, cancelled) and the
+// post-migration values (accepted, declined) so the kanban works on either.
+const INACTIVE_PROPOSAL_STATUSES = new Set([
+  'expired', 'archived', 'booked', 'cancelled',  // pre-migration
+  'accepted', 'declined',                         // post-migration
+]);
+
+type StageKey = typeof STAGES[number]['key'];
 
 /** Derive which Kanban column the deal belongs in.
  *
- * For enquiry-rooted deals, the enquiry's manual_status (booked/cancelled)
- * drives the Closed column — the "agent-side bookings" escape valve.
- *
- * For standalone proposals (no enquiry), the proposal's own status carries
- * the outcome: booked / cancelled / expired / archived all count as
- * inactive, dropping the deal to Closed.
+ * Source of truth: enquiry.deal_status if present (post-migration). For
+ * enquiry-rooted deals with no deal_status yet, or for standalone
+ * proposals, we fall back to a derivation from manual_status + proposal
+ * states. The fallback is identical to the SQL UPDATE in the workflow
+ * rebuild migration, so the visual result is the same before and after.
  */
-function dealStage(d: Deal): typeof STAGES[number]['key'] | 'closed' {
-  if (d.manual_status === 'booked' || d.manual_status === 'cancelled') return 'closed';
+function dealStage(d: Deal): StageKey {
+  // 1. Stored deal_status takes priority once migration is applied.
+  const stored = d.enquiry?.deal_status;
+  if (stored && STAGES.some(s => s.key === stored)) {
+    return stored as StageKey;
+  }
 
+  // 2. Manual outcomes set directly on the enquiry.
+  if (d.manual_status === 'booked')    return 'won';
+  if (d.manual_status === 'cancelled') return 'lost';
+
+  // 3. Look at proposals.
   const active = d.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
 
-  if (d.type === 'standalone' && active.length === 0) return 'closed';
-  if (active.length === 0) return 'to_quote';
+  // Standalone deals lose if their lone proposal is finished.
+  if (d.type === 'standalone' && active.length === 0) {
+    const onlyAccepted = d.proposals.some(p => p.status === 'accepted' || p.status === 'booked');
+    return onlyAccepted ? 'won' : 'lost';
+  }
+
+  // Enquiry-rooted with no active proposals: still waiting for someone
+  // on our side to do something.
+  if (active.length === 0) return 'new';
+
+  // Post-migration: any proposal in 'ready' raises the deal to Ready.
+  if (active.some(p => p.status === 'ready')) return 'ready';
+
+  // Pre-migration 'interested' on a proposal → deal-level Interested.
+  // Post-migration: only the deal_status drives Interested, so this branch
+  // is harmless because no proposal status would equal 'interested' once
+  // the migration has run.
   if (active.some(p => p.status === 'interested')) return 'interested';
-  if (active.some(p => p.status === 'sent' || p.status === 'viewed')) return 'sent';
-  return 'quoted';  // everything in draft
+
+  // Anything sent (or pre-migration viewed) puts the deal in Sent unless
+  // it's been sitting too long, in which case Stalled.
+  const sentish = active.filter(p => p.status === 'sent' || p.status === 'viewed');
+  if (sentish.length > 0) {
+    const newestSent = Math.max(...sentish.map(p =>
+      p.sent_at ? new Date(p.sent_at).getTime() : new Date(p.created_at).getTime()
+    ));
+    const daysSent = (Date.now() - newestSent) / (1000 * 60 * 60 * 24);
+    return daysSent >= STALLED_DAYS ? 'stalled' : 'sent';
+  }
+
+  // Drafts only — still being written.
+  return 'drafting';
 }
 
 /** Build the EnquiryPrefill payload used by NewProposalLauncher. */
@@ -215,16 +310,25 @@ export default function PipelinePage() {
 
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'kanban' | 'table'>('kanban');
+  const [view, setView] = useState<'board' | 'list'>('board');
   // Search can be pre-filled from URL — Home links land users here with
   // ?search=<client name> so the deal they care about pops out of the list.
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [closedCollapsed, setClosedCollapsed] = useState(true);
+
+  // Filter state. Two filters per page is the agreed placeholder pattern
+  // across the Ops module so users can see how the controls feel before
+  // we lock down the final set.
+  const [stageFilter, setStageFilter] = useState<string>('');
+  const [dateFilter, setDateFilter] = useState<string>('');
+  // Per-board-column sort. Empty / 'smart' uses the per-stage default;
+  // any other value overrides for that one column.
+  const [columnSort, setColumnSort] = useState<Record<string, string>>({});
 
   // Drill-in state
-  const [openDeal, setOpenDeal] = useState<Deal | null>(null);
+  const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit' } | null>(null);
+  const openDealInMode = (deal: Deal, mode: 'view' | 'edit' = 'view') => setOpenDeal({ deal, mode });
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
   const [launcherFor, setLauncherFor] = useState<EnquiryPrefill | null>(null);
   /** When set, the launcher opens with no enquiry — for the "+ Standalone
@@ -234,10 +338,7 @@ export default function PipelinePage() {
   /** The single-draft proposal selected for the quick Send dialog. */
   const [sendingProposal, setSendingProposal] = useState<ProposalRow | null>(null);
 
-  useEffect(() => {
-    const title = location.pathname.endsWith('/proposals') ? 'Proposals' : 'Enquiries';
-    setPageTitle(title);
-  }, [setPageTitle, location.pathname]);
+  useEffect(() => { setPageTitle('Enquiries'); }, [setPageTitle]);
 
   // Honour Home's deep-link: ?stage=<key> flashes a highlight on that column
   // so the user lands on the one they came to act on. We scroll it into
@@ -295,6 +396,7 @@ export default function PipelinePage() {
         budget_max: e.budget_max,
         notes: e.notes,
         status: e.status,
+        deal_status: e.deal_status ?? null,
         created_at: e.created_at,
       },
       proposals: (e.proposals || []).map(mapProposalRow),
@@ -349,32 +451,59 @@ export default function PipelinePage() {
   // Without this the Kanban stays stale until the user hits Refresh.
   useEffect(() => onPipelineChanged(() => { fetchDeals(); }), [supabase]);
 
-  // ── Filtering + grouping ──
+  // ── Filtering + sorting ──
   const filtered = useMemo(() => {
-    if (!search.trim()) return deals;
-    const q = search.toLowerCase();
-    return deals.filter(d => {
-      if (d.client_name?.toLowerCase().includes(q)) return true;
-      if (d.client_email?.toLowerCase().includes(q)) return true;
-      return d.proposals.some(p =>
-        p.property_name.toLowerCase().includes(q) ||
-        p.ref_code.toLowerCase().includes(q)
-      );
-    });
-  }, [deals, search]);
+    let result = deals;
+
+    // Search
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(d => {
+        if (d.client_name?.toLowerCase().includes(q)) return true;
+        if (d.client_email?.toLowerCase().includes(q)) return true;
+        return d.proposals.some(p =>
+          p.property_name.toLowerCase().includes(q) ||
+          p.ref_code.toLowerCase().includes(q)
+        );
+      });
+    }
+
+    // Stage filter
+    if (stageFilter) {
+      result = result.filter(d => dealStage(d) === stageFilter);
+    }
+
+    // Date filter
+    if (dateFilter === 'has-dates') {
+      result = result.filter(d => d.check_in && d.check_out);
+    } else if (dateFilter === 'next-30') {
+      const now = Date.now();
+      const cutoff = now + 30 * 24 * 60 * 60 * 1000;
+      result = result.filter(d => {
+        if (!d.check_in) return false;
+        const t = new Date(d.check_in).getTime();
+        return t >= now && t <= cutoff;
+      });
+    } else if (dateFilter === 'past') {
+      const now = Date.now();
+      result = result.filter(d => {
+        if (!d.check_in) return false;
+        return new Date(d.check_in).getTime() < now;
+      });
+    }
+
+    return result;
+  }, [deals, search, stageFilter, dateFilter]);
 
   const byStage = useMemo(() => {
-    const map: Record<string, Deal[]> = { to_quote: [], quoted: [], sent: [], interested: [], closed: [] };
+    const map: Record<string, Deal[]> = {
+      new: [], drafting: [], ready: [], sent: [], stalled: [], interested: [], won: [], lost: [],
+    };
     for (const d of filtered) {
       map[dealStage(d)].push(d);
     }
-    // Stage-aware sort so the most actionable card sits on top of each
-    // column — scrolling becomes optional rather than required:
-    //   To propose → oldest enquiry first (longest waiting = highest priority)
-    //   Proposed   → oldest draft first   (drafts that have lingered)
-    //   Sent       → soonest check-in     (closing window shrinking)
-    //   Interested → soonest check-in     (hot leads, close them fast)
-    //   Closed     → recent first         (archival, kept as-is)
+    // Comparator helpers, used by both the smart-default sort and the
+    // per-column override sort.
     const byCheckIn = (a: Deal, b: Deal) => {
       if (!a.check_in && !b.check_in) return 0;
       if (!a.check_in) return 1;
@@ -383,17 +512,45 @@ export default function PipelinePage() {
     };
     const byOldest = (a: Deal, b: Deal) =>
       new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    const byNewest = (a: Deal, b: Deal) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    const byClient = (a: Deal, b: Deal) =>
+      (a.client_name || '').localeCompare(b.client_name || '');
     const oldestDraftAt = (d: Deal) => {
-      const drafts = d.proposals.filter(p => p.status === 'draft').map(p => new Date(p.created_at).getTime());
+      const drafts = d.proposals
+        .filter(p => p.status === 'draft' || p.status === 'drafting')
+        .map(p => new Date(p.created_at).getTime());
       return drafts.length ? Math.min(...drafts) : Number.POSITIVE_INFINITY;
     };
-    map.to_quote.sort(byOldest);
-    map.quoted.sort((a, b) => oldestDraftAt(a) - oldestDraftAt(b));
-    map.sent.sort(byCheckIn);
-    map.interested.sort(byCheckIn);
-    // .closed left at default (recency)
+
+    // For each column, pick its sort: explicit override > smart default.
+    for (const stage of STAGES) {
+      const sort = columnSort[stage.key] || 'smart';
+      const list = map[stage.key];
+      if (sort === 'newest')           list.sort(byNewest);
+      else if (sort === 'oldest')      list.sort(byOldest);
+      else if (sort === 'check-in')    list.sort(byCheckIn);
+      else if (sort === 'client')      list.sort(byClient);
+      else {
+        // Smart default per stage:
+        //   New        → oldest waiting (priority)
+        //   Drafting   → oldest draft (lingered)
+        //   Ready      → oldest (don't pile up)
+        //   Sent       → soonest check-in (closing window)
+        //   Stalled    → oldest (most overdue first)
+        //   Interested → soonest check-in (close fast)
+        //   Won / Lost → recent first
+        if (stage.key === 'new')             list.sort(byOldest);
+        else if (stage.key === 'drafting')   list.sort((a, b) => oldestDraftAt(a) - oldestDraftAt(b));
+        else if (stage.key === 'ready')      list.sort(byOldest);
+        else if (stage.key === 'sent')       list.sort(byCheckIn);
+        else if (stage.key === 'stalled')    list.sort(byOldest);
+        else if (stage.key === 'interested') list.sort(byCheckIn);
+        else                                  list.sort(byNewest);
+      }
+    }
     return map;
-  }, [filtered]);
+  }, [filtered, columnSort]);
 
   // ── Handlers ──
   function startQuote(d: Deal) {
@@ -413,8 +570,49 @@ export default function PipelinePage() {
     if (drafts.length === 1) {
       setSendingProposal(drafts[0]);
     } else {
-      setOpenDeal(d);
+      openDealInMode(d, 'view');
     }
+  }
+
+  /** Insert a bookings row for a deal that's just been marked Won.
+   *  Skips quietly if a booking for this enquiry already exists, so the
+   *  Mark Booked action can be safely retried. */
+  async function createBookingFromDeal(deal: Deal) {
+    if (deal.enquiry) {
+      const existing = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('enquiry_id', deal.enquiry.id)
+        .maybeSingle();
+      if (existing.data) return;
+    }
+    // Pick the most-recently-active proposal as the booking source. Falls
+    // back to whatever's first so we always have a property + price.
+    const featured =
+      deal.proposals.find(p =>
+        ['interested', 'sent', 'viewed', 'accepted', 'booked'].includes(p.status),
+      ) ||
+      deal.proposals[0];
+    if (!featured) return;
+
+    const e = deal.enquiry;
+    await supabase.from('bookings').insert({
+      partner_id: CT_RENTALS_PARTNER_ID,
+      property_id: featured.property_id,
+      enquiry_id: e?.id ?? null,
+      guest_name: featured.guest_name || e?.client_name || '',
+      guest_email: featured.guest_email ?? e?.client_email ?? null,
+      guest_phone: featured.guest_phone ?? e?.client_phone ?? null,
+      guest_nationality: e?.nationality ?? null,
+      guests_total: featured.guests_total ?? e?.guests_total ?? 1,
+      guests_adults: e?.guests_adults ?? null,
+      guests_children: e?.guests_children ?? null,
+      check_in: featured.check_in ?? e?.check_in,
+      check_out: featured.check_out ?? e?.check_out,
+      total_amount: featured.guest_price ?? null,
+      currency: 'ZAR',
+      status: 'confirmed',
+    });
   }
 
   async function updateEnquiryStatus(enquiryId: string, status: string) {
@@ -422,19 +620,27 @@ export default function PipelinePage() {
       .from('enquiries')
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', enquiryId);
-    // Close the modal so the user sees the card slide to its new column —
+    if (status === 'booked') {
+      const deal = deals.find(d => d.enquiry?.id === enquiryId);
+      if (deal) await createBookingFromDeal(deal);
+    }
+    // Close the modal so the user sees the card slide to its new column,
     // the action feels definitive that way. They can reopen if they need to.
     setOpenDeal(null);
     notifyPipelineChanged();
   }
 
-  /** Outcome mutation for standalone-proposal deals — there's no enquiry
-   *  to flip, so the proposal itself carries the booked/cancelled marker. */
+  /** Outcome mutation for standalone-proposal deals (no enquiry to flip),
+   *  so the proposal itself carries the booked/cancelled marker. */
   async function updateProposalOutcome(proposalId: string, outcome: 'booked' | 'cancelled' | 'draft') {
     await supabase
       .from('proposals')
       .update({ status: outcome })
       .eq('id', proposalId);
+    if (outcome === 'booked') {
+      const deal = deals.find(d => d.proposals.some(p => p.id === proposalId));
+      if (deal) await createBookingFromDeal(deal);
+    }
     setOpenDeal(null);
     notifyPipelineChanged();
   }
@@ -442,42 +648,88 @@ export default function PipelinePage() {
   // ── Render ──
   return (
     <div>
-      {/* Toolbar */}
-      <div className="proposals-toolbar">
-        <div className="proposals-view-toggle">
-          <button
-            className={`pricing-toggle-btn ${view === 'kanban' ? 'active' : ''}`}
-            onClick={() => setView('kanban')}
-          >
-            ◰ Kanban
-          </button>
-          <button
-            className={`pricing-toggle-btn ${view === 'table' ? 'active' : ''}`}
-            onClick={() => setView('table')}
-          >
-            ☰ Table
-          </button>
+      {/* Toolbar — shared shape with the Proposals page so the two Ops
+          pages feel paired. View toggle sits on the left as the primary
+          context-switch; filters and search next; New button anchors the
+          far right as the only "make something" action. */}
+      <div className="card" style={{ marginBottom: '16px' }}>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
+            <div className="view-toggle">
+              <button
+                className={`view-toggle-btn ${view === 'board' ? 'active' : ''}`}
+                onClick={() => setView('board')}
+                title="Board view"
+              >
+                ▦ Board
+              </button>
+              <button
+                className={`view-toggle-btn ${view === 'list' ? 'active' : ''}`}
+                onClick={() => setView('list')}
+                title="List view"
+              >
+                ☰ List
+              </button>
+            </div>
+            <select
+              className="list-filter-select"
+              value={stageFilter}
+              onChange={(e) => setStageFilter(e.target.value)}
+              title="Filter by stage"
+            >
+              <option value="">All stages</option>
+              {STAGES.map(s => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+            <select
+              className="list-filter-select"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              title="Filter by check-in date"
+            >
+              <option value="">Any dates</option>
+              <option value="has-dates">Has dates</option>
+              <option value="next-30">Next 30 days</option>
+              <option value="past">Past check-in</option>
+            </select>
+            <div className="list-search">
+              <span className="list-search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search by client, property, ref code…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>
+              )}
+            </div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+              {filtered.length} of {deals.length}
+            </span>
+          </div>
+          <div className="list-toolbar-right">
+            <button
+              className="btn btn-primary"
+              onClick={() => { window.location.href = '/enquiry/new'; }}
+            >
+              + New Enquiry
+            </button>
+          </div>
         </div>
-        <input
-          type="search"
-          className="form-input"
-          placeholder="Search by client, property, ref code…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1, maxWidth: '320px' }}
-        />
-        <div style={{ flex: 1 }} />
-        <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }} onClick={() => fetchDeals()}>↻ Refresh</button>
       </div>
 
       {loading ? (
         <div className="page-loader"><div className="spinner" /></div>
-      ) : view === 'kanban' ? (
+      ) : view === 'board' ? (
         <KanbanView
           byStage={byStage}
-          closedCollapsed={closedCollapsed}
-          setClosedCollapsed={setClosedCollapsed}
-          onOpen={setOpenDeal}
+          columnSort={columnSort}
+          onColumnSortChange={(stage, value) =>
+            setColumnSort(prev => ({ ...prev, [stage]: value }))
+          }
+          onOpen={(d) => openDealInMode(d, 'view')}
           onQuote={startQuote}
           onSend={startSend}
           flashStage={flashStage}
@@ -486,16 +738,17 @@ export default function PipelinePage() {
         <TableView
           deals={filtered}
           loading={loading}
-          onOpen={setOpenDeal}
+          onOpen={openDealInMode}
         />
       )}
 
       {/* Deal detail */}
       {openDeal && (
         <DealDetailModal
-          deal={openDeal}
+          deal={openDeal.deal}
+          initialMode={openDeal.mode}
           onClose={() => setOpenDeal(null)}
-          onQuote={() => startQuote(openDeal)}
+          onQuote={() => startQuote(openDeal.deal)}
           onUpdateStatus={updateEnquiryStatus}
           onUpdateProposalOutcome={updateProposalOutcome}
           onOpenProposal={setOpenProposal}
@@ -547,71 +800,58 @@ export default function PipelinePage() {
 // ─── Kanban ─────────────────────────────────────────────────────────────
 
 function KanbanView({
-  byStage, closedCollapsed, setClosedCollapsed, onOpen, onQuote, onSend, flashStage,
+  byStage, columnSort, onColumnSortChange, onOpen, onQuote, onSend, flashStage,
 }: {
   byStage: Record<string, Deal[]>;
-  closedCollapsed: boolean;
-  setClosedCollapsed: (v: boolean) => void;
+  columnSort: Record<string, string>;
+  onColumnSortChange: (stage: string, value: string) => void;
   onOpen: (d: Deal) => void;
   onQuote: (d: Deal) => void;
   onSend: (d: Deal) => void;
   flashStage?: string | null;
 }) {
   return (
-    <>
-      <div className="proposals-kanban" style={{ gridTemplateColumns: `repeat(${STAGES.length}, minmax(0, 1fr))` }}>
-        {STAGES.map(col => (
+    <div className="ops-board">
+      {STAGES.map(col => (
+        <div
+          key={col.key}
+          className={`ops-board-column ${flashStage === col.key ? 'ops-board-column--flash' : ''}`}
+        >
           <div
-            key={col.key}
-            className={`proposals-kanban-col ${flashStage === col.key ? 'proposals-kanban-col--flash' : ''}`}
+            className="ops-board-column-header"
+            style={{ borderTopColor: STAGE_ACCENT[col.key] ?? 'var(--text-light)' }}
           >
-            <div className="proposals-kanban-header">
-              <div>
-                <strong>{col.label}</strong>
-                <span className="proposals-kanban-count">{byStage[col.key].length}</span>
-              </div>
-              <span className="proposals-kanban-sub">{col.description}</span>
+            <div className="ops-board-column-header-top">
+              <span className="ops-board-column-label">{col.label}</span>
+              <span className="ops-board-column-count">{byStage[col.key].length}</span>
             </div>
-            <KanbanColumnBody
-              deals={byStage[col.key]}
-              stage={col.key}
-              emptyMsg={col.emptyMsg}
-              onOpen={onOpen}
-              onQuote={onQuote}
-              onSend={onSend}
-            />
+            <div className="ops-board-column-header-bottom">
+              <span className="ops-board-column-sub">{col.description}</span>
+              <select
+                className="ops-board-column-sort"
+                value={columnSort[col.key] || 'smart'}
+                onChange={(e) => onColumnSortChange(col.key, e.target.value)}
+                title="Sort this column"
+              >
+                <option value="smart">Smart</option>
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="check-in">Check-in</option>
+                <option value="client">Client A-Z</option>
+              </select>
+            </div>
           </div>
-        ))}
-      </div>
-
-      {byStage.closed.length > 0 && (
-        <div className="proposals-closed">
-          <button
-            className="btn btn-ghost"
-            style={{ fontSize: '0.75rem' }}
-            onClick={() => setClosedCollapsed(!closedCollapsed)}
-          >
-            {closedCollapsed ? '▸' : '▾'} Closed ({byStage.closed.length}) — booked / cancelled
-          </button>
-          {!closedCollapsed && (
-            <div className="proposals-kanban-body" style={{ marginTop: '8px' }}>
-              {byStage.closed.map(d => (
-                <DealCard
-                  key={d.key}
-                  deal={d}
-                  stage="closed"
-                  onOpen={onOpen}
-                  onQuote={onQuote}
-                  onSend={onSend}
-                  closed
-                  compact={byStage.closed.length > COMPACT_THRESHOLD}
-                />
-              ))}
-            </div>
-          )}
+          <KanbanColumnBody
+            deals={byStage[col.key]}
+            stage={col.key}
+            emptyMsg={col.emptyMsg}
+            onOpen={onOpen}
+            onQuote={onQuote}
+            onSend={onSend}
+          />
         </div>
-      )}
-    </>
+      ))}
+    </div>
   );
 }
 
@@ -671,12 +911,12 @@ function KanbanColumnBody({
   }
 
   return (
-    <div className="proposals-kanban-bodywrap">
-      <div className="proposals-kanban-body" ref={bodyRef}>
-        {deals.length === 0 ? (
-          <div className="proposals-kanban-empty">{emptyMsg}</div>
-        ) : (
-          deals.map(d => (
+    <div className="ops-board-column-body" ref={bodyRef}>
+      {deals.length === 0 ? (
+        <div className="ops-board-empty">{emptyMsg}</div>
+      ) : (
+        <>
+          {deals.map(d => (
             <DealCard
               key={d.key}
               deal={d}
@@ -686,19 +926,19 @@ function KanbanColumnBody({
               onSend={onSend}
               compact={compact}
             />
-          ))
-        )}
-      </div>
-      <div className={`proposals-kanban-fade ${overflow.hasMore ? 'proposals-kanban-fade--visible' : ''}`} />
-      {overflow.hasMore && (
-        <button
-          type="button"
-          className="proposals-kanban-morepill"
-          onClick={scrollToBottom}
-          title="Scroll to see hidden cards"
-        >
-          ↓ {overflow.hiddenBelow} more
-        </button>
+          ))}
+          {overflow.hasMore && (
+            <button
+              type="button"
+              className="ops-board-action"
+              onClick={scrollToBottom}
+              title="Scroll to see hidden cards"
+              style={{ marginTop: '4px' }}
+            >
+              ↓ {overflow.hiddenBelow} more
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -717,28 +957,33 @@ function DealCard({
   closed?: boolean;
   compact?: boolean;
 }) {
-  const isStale = stage === 'to_quote' && daysSince(deal.created_at) >= STALE_DAYS;
+  const isClosed = closed || stage === 'won' || stage === 'lost';
+  const isStale = stage === 'new' && daysSince(deal.created_at) >= STALE_DAYS;
   const stop = (fn: (e: React.MouseEvent) => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(e); };
 
   // For Sent column, surface a viewed badge if any proposal's been opened.
-  const wasViewed = stage === 'sent' && deal.proposals.some(p => p.status === 'viewed' || p.viewed_at);
+  const wasViewed = (stage === 'sent' || stage === 'stalled') &&
+    deal.proposals.some(p => p.status === 'viewed' || p.viewed_at);
 
   // Card primary action depends on stage:
-  //   To propose  → "Create Proposal" (opens the quote flow)
-  //   Proposed    → "Send proposal"   (drives the deal toward Sent)
-  //   Sent / Interested → "+ Add proposal" (secondary; usually no urgent action)
-  const draftCount = deal.proposals.filter(p => p.status === 'draft').length;
+  //   New        → "Create Proposal" (opens the quote flow)
+  //   Drafting / Ready → "Send proposal" (drives the deal toward Sent)
+  //   Sent / Stalled / Interested → "+ Add proposal" (secondary action)
+  //   Won / Lost → no primary (closed)
+  const draftCount = deal.proposals.filter(p =>
+    p.status === 'draft' || p.status === 'drafting'
+  ).length;
   let primary: { label: string; onClick: () => void } | null = null;
-  if (!closed) {
-    if (stage === 'to_quote') {
+  if (!isClosed) {
+    if (stage === 'new') {
       primary = { label: '📝 Create Proposal', onClick: () => onQuote(deal) };
-    } else if (stage === 'quoted') {
+    } else if (stage === 'drafting' || stage === 'ready') {
       primary = {
         label: draftCount > 1 ? `📤 Send proposals (${draftCount})` : '📤 Send proposal',
         onClick: () => onSend(deal),
       };
     } else {
-      // sent / interested
+      // sent / stalled / interested
       primary = { label: '+ Add proposal', onClick: () => onQuote(deal) };
     }
   }
@@ -753,42 +998,62 @@ function DealCard({
 
   return (
     <div
-      className={`proposal-card proposal-card--dense ${isStale ? 'proposal-card--stale' : ''} ${closed ? 'proposal-card--closed' : ''} ${compact ? 'proposal-card--compact' : ''}`}
+      className={`ops-board-card ${isStale ? 'ops-board-card--stale' : ''}`}
       onClick={() => onOpen(deal)}
     >
-      <div className="proposal-card-head">
-        <div className="proposal-card-guest">
-          {isStale && <span className="proposal-card-stale-dot" title={`${daysSince(deal.created_at)} days without a proposal`} />}
-          <span className="proposal-card-name">{deal.client_name}</span>
-          {deal.is_agent && <span className="proposal-card-agent">Agent</span>}
-          {wasViewed && <span className="proposal-card-viewed" title="Recipient opened the proposal">✓</span>}
-        </div>
+      <div className="ops-board-card-head">
+        <span className="ops-board-card-client" title={deal.client_name}>
+          {titleCase(deal.client_name)}
+        </span>
         {featuredPrice != null ? (
-          <span className="proposal-card-price">{fmtRand(featuredPrice)}</span>
+          <span className="ops-board-card-amount">{fmtRand(featuredPrice)}</span>
         ) : (
-          <span className="proposal-card-ref" title={deal.type === 'standalone' ? 'Standalone proposal — no enquiry' : 'From enquiry'}>
+          <span
+            className="ops-board-card-amount"
+            style={{ color: 'var(--text-light)' }}
+            title={deal.type === 'standalone' ? 'Standalone proposal, no enquiry' : 'From enquiry'}
+          >
             {deal.type === 'standalone' ? '★' : '✉'}
           </span>
         )}
       </div>
 
-      <div className="proposal-card-foot">
-        <span className="proposal-card-meta">
-          {deal.check_in && deal.check_out
-            ? <>{fmtDate(deal.check_in)} → {fmtDate(deal.check_out)}</>
-            : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>No dates</span>}
-          {featuredProperty && <span className="proposal-card-meta-sep"> · {featuredProperty}</span>}
-          {extraProposals > 0 && <span style={{ color: 'var(--text-light)' }}> +{extraProposals}</span>}
-        </span>
-        {primary && (
+      {(deal.is_agent || wasViewed) && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+          {deal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
+          {wasViewed && <span className="ops-board-card-tag ops-board-card-tag--viewed">Viewed</span>}
+        </div>
+      )}
+
+      {featuredProperty && (
+        <div className="ops-board-card-property" title={featuredProperty}>{titleCase(featuredProperty)}</div>
+      )}
+
+      <div className="ops-board-card-meta">
+        {deal.check_in && deal.check_out
+          ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}</span>
+          : <span style={{ fontStyle: 'italic' }}>No dates</span>}
+        {extraProposals > 0 && <span>· +{extraProposals} more</span>}
+        <span style={{ flex: 1 }} />
+        {(() => {
+          const days = daysSince(deal.created_at);
+          if (days < 1) return null;
+          const cls = days >= 10 ? 'ops-board-card-days--hot'
+            : days >= 5 ? 'ops-board-card-days--warn' : '';
+          return <span className={`ops-board-card-days ${cls}`}>{days}d</span>;
+        })()}
+      </div>
+
+      {primary && (
+        <div className="ops-board-card-actions">
           <button
-            className="proposal-card-action proposal-card-action--advance"
+            className="ops-board-action ops-board-action--primary"
             onClick={stop(primary.onClick)}
           >
             {primary.label}
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -800,8 +1065,10 @@ interface TableRow extends DataRow {
   type: 'enquiry' | 'standalone';
   deal: Deal;
   client_name: string;
+  property: string;
   check_in: string | null;
   check_out: string | null;
+  nights: number | null;
   guests_total: number | null;
   proposals_count: number;
   stage: string;
@@ -809,46 +1076,78 @@ interface TableRow extends DataRow {
   created_at: string;
 }
 
-function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean; onOpen: (d: Deal) => void }) {
-  const rows: TableRow[] = deals.map(d => ({
-    key: d.key,
-    type: d.type,
-    deal: d,
-    client_name: d.client_name,
-    check_in: d.check_in,
-    check_out: d.check_out,
-    guests_total: d.guests_total,
-    proposals_count: d.proposals.length,
-    stage: dealStage(d),
-    manual_status: d.manual_status,
-    created_at: d.created_at,
-  }));
+function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean; onOpen: (d: Deal, mode?: 'view' | 'edit') => void }) {
+  const rows: TableRow[] = deals.map(d => {
+    const featured = d.proposals.find(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status)) || d.proposals[0];
+    return {
+      key: d.key,
+      type: d.type,
+      deal: d,
+      client_name: d.client_name,
+      property: featured?.property_name ?? '',
+      check_in: d.check_in,
+      check_out: d.check_out,
+      nights: nightsBetween(d.check_in, d.check_out),
+      guests_total: d.guests_total,
+      proposals_count: d.proposals.length,
+      stage: dealStage(d),
+      manual_status: d.manual_status,
+      created_at: d.created_at,
+    };
+  });
 
   const columns = [
     {
       key: 'client_name', label: 'Client', sortable: true,
       render: (row: DataRow) => {
         const r = row as TableRow;
+        const email = r.deal.client_email;
+        const name = titleCase(r.client_name);
         return (
-          <span>
-            {r.deal.is_agent && <span className="status-badge" style={{ background: '#E0E7FF', color: '#3730A3', marginRight: '6px', fontSize: '0.5625rem' }}>Agent</span>}
-            {r.client_name}
-            {r.type === 'standalone' && <span style={{ fontSize: '0.625rem', color: 'var(--text-light)', marginLeft: '6px' }} title="Standalone proposal — no enquiry">★</span>}
-          </span>
+          <div className="list-client-text">
+            <span className="list-client-name" title={name}>
+              {name}
+              {r.deal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent" style={{ marginLeft: 6 }}>Agent</span>}
+              {r.type === 'standalone' && <span style={{ fontSize: '0.625rem', color: 'var(--text-light)', marginLeft: 6 }} title="Standalone proposal, no enquiry">★</span>}
+            </span>
+            {email && <span className="list-client-meta" title={email}>{email.toLowerCase()}</span>}
+          </div>
         );
+      },
+    },
+    {
+      key: 'property', label: 'Property', sortable: true, hideOnMobile: true,
+      render: (row: DataRow) => {
+        const r = row as TableRow;
+        const featured = r.deal.proposals.find(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status)) || r.deal.proposals[0];
+        const name = featured?.property_name ? titleCase(featured.property_name) : null;
+        return name
+          ? <span className="list-property" title={name}>{name}</span>
+          : <span className="list-dates-empty">—</span>;
       },
     },
     {
       key: 'check_in', label: 'Dates', sortable: true,
       render: (row: DataRow) => {
         const r = row as TableRow;
-        if (!r.check_in || !r.check_out) return <span style={{ color: 'var(--text-light)' }}>—</span>;
-        return `${fmtDate(r.check_in)} → ${fmtDate(r.check_out)}`;
+        if (!r.check_in || !r.check_out) return <span className="list-dates-empty">No dates</span>;
+        return (
+          <span className="list-dates">
+            {fmtDate(r.check_in)}<span className="list-dates-arrow">→</span>{fmtDate(r.check_out)}
+          </span>
+        );
       },
     },
-    { key: 'guests_total', label: 'Guests', align: 'center' as const, width: '70px', render: (row: DataRow) => (row as TableRow).guests_total ?? '—' },
     {
-      key: 'proposals_count', label: 'Proposals', align: 'center' as const, width: '90px', sortable: true,
+      key: 'nights', label: 'Nights', align: 'center' as const, width: '80px', sortable: true,
+      render: (row: DataRow) => {
+        const r = row as TableRow;
+        const n = nightsBetween(r.check_in, r.check_out);
+        return n != null ? n : <span className="list-dates-empty">—</span>;
+      },
+    },
+    {
+      key: 'proposals_count', label: 'Props', align: 'center' as const, width: '70px', sortable: true,
       render: (row: DataRow) => {
         const r = row as TableRow;
         const color = r.proposals_count === 0 ? '#92400E' : '#065F46';
@@ -860,21 +1159,45 @@ function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean
       key: 'stage', label: 'Stage', align: 'center' as const, sortable: true,
       render: (row: DataRow) => {
         const r = row as TableRow;
-        const label = STAGES.find(s => s.key === r.stage)?.label || (r.stage === 'closed' ? 'Closed' : r.stage);
-        const colorMap: Record<string, { bg: string; color: string }> = {
-          to_quote: { bg: '#FEF3C7', color: '#92400E' },
-          quoted: { bg: '#F3F4F6', color: '#6B7280' },
-          sent: { bg: '#DBEAFE', color: '#1E40AF' },
-          interested: { bg: '#D1FAE5', color: '#065F46' },
-          closed: { bg: '#F3F4F6', color: '#6B7280' },
-        };
-        const cfg = colorMap[r.stage] || colorMap.closed;
-        return <span className="status-badge" style={{ background: cfg.bg, color: cfg.color }}>{label}</span>;
+        const label = STAGES.find(s => s.key === r.stage)?.label || r.stage;
+        return (
+          <span className={`ops-status-pill ops-status-pill--${r.stage}`}>
+            <span className="ops-status-pill-dot" />
+            {label}
+          </span>
+        );
       },
     },
     {
       key: 'created_at', label: 'Created', sortable: true, hideOnMobile: true,
-      render: (row: DataRow) => fmtDateLong((row as TableRow).created_at),
+      render: (row: DataRow) => (
+        <span className="list-relative" title={fmtDateLong((row as TableRow).created_at)}>
+          {fmtRelative((row as TableRow).created_at)}
+        </span>
+      ),
+    },
+    {
+      key: 'actions', label: '', align: 'right' as const, width: '90px',
+      render: (row: DataRow) => (
+        <div className="list-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="list-action-icon"
+            title="View deal"
+            onClick={() => onOpen((row as TableRow).deal, 'view')}
+          >
+            👁
+          </button>
+          <button
+            type="button"
+            className="list-action-icon"
+            title="Edit deal"
+            onClick={() => onOpen((row as TableRow).deal, 'edit')}
+          >
+            ✏️
+          </button>
+        </div>
+      ),
     },
   ];
 
@@ -884,10 +1207,11 @@ function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean
       data={rows}
       loading={loading}
       searchable={false}
+      resultsBarContent={null}
       defaultSort={{ key: 'created_at', direction: 'desc' }}
-      onRowClick={(row: DataRow) => onOpen((row as TableRow).deal)}
+      onRowClick={(row: DataRow) => onOpen((row as TableRow).deal, 'view')}
       pageSize={25}
-      emptyMessage="No deals — create an enquiry or use the FAB to start a proposal."
+      emptyMessage="No deals yet. Create an enquiry or use the FAB to start a proposal."
     />
   );
 }
@@ -895,15 +1219,17 @@ function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean
 // ─── Deal detail modal ──────────────────────────────────────────────────
 
 function DealDetailModal({
-  deal, onClose, onQuote, onUpdateStatus, onUpdateProposalOutcome, onOpenProposal,
+  deal, initialMode = 'view', onClose, onQuote, onUpdateStatus, onUpdateProposalOutcome, onOpenProposal,
 }: {
   deal: Deal;
+  initialMode?: 'view' | 'edit';
   onClose: () => void;
   onQuote: () => void;
   onUpdateStatus: (enquiryId: string, status: string) => void;
   onUpdateProposalOutcome: (proposalId: string, outcome: 'booked' | 'cancelled' | 'draft') => void;
   onOpenProposal: (p: ProposalRow) => void;
 }) {
+  const { supabase } = useAuth();
   const e = deal.enquiry;
   // For standalone deals (no enquiry), outcome lives on the proposal itself.
   // Standalone deals only ever have one proposal (FAB creates 1:1).
@@ -911,6 +1237,73 @@ function DealDetailModal({
   const isClosed = e
     ? (e.status === 'booked' || e.status === 'cancelled')
     : Boolean(standaloneProp && INACTIVE_PROPOSAL_STATUSES.has(standaloneProp.status));
+
+  const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
+
+  // Snapshot of the editable shape for both enquiry-rooted and standalone
+  // deals. Standalone deals don't carry bedrooms / budget on the proposal,
+  // so those fields are hidden via conditional rendering.
+  const initialForm = useMemo(() => ({
+    client_name: e?.client_name ?? standaloneProp?.guest_name ?? '',
+    client_email: e?.client_email ?? standaloneProp?.guest_email ?? '',
+    client_phone: e?.client_phone ?? standaloneProp?.guest_phone ?? '',
+    nationality: e?.nationality ?? '',
+    check_in: e?.check_in ?? standaloneProp?.check_in ?? '',
+    check_out: e?.check_out ?? standaloneProp?.check_out ?? '',
+    guests_total: e?.guests_total ?? standaloneProp?.guests_total ?? null,
+    bedrooms_needed: e?.bedrooms_needed ?? null,
+    budget_min: e?.budget_min ?? null,
+    budget_max: e?.budget_max ?? null,
+    notes: e?.notes ?? standaloneProp?.notes ?? '',
+  }), [deal.key]);
+  const [form, setForm] = useState(initialForm);
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  const fieldsDisabled = mode === 'view';
+
+  function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setForm(prev => ({ ...prev, [key]: value }));
+  }
+
+  function requestClose() {
+    if (mode === 'edit' && isDirty) {
+      const ok = window.confirm('You have unsaved changes. Discard them?');
+      if (!ok) return;
+    }
+    onClose();
+  }
+
+  async function save() {
+    if (e) {
+      await supabase.from('enquiries').update({
+        client_name: form.client_name,
+        client_email: form.client_email || null,
+        client_phone: form.client_phone || null,
+        nationality: form.nationality || null,
+        check_in: form.check_in || null,
+        check_out: form.check_out || null,
+        guests_total: form.guests_total,
+        bedrooms_needed: form.bedrooms_needed,
+        budget_min: form.budget_min,
+        budget_max: form.budget_max,
+        notes: form.notes || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', e.id);
+    } else if (standaloneProp) {
+      await supabase.from('proposals').update({
+        guest_name: form.client_name,
+        guest_email: form.client_email || null,
+        guest_phone: form.client_phone || null,
+        guest_nationality: form.nationality || null,
+        check_in: form.check_in || null,
+        check_out: form.check_out || null,
+        guests_total: form.guests_total,
+        notes: form.notes || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', standaloneProp.id);
+    }
+    notifyPipelineChanged();
+    setMode('view');
+  }
 
   function markBooked() {
     if (e) onUpdateStatus(e.id, 'booked');
@@ -925,114 +1318,175 @@ function DealDetailModal({
     else if (standaloneProp) onUpdateProposalOutcome(standaloneProp.id, 'draft');
   }
 
+  const title = titleCase(form.client_name) || (deal.type === 'standalone' ? 'Standalone proposal' : 'Deal');
+  const stage = dealStage(deal);
+  const accentColour = STAGE_ACCENT[stage] ?? 'var(--text-light)';
+  const stageLabel = STAGES.find(s => s.key === stage)?.label ?? stage;
+
+  const subtitle = (
+    <>
+      <span>Stage: <strong style={{ color: 'var(--text)' }}>{stageLabel}</strong></span>
+      {deal.type === 'standalone' && <span>· standalone proposal</span>}
+      {deal.check_in && deal.check_out && (
+        <span>· {fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}</span>
+      )}
+    </>
+  );
+
+  const closedBadge = isClosed
+    ? <span className="detail-modal-mode-badge detail-modal-mode-badge--closed">{stageLabel}</span>
+    : undefined;
+
+  const banner = isClosed ? (
+    <div className="detail-modal-banner detail-modal-banner--success">
+      This deal is <strong>{stageLabel}</strong>. Use Reopen below to make changes.
+    </div>
+  ) : undefined;
+
+  const footerActions = (
+    <>
+      <button className="btn btn-primary" onClick={onQuote}>
+        📝 {deal.proposals.length === 0 ? 'Create Proposal' : 'Add another proposal'}
+      </button>
+      {!isClosed && (
+        <>
+          <button
+            className="btn btn-outline-success"
+            onClick={markBooked}
+            title="Mark deal as Won (creates a booking)"
+          >
+            ✓ Mark Booked
+          </button>
+          <button
+            className="btn btn-outline-danger"
+            onClick={markCancelled}
+            title="Mark deal as Lost"
+          >
+            ✕ Mark Lost
+          </button>
+        </>
+      )}
+      {isClosed && (
+        <button className="btn btn-ghost" onClick={reopen} title="Reopen this deal">
+          ↺ Reopen
+        </button>
+      )}
+    </>
+  );
+
+  const footerHint = mode === 'edit'
+    ? <>Editing client details. <strong>Save</strong> to keep changes.</>
+    : <>Click <strong>Edit</strong> to change client details. Action buttons work in either mode.</>;
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(ev) => ev.stopPropagation()} style={{ maxWidth: '720px' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {deal.client_name}
-            {deal.type === 'standalone' && <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)', marginLeft: '8px', fontWeight: 400 }}>(standalone proposal)</span>}
-          </h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <div className="modal-body">
-          {/* Client / stay details */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', fontSize: '0.8125rem', marginBottom: '14px' }}>
-            <div><span style={{ color: 'var(--text-light)' }}>Email</span><br />{deal.client_email || '—'}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Phone</span><br />{deal.client_phone || '—'}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Check-in</span><br />{fmtDateLong(deal.check_in)}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Check-out</span><br />{fmtDateLong(deal.check_out)}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Guests</span><br />{deal.guests_total ?? '—'}</div>
-            {e && <div><span style={{ color: 'var(--text-light)' }}>Bedrooms needed</span><br />{e.bedrooms_needed}</div>}
-            {e?.budget_min || e?.budget_max ? (
-              <div><span style={{ color: 'var(--text-light)' }}>Budget</span><br />{fmtRand(e?.budget_min || 0)} – {fmtRand(e?.budget_max || 0)}</div>
-            ) : null}
-            {e?.nationality && <div><span style={{ color: 'var(--text-light)' }}>Nationality</span><br />{e.nationality}</div>}
-          </div>
-
-          {e?.notes && (
-            <div style={{ padding: '10px 12px', background: '#F9FAFB', borderRadius: 'var(--radius-sm)', marginBottom: '14px', fontSize: '0.8125rem' }}>
-              <strong style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>Notes</strong>
-              <div style={{ marginTop: '4px' }}>{e.notes}</div>
+    <DetailModal
+      title={title}
+      subtitle={subtitle}
+      accentColour={accentColour}
+      mode={mode}
+      onModeChange={setMode}
+      canEdit={!isClosed}
+      isDirty={isDirty}
+      onSave={save}
+      onCancel={() => { setForm(initialForm); setMode('view'); }}
+      closedBadge={closedBadge}
+      banner={banner}
+      footerActions={footerActions}
+      footerHint={footerHint}
+      onClose={onClose}
+    >
+      <DetailModalSection heading="Client details">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+            <div className="form-group">
+              <label className="form-label">Client name</label>
+              <input className="form-input" value={form.client_name} onChange={ev => update('client_name', ev.target.value)} />
             </div>
-          )}
+            <div className="form-group">
+              <label className="form-label">Email</label>
+              <input type="email" className="form-input" value={form.client_email} onChange={ev => update('client_email', ev.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Phone</label>
+              <input className="form-input" value={form.client_phone} onChange={ev => update('client_phone', ev.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Nationality</label>
+              <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} />
+            </div>
+          </div>
+        </fieldset>
+      </DetailModalSection>
 
-
-          {/* Proposals list */}
-          <div style={{ paddingTop: '12px', borderTop: '1px solid var(--border-light)' }}>
-            <strong style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>
-              Proposals ({deal.proposals.length})
-            </strong>
-            {deal.proposals.length === 0 ? (
-              <div style={{ marginTop: '8px', fontSize: '0.8125rem', color: 'var(--text-light)' }}>
-                No proposals yet. Use "Create Proposal" below to add one for this client.
-              </div>
-            ) : (
-              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {deal.proposals.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => onOpenProposal(p)}
-                    className="editor-list-row"
-                    style={{ cursor: 'pointer', background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'left' }}
-                  >
-                    <div className="editor-list-main">
-                      <div className="editor-list-title">{p.property_name}</div>
-                      <div className="editor-list-sub">
-                        {p.guest_price != null ? <><strong>{fmtRand(p.guest_price)}</strong> / night</> : 'No pricing'}
-                        {p.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {p.scenario_type}</span>}
-                        <span style={{ marginLeft: '8px', fontFamily: 'monospace', fontSize: '0.6875rem', color: 'var(--text-light)' }}>{p.ref_code}</span>
-                      </div>
-                    </div>
-                    <StatusBadge status={p.status} config={PROPOSAL_STATUS_CONFIG} />
-                  </button>
-                ))}
+      <DetailModalSection heading="Stay details">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+            <div className="form-group">
+              <label className="form-label">Check-in</label>
+              <input type="date" className="form-input" value={form.check_in || ''} onChange={ev => update('check_in', ev.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Check-out</label>
+              <input type="date" className="form-input" value={form.check_out || ''} onChange={ev => update('check_out', ev.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Guests</label>
+              <input type="number" min={1} className="form-input" value={form.guests_total ?? ''} onChange={ev => update('guests_total', ev.target.value ? Number(ev.target.value) : null)} />
+            </div>
+            {e && (
+              <div className="form-group">
+                <label className="form-label">Bedrooms needed</label>
+                <input type="number" min={0} className="form-input" value={form.bedrooms_needed ?? ''} onChange={ev => update('bedrooms_needed', ev.target.value ? Number(ev.target.value) : null)} />
               </div>
             )}
+            {e && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Budget min</label>
+                  <input type="number" className="form-input" value={form.budget_min ?? ''} onChange={ev => update('budget_min', ev.target.value ? Number(ev.target.value) : null)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Budget max</label>
+                  <input type="number" className="form-input" value={form.budget_max ?? ''} onChange={ev => update('budget_max', ev.target.value ? Number(ev.target.value) : null)} />
+                </div>
+              </>
+            )}
           </div>
-        </div>
+          <div className="form-group" style={{ marginTop: 4 }}>
+            <label className="form-label">Notes</label>
+            <textarea className="form-input" rows={3} value={form.notes} onChange={ev => update('notes', ev.target.value)} />
+          </div>
+        </fieldset>
+      </DetailModalSection>
 
-        <div className="modal-footer">
-          <button className="btn btn-primary" onClick={onQuote}>
-            📝 {deal.proposals.length === 0 ? 'Create Proposal' : 'Add another proposal'}
-          </button>
-          {/* Outcome actions — work on both enquiry-rooted and standalone
-              deals. For enquiry deals they flip the enquiry's manual
-              status; for standalone they flip the proposal's status. */}
-          {!isClosed && (
-            <>
+      <DetailModalSection heading="Proposals" headingRight={deal.proposals.length || null}>
+        {deal.proposals.length === 0 ? (
+          <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No proposals yet. Use "Create Proposal" below to add one for this client.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {deal.proposals.map(p => (
               <button
-                className="btn btn-outline"
-                style={{ color: '#065F46', borderColor: '#065F46' }}
-                onClick={markBooked}
-                title="Move this deal to Closed (Booked)"
+                key={p.id}
+                onClick={() => onOpenProposal(p)}
+                className="editor-list-row"
+                style={{ cursor: 'pointer', background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'left' }}
               >
-                ✓ Mark Booked
+                <div className="editor-list-main">
+                  <div className="editor-list-title">{titleCase(p.property_name)}</div>
+                  <div className="editor-list-sub">
+                    {p.guest_price != null ? <><strong>{fmtRand(p.guest_price)}</strong> / night</> : 'No pricing'}
+                    {p.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {p.scenario_type}</span>}
+                    <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: '0.6875rem', color: 'var(--text-light)' }}>{p.ref_code}</span>
+                  </div>
+                </div>
+                <StatusBadge status={p.status} config={PROPOSAL_STATUS_CONFIG} />
               </button>
-              <button
-                className="btn btn-ghost"
-                style={{ color: '#991B1B' }}
-                onClick={markCancelled}
-                title="Move this deal to Closed (Cancelled)"
-              >
-                ✕ Cancel
-              </button>
-            </>
-          )}
-          {isClosed && (
-            <button
-              className="btn btn-ghost"
-              onClick={reopen}
-              title="Reopen this deal — moves out of Closed"
-            >
-              ↺ Reopen
-            </button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
+            ))}
+          </div>
+        )}
+      </DetailModalSection>
+    </DetailModal>
   );
 }

@@ -13,11 +13,17 @@
  */
 
 import { useState } from 'react';
+import ActionModal from './ActionModal';
 import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import type { PricingSnapshot } from './PricingWidget';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 /** Pre-fill data sourced from an enquiry record so the recipient form doesn't
  *  start blank when the proposal is created in response to a guest enquiry. */
@@ -174,164 +180,153 @@ export default function CreateProposalModal({
 
   const b = snapshot.breakdown;
 
+  const propertyName = titleCase(property.property_name);
+  const stepNum = step === 'review' ? 1 : 2;
+  const stepTitle = step === 'review' ? 'Review pricing' : 'Recipient details';
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '560px' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {step === 'review' ? 'Review Pricing' : 'Recipient Details'} — {property.property_name}
-          </h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
+    <ActionModal
+      title={`${stepTitle}`}
+      subtitle={<>Step {stepNum} of 2 · {propertyName}</>}
+      width={620}
+      onClose={onClose}
+      secondaryActions={step === 'details' ? (
+        <button className="btn btn-ghost" onClick={() => setStep('review')}>← Back</button>
+      ) : null}
+      primaryAction={step === 'review' ? (
+        <button className="btn btn-primary" onClick={() => setStep('details')}>
+          Continue →
+        </button>
+      ) : (
+        <button
+          className="btn btn-primary"
+          onClick={handleSubmit}
+          disabled={saving || !guestName.trim()}
+        >
+          {saving ? 'Creating…' : 'Create Proposal'}
+        </button>
+      )}
+    >
+      {step === 'review' && (
+        <>
+          <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: 14 }}>
+            Confirm the pricing below. The proposal will save with these numbers. You can edit them later from Operations.
+          </div>
 
-        <div className="modal-body">
-          {step === 'review' && (
-            <>
-              <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                Confirm the pricing below. The proposal will save with these numbers — you can edit them later from Operations → Pipeline.
-              </div>
+          <div className="pricing-price-block" style={{ marginBottom: 14 }}>
+            <div className="pricing-price-label">Guest pays</div>
+            <div className="pricing-price-value">{fmtRand(guestPrice)}</div>
+            <div className="pricing-price-sublabel">
+              per night{snapshot.seasonTag ? ` · ${snapshot.seasonTag} season (×${snapshot.seasonMultiplier})` : ''}
+            </div>
+          </div>
 
-              <div className="pricing-price-block" style={{ marginBottom: '14px' }}>
-                <div className="pricing-price-label">Guest pays</div>
-                <div className="pricing-price-value">{fmtRand(guestPrice)}</div>
-                <div className="pricing-price-sublabel">
-                  per night{snapshot.seasonTag ? ` · ${snapshot.seasonTag} season (×${snapshot.seasonMultiplier})` : ''}
-                </div>
+          <div className="pricing-breakdown">
+            <div className="pricing-breakdown-row">
+              <span className="pricing-breakdown-label">Owner receives</span>
+              <span className="pricing-breakdown-value">{fmtRand(b.ownerNet)}</span>
+            </div>
+            <div className="pricing-breakdown-row">
+              <span className="pricing-breakdown-label">CTR earns</span>
+              <span className="pricing-breakdown-value pricing-breakdown-value--accent">{fmtRand(b.ctrTake)}</span>
+            </div>
+            {snapshot.scenarioType === 'agent' && b.agentTake > 0 && (
+              <div className="pricing-breakdown-row">
+                <span className="pricing-breakdown-label">
+                  Agent earns{snapshot.agentContact ? ` (${snapshot.agentContact.name})` : ''}
+                </span>
+                <span className="pricing-breakdown-value">{fmtRand(b.agentTake)}</span>
               </div>
+            )}
+            {snapshot.scenarioType === 'platform' && b.platformFees > 0 && (
+              <div className="pricing-breakdown-row pricing-breakdown-row--platform">
+                <span className="pricing-breakdown-label">Platform fee</span>
+                <span className="pricing-breakdown-value">{fmtRand(b.platformFees)}</span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
-              <div className="pricing-breakdown">
-                <div className="pricing-breakdown-row">
-                  <span className="pricing-breakdown-label">Owner receives</span>
-                  <span className="pricing-breakdown-value">{fmtRand(b.ownerNet)}</span>
-                </div>
-                <div className="pricing-breakdown-row">
-                  <span className="pricing-breakdown-label">CTR earns</span>
-                  <span className="pricing-breakdown-value pricing-breakdown-value--accent">{fmtRand(b.ctrTake)}</span>
-                </div>
-                {snapshot.scenarioType === 'agent' && b.agentTake > 0 && (
-                  <div className="pricing-breakdown-row">
-                    <span className="pricing-breakdown-label">
-                      Agent earns{snapshot.agentContact ? ` (${snapshot.agentContact.name})` : ''}
-                    </span>
-                    <span className="pricing-breakdown-value">{fmtRand(b.agentTake)}</span>
-                  </div>
-                )}
-                {snapshot.scenarioType === 'platform' && b.platformFees > 0 && (
-                  <div className="pricing-breakdown-row pricing-breakdown-row--platform">
-                    <span className="pricing-breakdown-label">Platform fee</span>
-                    <span className="pricing-breakdown-value">{fmtRand(b.platformFees)}</span>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+      {step === 'details' && (
+        <>
+          <div style={{ padding: '10px 14px', background: 'var(--bg)', borderRadius: 6, marginBottom: 14, fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between', border: '1px solid var(--border-light)' }}>
+            <span className="form-label" style={{ margin: 0 }}>Guest pays</span>
+            <strong>{fmtRand(guestPrice)} / night</strong>
+          </div>
 
-          {step === 'details' && (
-            <>
-              {/* Compact pricing reminder so the user knows what they're committing to */}
-              <div style={{ padding: '10px 14px', background: 'var(--border-light)', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Guest pays</span>
-                <strong>{fmtRand(guestPrice)} / night</strong>
-              </div>
+          <div className="form-group">
+            <label className="form-label">{isAgent ? 'Agent name' : 'Guest name'} *</label>
+            <input
+              type="text"
+              className="form-input"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              placeholder={isAgent ? 'e.g. Anneline Klaase' : 'e.g. Hayley Harrod'}
+              autoFocus
+            />
+          </div>
 
-              <div className="form-group">
-                <label className="form-label">{isAgent ? 'Agent name' : 'Guest name'} *</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  placeholder={isAgent ? 'e.g. Anneline Klaase' : 'e.g. Hayley Harrod'}
-                  autoFocus
-                />
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Email</label>
+              <input
+                type="email"
+                className="form-input"
+                value={guestEmail}
+                onChange={(e) => setGuestEmail(e.target.value)}
+                placeholder="recipient@example.com"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Phone</label>
+              <input
+                type="tel"
+                className="form-input"
+                value={guestPhone}
+                onChange={(e) => setGuestPhone(e.target.value)}
+                placeholder="+27 …"
+              />
+            </div>
+          </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className="form-group">
-                  <label className="form-label">Email</label>
-                  <input
-                    type="email"
-                    className="form-input"
-                    value={guestEmail}
-                    onChange={(e) => setGuestEmail(e.target.value)}
-                    placeholder="recipient@example.com"
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Phone</label>
-                  <input
-                    type="tel"
-                    className="form-input"
-                    value={guestPhone}
-                    onChange={(e) => setGuestPhone(e.target.value)}
-                    placeholder="+27 …"
-                  />
-                </div>
-              </div>
+          <div style={{ fontSize: '0.625rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginTop: 8, marginBottom: 6 }}>
+            Optional. Only fill in if the recipient has dates or guest count in mind.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Check-in</label>
+              <input type="date" className="form-input" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Check-out</label>
+              <input type="date" className="form-input" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Guests</label>
+              <input type="number" className="form-input" value={guestsTotal} onChange={(e) => setGuestsTotal(e.target.value)} min={1} step={1} placeholder="—" />
+            </div>
+          </div>
 
-              <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
-                Optional — only fill in if the recipient has dates / guest count in mind
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                <div className="form-group">
-                  <label className="form-label">Check-in</label>
-                  <input type="date" className="form-input" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Check-out</label>
-                  <input type="date" className="form-input" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Guests</label>
-                  <input type="number" className="form-input" value={guestsTotal} onChange={(e) => setGuestsTotal(e.target.value)} min={1} step={1} placeholder="—" />
-                </div>
-              </div>
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', cursor: 'pointer', fontWeight: 500 }}>
+              <input type="checkbox" checked={isAgent} onChange={(e) => setIsAgent(e.target.checked)} />
+              Sending to an agent (removes CT Rentals branding)
+            </label>
+          </div>
 
-              <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={isAgent} onChange={(e) => setIsAgent(e.target.checked)} />
-                  Sending to an agent (removes CT Rentals branding)
-                </label>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Notes</label>
-                <textarea
-                  className="form-input"
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Optional internal note"
-                />
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="modal-footer">
-          {step === 'review' ? (
-            <>
-              <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-              <div style={{ flex: 1 }} />
-              <button className="btn btn-primary" onClick={() => setStep('details')}>
-                Continue →
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="btn btn-secondary" onClick={() => setStep('review')}>← Back</button>
-              <div style={{ flex: 1 }} />
-              <button
-                className="btn btn-primary"
-                onClick={handleSubmit}
-                disabled={saving || !guestName.trim()}
-              >
-                {saving ? 'Creating…' : 'Create Proposal'}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+          <div className="form-group">
+            <label className="form-label">Notes</label>
+            <textarea
+              className="form-input"
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Optional internal note"
+            />
+          </div>
+        </>
+      )}
+    </ActionModal>
   );
 }

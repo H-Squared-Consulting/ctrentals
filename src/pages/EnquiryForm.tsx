@@ -12,6 +12,7 @@ import { useState, FormEvent, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
+import ActionModal from '../components/ActionModal';
 import DateInput from '../components/DateInput';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import { useToast } from '../components/ToastProvider';
@@ -89,38 +90,42 @@ export function EnquiryForm() {
     setForm(EMPTY_FORM);
   }
 
+  const close = () => navigate('/operations/enquiries');
+
   // ── Post-save success state ──
   if (savedEnquiry) {
     return (
-      <div style={{ maxWidth: '720px', margin: '0 auto' }}>
-        <div className="enquiry-card" style={{ textAlign: 'center', padding: '40px 32px' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>✓</div>
-          <h2 style={{ margin: '0 0 8px', fontSize: '1.5rem' }}>Enquiry saved</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: '0 0 24px' }}>
-            <strong>{savedEnquiry.client_name}</strong> · {savedEnquiry.check_in} → {savedEnquiry.check_out}
-            {savedEnquiry.guests_total ? ` · ${savedEnquiry.guests_total} guests` : ''}
-          </p>
-
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button
-              className="btn btn-primary"
-              onClick={() => setLauncherOpen(true)}
-              style={{ fontSize: '0.875rem', padding: '10px 18px' }}
-            >
-              📝 Create Proposal for this Enquiry
+      <>
+        <ActionModal
+          title="Enquiry saved"
+          subtitle={
+            <>
+              <strong>{savedEnquiry.client_name}</strong> · {savedEnquiry.check_in} to {savedEnquiry.check_out}
+              {savedEnquiry.guests_total ? ` · ${savedEnquiry.guests_total} guests` : ''}
+            </>
+          }
+          width={620}
+          hideCancel
+          primaryAction={
+            <button className="btn btn-primary" onClick={() => setLauncherOpen(true)}>
+              📝 Create Proposal
             </button>
-            <button className="btn btn-outline" onClick={startAnother} style={{ fontSize: '0.875rem' }}>
-              + Add Another Enquiry
-            </button>
-            <button className="btn btn-ghost" onClick={() => navigate('/operations/enquiries')} style={{ fontSize: '0.875rem' }}>
-              View All Enquiries
-            </button>
+          }
+          secondaryActions={
+            <>
+              <button className="btn btn-ghost" onClick={startAnother}>+ Add another</button>
+              <button className="btn btn-ghost" onClick={close}>View all</button>
+            </>
+          }
+          onClose={close}
+        >
+          <div style={{ textAlign: 'center', padding: '20px 8px' }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: 8, color: 'var(--success)' }}>✓</div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
+              The enquiry is saved. Open the next step below, or come back later from the Enquiries board.
+            </p>
           </div>
-
-          <p style={{ marginTop: '20px', fontSize: '0.75rem', color: 'var(--text-light)' }}>
-            "Create Proposal" opens the property picker → calculator → recipient details, all pre-filled with this enquiry's info.
-          </p>
-        </div>
+        </ActionModal>
 
         {launcherOpen && (
           <NewProposalLauncher
@@ -128,14 +133,24 @@ export function EnquiryForm() {
             onClose={() => setLauncherOpen(false)}
           />
         )}
-      </div>
+      </>
     );
   }
 
   // ── Form ──
   return (
-    <div style={{ maxWidth: '880px', margin: '0 auto' }}>
-      <form onSubmit={handleSubmit} className="enquiry-card">
+    <form id="enquiry-form" onSubmit={handleSubmit}>
+      <ActionModal
+        title="New enquiry"
+        subtitle="Capture an incoming guest enquiry"
+        width={760}
+        primaryAction={
+          <button type="submit" form="enquiry-form" className="btn btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save enquiry'}
+          </button>
+        }
+        onClose={close}
+      >
         <Section title="Client" subtitle="Who's making the enquiry">
           <div className="enquiry-grid-3">
             <Field label="Client name *">
@@ -160,7 +175,7 @@ export function EnquiryForm() {
             </Field>
           </div>
 
-          <div className="enquiry-grid-4" style={{ marginTop: '12px' }}>
+          <div className="enquiry-grid-4" style={{ marginTop: 12 }}>
             <Field label="Bedrooms *">
               <input className="form-input" name="bedrooms_needed" type="number" min="1" value={form.bedrooms_needed} onChange={handleChange} required />
             </Field>
@@ -176,7 +191,7 @@ export function EnquiryForm() {
           </div>
         </Section>
 
-        <Section title="Context" subtitle="Optional — useful for matching the right property">
+        <Section title="Context" subtitle="Optional. Useful for matching the right property">
           <div className="enquiry-grid-3">
             <Field label="Nationality">
               <input className="form-input" name="nationality" value={form.nationality} onChange={handleChange} placeholder="e.g. UK" />
@@ -189,20 +204,12 @@ export function EnquiryForm() {
             </Field>
           </div>
 
-          <Field label="Notes" style={{ marginTop: '12px' }}>
-            <textarea className="form-input" name="notes" rows={3} value={form.notes} onChange={handleChange} placeholder="Anything else worth knowing — special requests, source of lead, etc." />
+          <Field label="Notes" style={{ marginTop: 12 }}>
+            <textarea className="form-input" name="notes" rows={3} value={form.notes} onChange={handleChange} placeholder="Anything else worth knowing. Special requests, source of lead, etc." />
           </Field>
         </Section>
-
-        <div className="enquiry-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => navigate('/operations/enquiries')}>Cancel</button>
-          <div style={{ flex: 1 }} />
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? 'Saving…' : 'Save Enquiry'}
-          </button>
-        </div>
-      </form>
-    </div>
+      </ActionModal>
+    </form>
   );
 }
 

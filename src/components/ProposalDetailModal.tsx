@@ -12,10 +12,44 @@
  */
 
 import { useEffect, useState } from 'react';
-import { StatusBadge } from './DataTable';
+import DetailModal, { DetailModalSection } from './DetailModal';
 import { useToast } from './ToastProvider';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
+
+const STATUS_ACCENT: Record<string, string> = {
+  draft: 'var(--text-light)',
+  drafting: 'var(--text-light)',
+  ready: 'var(--warning)',
+  sent: 'var(--info)',
+  viewed: 'var(--info)',
+  interested: 'var(--success)',
+  accepted: 'var(--success)',
+  booked: 'var(--success)',
+  declined: 'var(--text-light)',
+  expired: 'var(--text-light)',
+  archived: 'var(--text-light)',
+  cancelled: 'var(--text-light)',
+};
+
+const STATUS_PILL_KEY: Record<string, string> = {
+  draft: 'drafting', drafting: 'drafting', ready: 'ready',
+  sent: 'sent', viewed: 'sent', interested: 'sent',
+  accepted: 'accepted', booked: 'accepted',
+  declined: 'declined', expired: 'declined', archived: 'declined', cancelled: 'declined',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Drafting', drafting: 'Drafting', ready: 'Ready',
+  sent: 'Sent', viewed: 'Sent', interested: 'Sent',
+  accepted: 'Accepted', booked: 'Accepted',
+  declined: 'Declined', expired: 'Declined', archived: 'Declined', cancelled: 'Declined',
+};
 
 export interface ProposalForDetail {
   id: string;
@@ -47,13 +81,10 @@ export interface ProposalForDetail {
   agents?: Array<{ id: string; pct: number }> | null;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft: { label: 'Draft', bg: '#F3F4F6', color: '#6B7280' },
-  sent: { label: 'Sent', bg: '#DBEAFE', color: '#1E40AF' },
-  viewed: { label: 'Viewed', bg: '#E0E7FF', color: '#3730A3' },
-  interested: { label: 'Interested', bg: '#D1FAE5', color: '#065F46' },
-  expired: { label: 'Expired', bg: '#FEE2E2', color: '#991B1B' },
-};
+function fmtDate(d: string | null) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+}
 
 function fmtDateLong(d: string | null) {
   if (!d) return '—';
@@ -160,137 +191,178 @@ export default function ProposalDetailModal({
     ? guestPrice - ownerNet - ctrTake
     : null;
 
+  const guestName = titleCase(proposal.guest_name);
+  const propertyName = titleCase(proposal.property_name || '');
+  const statusLabel = STATUS_LABEL[proposal.status] ?? proposal.status;
+  const statusPillKey = STATUS_PILL_KEY[proposal.status] ?? 'sent';
+  const accent = STATUS_ACCENT[proposal.status] ?? 'var(--text-light)';
+
+  const subtitle = (
+    <>
+      <span className={`ops-status-pill ops-status-pill--${statusPillKey}`}>
+        <span className="ops-status-pill-dot" />
+        {statusLabel}
+      </span>
+      {propertyName && <span>· {propertyName}</span>}
+      {proposal.check_in && proposal.check_out && (
+        <span>· {fmtDate(proposal.check_in)} to {fmtDate(proposal.check_out)}</span>
+      )}
+      {proposal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
+    </>
+  );
+
+  const footer = (
+    <>
+      {onEditPricing && (
+        <button
+          className="btn btn-ghost"
+          onClick={onEditPricing}
+          disabled={!proposal.pricing_proposal_id}
+          title={proposal.pricing_proposal_id ? 'Edit the pricing for this proposal' : 'No pricing snapshot linked'}
+        >
+          💰 Edit Pricing
+        </button>
+      )}
+      <button className="btn btn-ghost" onClick={handleCopy}>
+        {copied ? '✓ Copied' : '🔗 Copy Link'}
+      </button>
+      <a className="btn btn-ghost" href={proposalUrl(proposal.ref_code)} target="_blank" rel="noopener noreferrer">
+        👁 Preview
+      </a>
+      {proposal.guest_phone && (
+        <button className="btn btn-outline" style={{ color: '#25D366', borderColor: '#25D366' }} onClick={() => { sendWhatsApp(); onClose(); }}>
+          WhatsApp
+        </button>
+      )}
+      {proposal.guest_email && (
+        <button className="btn btn-outline" onClick={() => { sendEmail(); onClose(); }}>
+          Email
+        </button>
+      )}
+    </>
+  );
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">{proposal.guest_name} — {proposal.property_name || 'Proposal'}</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <div className="modal-body">
-          {/* Recipient + meta */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '14px', fontSize: '0.8125rem' }}>
-            <div><span style={{ color: 'var(--text-light)' }}>Recipient</span><br />{proposal.guest_name}{proposal.is_agent ? <span className="status-badge" style={{ background: '#E0E7FF', color: '#3730A3', marginLeft: '6px', fontSize: '0.5625rem' }}>Agent</span> : ''}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Status</span><br /><StatusBadge status={proposal.status} config={STATUS_CONFIG} /></div>
-            <div><span style={{ color: 'var(--text-light)' }}>Email</span><br />{proposal.guest_email || '—'}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Phone</span><br />{proposal.guest_phone || '—'}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Check-in</span><br />{fmtDateLong(proposal.check_in)}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Check-out</span><br />{fmtDateLong(proposal.check_out)}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Guests</span><br />{proposal.guests_total ?? '—'}</div>
-            <div><span style={{ color: 'var(--text-light)' }}>Ref</span><br /><span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{proposal.ref_code}</span></div>
+    <DetailModal
+      title={guestName || propertyName || 'Proposal'}
+      subtitle={subtitle}
+      accentColour={accent}
+      canEdit={false}
+      footerActions={footer}
+      onClose={onClose}
+    >
+      <DetailModalSection heading="Recipient">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+          <div className="form-group">
+            <label className="form-label">Email</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{(proposal.guest_email || '—').toLowerCase()}</div>
           </div>
-
-          {/* Pricing block */}
-          {guestPrice != null ? (
-            <div style={{ padding: '12px 14px', background: 'var(--border-light)', borderRadius: 'var(--radius-sm)', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                <strong style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>Pricing</strong>
-                <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>
-                  {proposal.scenario_type}{proposal.season_tag ? ` · ${proposal.season_tag}` : ''}
-                </span>
-              </div>
-              <div style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '8px' }}>
-                {fmtRand(guestPrice)} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-light)' }}>/ night</span>
-              </div>
-              <div className="pricing-breakdown" style={{ fontSize: '0.75rem' }}>
-                {ownerNet != null && (
-                  <div className="pricing-breakdown-row">
-                    <span className="pricing-breakdown-label">Owner receives</span>
-                    <span className="pricing-breakdown-value">{fmtRand(ownerNet)}</span>
-                  </div>
-                )}
-                {ctrTake != null && (
-                  <div className="pricing-breakdown-row">
-                    <span className="pricing-breakdown-label">CTR earns</span>
-                    <span className="pricing-breakdown-value">{fmtRand(ctrTake)}</span>
-                  </div>
-                )}
-                {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (() => {
-                  // Per-agent rows if the proposal has a multi-agent split;
-                  // otherwise fall back to the single aggregate line so old
-                  // pre-multi-agent proposals still render.
-                  const splits = proposal.agents?.filter(a => !!a.id) || [];
-                  const totalPct = splits.reduce((s, a) => s + (Number(a.pct) || 0), 0);
-                  if (splits.length === 0 || totalPct <= 0) {
-                    return (
-                      <div className="pricing-breakdown-row">
-                        <span className="pricing-breakdown-label">Agent commission</span>
-                        <span className="pricing-breakdown-value">{fmtRand(agentTake)}</span>
-                      </div>
-                    );
-                  }
-                  return splits.map(sa => {
-                    const share = Math.round((Number(sa.pct) / totalPct) * agentTake);
-                    return (
-                      <div key={sa.id} className="pricing-breakdown-row">
-                        <span className="pricing-breakdown-label">
-                          {agentNames[sa.id] || 'Agent'} ({Number(sa.pct).toFixed(1)}%)
-                        </span>
-                        <span className="pricing-breakdown-value">{fmtRand(share)}</span>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: '12px', background: 'var(--border-light)', borderRadius: 'var(--radius-sm)', marginBottom: '14px', fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              No pricing snapshot linked. Use Edit Pricing to attach one.
-            </div>
-          )}
-
-          {/* Timeline */}
-          <div style={{ padding: '12px', background: '#F9FAFB', borderRadius: 'var(--radius-sm)', marginBottom: '14px' }}>
-            <strong style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>Timeline</strong>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '8px', fontSize: '0.8125rem' }}>
-              <div>Created: {fmtDateTime(proposal.created_at)}</div>
-              <div>Sent: {proposal.sent_at ? fmtDateTime(proposal.sent_at) : <span style={{ color: 'var(--text-light)' }}>—</span>}</div>
-              <div>Viewed: {proposal.viewed_at ? fmtDateTime(proposal.viewed_at) : <span style={{ color: 'var(--text-light)' }}>—</span>}</div>
-              <div>Interest: {proposal.accepted_at ? fmtDateTime(proposal.accepted_at) : <span style={{ color: 'var(--text-light)' }}>—</span>}</div>
-            </div>
+          <div className="form-group">
+            <label className="form-label">Phone</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{proposal.guest_phone || '—'}</div>
           </div>
-
-          {/* Link */}
-          <div style={{ padding: '10px 12px', background: 'var(--color-primary-bg, #EFF6FF)', borderRadius: 'var(--radius-sm)' }}>
-            <strong style={{ fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-primary, #1E40AF)' }}>Proposal Link</strong>
-            <div style={{ marginTop: '4px', fontSize: '0.75rem', wordBreak: 'break-all', fontFamily: 'monospace', color: 'var(--text-mid)' }}>
-              {proposalUrl(proposal.ref_code)}
-            </div>
+          <div className="form-group">
+            <label className="form-label">Guests</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{proposal.guests_total ?? '—'}</div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Ref</label>
+            <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.8125rem', fontWeight: 500 }}>{proposal.ref_code}</div>
           </div>
         </div>
+      </DetailModalSection>
 
-        <div className="modal-footer">
-          {onEditPricing && (
-            <button
-              className="btn btn-ghost"
-              onClick={onEditPricing}
-              disabled={!proposal.pricing_proposal_id}
-              title={proposal.pricing_proposal_id ? 'Edit the pricing for this proposal' : 'No pricing snapshot linked'}
-            >
-              💰 Edit Pricing
-            </button>
-          )}
-          <button className="btn btn-ghost" onClick={handleCopy}>
-            {copied ? '✓ Copied' : '🔗 Copy Link'}
-          </button>
-          <a className="btn btn-ghost" href={proposalUrl(proposal.ref_code)} target="_blank" rel="noopener noreferrer">
-            👁 Preview
-          </a>
-          {proposal.guest_phone && (
-            <button className="btn btn-outline" style={{ color: '#25D366', borderColor: '#25D366' }} onClick={() => { sendWhatsApp(); onClose(); }}>
-              WhatsApp
-            </button>
-          )}
-          {proposal.guest_email && (
-            <button className="btn btn-outline" onClick={() => { sendEmail(); onClose(); }}>
-              Email
-            </button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+      <DetailModalSection
+        heading="Pricing"
+        headingRight={
+          guestPrice != null && (proposal.scenario_type || proposal.season_tag)
+            ? <>{proposal.scenario_type}{proposal.season_tag ? ` · ${proposal.season_tag}` : ''}</>
+            : null
+        }
+      >
+        {guestPrice != null ? (
+          <>
+            <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>
+              {fmtRand(guestPrice)}
+              <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-light)', marginLeft: 6 }}>/ night</span>
+            </div>
+            <div className="pricing-breakdown" style={{ fontSize: '0.8125rem' }}>
+              {ownerNet != null && (
+                <div className="pricing-breakdown-row">
+                  <span className="pricing-breakdown-label">Owner receives</span>
+                  <span className="pricing-breakdown-value">{fmtRand(ownerNet)}</span>
+                </div>
+              )}
+              {ctrTake != null && (
+                <div className="pricing-breakdown-row">
+                  <span className="pricing-breakdown-label">CTR earns</span>
+                  <span className="pricing-breakdown-value">{fmtRand(ctrTake)}</span>
+                </div>
+              )}
+              {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (() => {
+                const splits = proposal.agents?.filter(a => !!a.id) || [];
+                const totalPct = splits.reduce((s, a) => s + (Number(a.pct) || 0), 0);
+                if (splits.length === 0 || totalPct <= 0) {
+                  return (
+                    <div className="pricing-breakdown-row">
+                      <span className="pricing-breakdown-label">Agent commission</span>
+                      <span className="pricing-breakdown-value">{fmtRand(agentTake)}</span>
+                    </div>
+                  );
+                }
+                return splits.map(sa => {
+                  const share = Math.round((Number(sa.pct) / totalPct) * agentTake);
+                  return (
+                    <div key={sa.id} className="pricing-breakdown-row">
+                      <span className="pricing-breakdown-label">
+                        {agentNames[sa.id] || 'Agent'} ({Number(sa.pct).toFixed(1)}%)
+                      </span>
+                      <span className="pricing-breakdown-value">{fmtRand(share)}</span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No pricing snapshot linked. Use Edit Pricing to attach one.
+          </div>
+        )}
+      </DetailModalSection>
+
+      <DetailModalSection heading="Timeline">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+          <div className="form-group">
+            <label className="form-label">Created</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{fmtDateTime(proposal.created_at)}</div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Sent</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
+              {proposal.sent_at ? fmtDateTime(proposal.sent_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>not sent</span>}
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Viewed</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
+              {proposal.viewed_at ? fmtDateTime(proposal.viewed_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>not viewed</span>}
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Interest</label>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
+              {proposal.accepted_at ? fmtDateTime(proposal.accepted_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>none yet</span>}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </DetailModalSection>
+
+      <DetailModalSection heading="Proposal Link">
+        <div style={{ fontSize: '0.8125rem', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>
+          {proposalUrl(proposal.ref_code)}
+        </div>
+      </DetailModalSection>
+    </DetailModal>
   );
 }

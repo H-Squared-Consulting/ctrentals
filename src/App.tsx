@@ -11,6 +11,7 @@ import Fab from './components/Fab';
 import Sidebar from './components/Sidebar';
 import SectionPlaceholder from './pages/SectionPlaceholder';
 import PipelinePage from './pages/PipelinePage';
+import ProposalsPage from './pages/ProposalsPage';
 import AgentsPage from './pages/AgentsPage';
 import GuestsPage from './pages/GuestsPage';
 import HomeOwnersPage from './pages/HomeOwnersPage';
@@ -138,14 +139,12 @@ export function App() {
           sensible. */}
       <Route path="/brochures" element={<Navigate to="/properties" replace />} />
 
-      {/* Operations — Enquiries and Proposals share the same Pipeline
-          (deal-flow) view. They render at distinct URLs so the sub-nav
-          tab the user clicked stays highlighted and the page title
-          reflects their choice. Old /operations/pipeline bookmarks
-          redirect to Enquiries. */}
+      {/* Operations: three distinct tabs, three distinct views.
+          Enquiries shows the 8-column deal-flow kanban. Proposals shows
+          a 5-column proposal-status kanban. Bookings is the calendar. */}
       <Route path="/operations" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/enquiries" element={<Page><PipelinePage /></Page>} />
-      <Route path="/operations/proposals" element={<Page><PipelinePage /></Page>} />
+      <Route path="/operations/proposals" element={<Page><ProposalsPage /></Page>} />
       <Route path="/operations/pipeline" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/bookings" element={<Page><BookingCalendarPage /></Page>} />
 
