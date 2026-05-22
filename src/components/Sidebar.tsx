@@ -24,6 +24,9 @@ type NavItem = {
   // For groups, additional paths that should also light up the parent
   // (e.g. /enquiry/new lights up Operations).
   aliases?: string[];
+  // Marks the section as not yet live. Renders faded with a "Soon" pill.
+  // Still clickable so curious clicks land on the placeholder page.
+  comingSoon?: boolean;
 };
 
 const NAV: NavItem[] = [
@@ -52,6 +55,7 @@ const NAV: NavItem[] = [
     to: '/finance',
     label: 'Finance',
     icon: '💰',
+    comingSoon: true,
     children: [
       { to: '/finance/contracts', label: 'Contracts' },
       { to: '/finance/invoices', label: 'Invoices' },
@@ -61,6 +65,7 @@ const NAV: NavItem[] = [
     to: '/reports',
     label: 'Reports',
     icon: '📊',
+    comingSoon: true,
     children: [
       { to: '/reports/sales', label: 'Sales' },
       { to: '/reports/business-profit', label: 'Business Profit' },
@@ -132,12 +137,13 @@ export default function Sidebar() {
             <div key={item.to} className={`sidebar-group ${isActive ? 'is-active' : ''}`}>
               <button
                 type="button"
-                className={`sidebar-link sidebar-group-toggle ${isActive ? 'is-active' : ''}`}
+                className={`sidebar-link sidebar-group-toggle ${isActive ? 'is-active' : ''} ${item.comingSoon ? 'is-soon' : ''}`}
                 onClick={() => toggle(item.to)}
                 aria-expanded={isOpen}
               >
                 <span className="sidebar-link-icon" aria-hidden>{item.icon}</span>
                 <span className="sidebar-link-label">{item.label}</span>
+                {item.comingSoon && <span className="sidebar-soon-tag">Soon</span>}
                 <span className={`sidebar-chevron ${isOpen ? 'is-open' : ''}`} aria-hidden>›</span>
               </button>
               <div className={`sidebar-children ${isOpen ? 'is-open' : ''}`}>
