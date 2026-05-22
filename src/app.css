@@ -18,8 +18,12 @@
   --border: #E5E7EB;
   --border-light: #F3F4F6;
   --text: #111827;
-  --text-secondary: #6B7280;
-  --text-light: #9CA3AF;
+  /* Darker than the old #6B7280 so body / secondary labels meet WCAG AA
+   * on the page background. Affects most table cells, sub-labels, and
+   * captions across the app. */
+  --text-secondary: #4B5563;
+  --text-light: #6B7280;
+  --text-muted: #9CA3AF;
   --text-placeholder: #D1D5DB;
   --success: #059669;
   --success-bg: #D1FAE5;
@@ -59,9 +63,15 @@
   --transition: 0.15s ease;
 }
 
-html { font-size: 14px; }
+/* Base font-size bumped from 14 to 15px to raise body text
+ * legibility across the app (cards, table cells, sub-labels). */
+html { font-size: 15px; }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Body weight bumped from 400 (Regular) to 500 (Medium) so user data
+   * reads with more substance and the uppercase label/data distinction
+   * is unmistakable. Labels stay 600 uppercase, headings stay 700. */
+  font-weight: 500;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
@@ -116,7 +126,10 @@ body {
   gap: 10px;
   padding: 8px 10px;
   border-radius: 6px;
-  color: rgba(255,255,255,0.6);
+  /* Inactive links were at 0.6 which was too faint to read against
+   * the dark sidebar. 0.78 keeps the hierarchy with active items while
+   * being comfortably legible. */
+  color: rgba(255,255,255,0.78);
   font-size: 0.8125rem;
   font-weight: 500;
   text-decoration: none;
@@ -274,6 +287,22 @@ body {
 
 .btn-ghost { background: transparent; border: none; color: var(--text-secondary); padding: 6px 10px; }
 .btn-ghost:hover { background: #F3F4F6; color: var(--text); }
+
+/* Semantic outline buttons. Used by outcome actions (Mark Booked, Mark Lost,
+ * Approve, Reject, etc.) so the colour intent lives in CSS, not inline on
+ * every consumer. */
+.btn-outline-success {
+  background: transparent;
+  border: 1px solid var(--success);
+  color: var(--success);
+}
+.btn-outline-success:hover { background: var(--success-bg); color: #065F46; border-color: #065F46; }
+.btn-outline-danger {
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+.btn-outline-danger:hover { background: var(--error-bg); color: #991B1B; border-color: #991B1B; }
 
 /* ===== Toolbar Actions (inside DataTable header) ===== */
 .toolbar-actions-group { display: flex; align-items: center; gap: 6px; }
@@ -524,14 +553,14 @@ body {
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th {
   text-align: left;
-  padding: 7px 16px;
-  font-size: 0.625rem;
+  padding: 10px 16px;
+  font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
-  background: #FAFBFC;
-  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  border-bottom: 2px solid var(--border);
   white-space: nowrap;
   user-select: none;
 }
@@ -539,14 +568,16 @@ body {
 .data-table th.sortable:hover { color: var(--text); background: #F3F4F6; }
 .sort-icon { font-size: 0.5625rem; color: var(--text-light); margin-left: 2px; }
 .data-table td {
-  padding: 9px 16px;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border-light);
   font-size: 0.8125rem;
+  font-weight: 500;
   color: var(--text);
   vertical-align: middle;
 }
 .data-table tbody tr { transition: background var(--transition); }
-.data-table tbody tr:hover { background: #F9FAFB; }
+/* Hover bumped from #F9FAFB to var(--bg) for clearer row separation. */
+.data-table tbody tr:hover { background: var(--bg); }
 .table-row-clickable { cursor: pointer; }
 .table-row-clickable:hover { background: var(--color-primary-bg) !important; }
 .table-col-checkbox { width: 36px; text-align: center; }
@@ -752,22 +783,25 @@ body {
 }
 
 /* ===== Forms ===== */
-.form-group { margin-bottom: 10px; }
+.form-group { margin-bottom: 6px; }
 .form-label {
   display: block;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 3px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--color-primary-light);
+  margin-bottom: 4px;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
 }
 .form-input {
   width: 100%;
-  padding: 6px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
+  /* Inputs carry user data — explicit medium weight so the value reads
+   * distinctly heavier than its uppercase label above. */
+  font-weight: 500;
   font-family: inherit;
   color: var(--text);
   background: #fff;
@@ -2459,6 +2493,826 @@ select.form-input { cursor: pointer; }
   gap: 8px;
   align-items: end;
   margin-bottom: 6px;
+}
+
+/* ================================================================
+   Ops board — shared by Enquiries and Proposals kanban views
+   Lifted from the Sentinel pattern: fixed-width 280px columns, 4px
+   top border per status, layered card shadows that lift on hover.
+   Uses CTR's brand tokens, not Sentinel's purple.
+   ================================================================ */
+.ops-board {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.ops-board-column {
+  width: 280px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 8px;
+  max-height: calc(100vh - 220px);
+}
+.ops-board-column-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-top: 4px solid var(--text-light);
+  border-radius: 8px 8px 0 0;
+  box-shadow: var(--shadow-sm);
+}
+.ops-board-column-header-top,
+.ops-board-column-header-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.ops-board-column-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ops-board-column-sort {
+  font-size: 0.6875rem;
+  padding: 2px 18px 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 130px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 4l3 3 3-3' fill='none' stroke='%236B7280' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+}
+.ops-board-column-sort:hover { color: var(--text); border-color: var(--text-light); }
+.ops-board-column-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.ops-board-column-sub {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+}
+.ops-board-column-count {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 999px;
+  min-width: 24px;
+  text-align: center;
+  margin-left: 8px;
+}
+.ops-board-column-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+}
+.ops-board-empty {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+  padding: 16px 8px;
+  font-style: italic;
+}
+.ops-board-card {
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 9px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  border: 1px solid var(--border-light);
+}
+.ops-board-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+  border-color: var(--border);
+}
+.ops-board-card--stale {
+  border-left: 3px solid var(--warning);
+}
+.ops-board-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.ops-board-card-client {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.ops-board-card-amount {
+  font-weight: 700;
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+.ops-board-card-property {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 1px;
+}
+.ops-board-card-meta {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.ops-board-card-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  color: var(--color-primary);
+  letter-spacing: 0.02em;
+}
+.ops-board-card-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 6px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border-light);
+}
+.ops-board-action {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.ops-board-action:hover { background: var(--border); }
+.ops-board-action--primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.ops-board-action--primary:hover { background: var(--color-primary-hover); }
+.ops-board-card-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  background: var(--info-bg);
+  color: var(--info);
+}
+.ops-board-card-tag--agent { background: #E0E7FF; color: #3730A3; }
+.ops-board-card-tag--viewed { background: var(--info-bg); color: var(--info); }
+
+/* Small days-in-stage indicator that sits top-right on the card.
+ * Subtle by default, becomes amber once a card has been sitting around. */
+.ops-board-card-days {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-light);
+  background: var(--bg);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  margin-left: 6px;
+}
+.ops-board-card-days--warn { background: #FEF3C7; color: #92400E; }
+.ops-board-card-days--hot  { background: #FEE2E2; color: #991B1B; }
+
+/* ---- Richer status pill (dot + label) used inside list views ---- */
+.ops-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.ops-status-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* ---- Richer list-view cells: avatar, stacked client info, dates, actions ---- */
+.list-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+/* Hash-based palette so different clients get different avatar colours.
+ * Adds visual variety to long lists without being noisy. */
+.list-avatar--c0 { background: #DBEAFE; color: #1E40AF; }
+.list-avatar--c1 { background: #D1FAE5; color: #065F46; }
+.list-avatar--c2 { background: #FEF3C7; color: #92400E; }
+.list-avatar--c3 { background: #FCE7F3; color: #9D174D; }
+.list-avatar--c4 { background: #E0E7FF; color: #3730A3; }
+.list-avatar--c5 { background: #FED7AA; color: #9A3412; }
+.list-avatar--c6 { background: #CCFBF1; color: #134E4A; }
+.list-client {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.list-client-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.list-client-name {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-client-meta {
+  font-size: 0.6875rem;
+  color: var(--text-light);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-dates {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+.list-dates-arrow {
+  color: var(--text-light);
+  margin: 0 6px;
+  font-size: 0.6875rem;
+}
+.list-dates-empty {
+  color: var(--text-light);
+  font-style: italic;
+  font-size: 0.75rem;
+}
+.list-relative {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.list-property {
+  font-size: 0.8125rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.list-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  color: var(--color-primary);
+  letter-spacing: 0.02em;
+}
+.list-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  opacity: 0.45;
+  transition: opacity 0.12s ease;
+}
+.data-table tbody tr:hover .list-actions { opacity: 1; }
+.list-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.875rem;
+  text-decoration: none;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.list-action-icon:hover {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Slightly more comfortable cell padding for ops tables. */
+.data-table--ops td { padding: 12px 16px; }
+.data-table--ops th { padding: 10px 16px; }
+
+/* Semantic variants — backgrounds tinted, dots and text match accent. */
+.ops-status-pill--new        { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--drafting   { background: var(--bg);         color: var(--text-secondary); }
+.ops-status-pill--ready      { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
+.ops-status-pill--sent       { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--stalled    { background: #FED7AA;           color: #9A3412; border-color: #FDBA74; }
+.ops-status-pill--interested { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--won        { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--lost       { background: var(--bg);         color: var(--text-light); }
+.ops-status-pill--accepted   { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--declined   { background: var(--bg);         color: var(--text-light); }
+/* Active / inactive for settings entities (agents, platform defaults). */
+.ops-status-pill--active     { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--inactive   { background: var(--bg);         color: var(--text-light); }
+/* Booking status pill variants. */
+.ops-status-pill--confirmed   { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--tentative   { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
+.ops-status-pill--in_stay     { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--checked_in  { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--completed   { background: var(--color-primary-bg); color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--checked_out { background: var(--color-primary-bg); color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--cancelled   { background: var(--bg);         color: var(--text-light); }
+/* Season tag variants — same palette as the legacy inline SEASON_COLORS. */
+.ops-status-pill--peak       { background: var(--error-bg);   color: #991B1B; border-color: #FECACA; }
+.ops-status-pill--high       { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
+.ops-status-pill--mid        { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--low        { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+
+/* ================================================================
+   Action modal — the standard Tier B shell used by all one-shot
+   action dialogs (Send proposal, Pick property, CSV import, etc).
+   Lighter than DetailModal: simple header + body + footer, no mode
+   toggle, no accent strip.
+   ================================================================ */
+.action-modal {
+  width: 92%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.22), 0 8px 16px rgba(0,0,0,0.08);
+  max-height: 92vh;
+}
+.action-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.action-modal-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.action-modal-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-modal-sub {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.action-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.action-modal-summary {
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border-light);
+}
+.action-modal-footer {
+  padding: 12px 18px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .action-modal {
+    width: calc(100% - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 10px;
+  }
+  .action-modal-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .action-modal-footer .btn { width: 100%; }
+}
+
+/* ================================================================
+   Detail modal — the standard Tier A modal shell used by all detail
+   editors (Deal, Proposal, Booking, Guest, Owner). Centred dialog,
+   wide enough for a 2-column form, coloured accent strip at the top
+   matching the entity's status, tinted footer, mobile-friendly.
+   ================================================================ */
+.detail-modal {
+  width: 92%;
+  max-width: 880px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.22), 0 8px 16px rgba(0,0,0,0.08);
+}
+.detail-modal-accent {
+  height: 5px;
+  background: var(--info);
+  flex-shrink: 0;
+}
+.detail-modal-header {
+  padding: 16px 22px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.detail-modal-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.detail-modal-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.detail-modal-sub {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.detail-modal-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+}
+.detail-modal-mode-badge--view     { background: var(--info-bg);    color: #1E40AF; }
+.detail-modal-mode-badge--editing  { background: var(--warning-bg); color: #92400E; }
+.detail-modal-mode-badge--unsaved  { background: #FED7AA;           color: #9A3412; }
+.detail-modal-mode-badge--closed   { background: var(--success-bg); color: #065F46; }
+.detail-modal-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.detail-modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: var(--bg);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1.125rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.detail-modal-close:hover { background: var(--border); color: var(--text); }
+.detail-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--surface);
+}
+.detail-modal-banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  margin-bottom: 18px;
+  border: 1px solid transparent;
+}
+.detail-modal-banner--success {
+  background: var(--success-bg);
+  border-color: #A7F3D0;
+  color: #065F46;
+}
+.detail-modal-section { margin-bottom: 14px; }
+.detail-modal-section:last-child { margin-bottom: 0; }
+.detail-modal-section + .detail-modal-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+}
+.detail-modal-section-heading {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.detail-modal-footer {
+  padding: 12px 22px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.detail-modal-footer-hint {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .detail-modal {
+    width: calc(100% - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 10px;
+  }
+  .detail-modal-header { padding: 12px 16px; }
+  .detail-modal-body { padding: 16px; }
+  .detail-modal-footer {
+    padding: 12px 16px;
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .detail-modal-footer .btn { width: 100%; }
+  .detail-modal-footer-hint { order: 99; text-align: center; }
+}
+
+/* ================================================================
+   Bookings board — property rows on Y, time on X. Bars sit at the
+   booked dates on each property's row. Horizontal scroll for the
+   timeline; property column sticks to the left edge as you scroll.
+   ================================================================ */
+/* Two-pane layout: left = property column (no horizontal scroll, ever),
+ * right = timeline (horizontal scroll). Vertical scroll lives on the right
+ * pane; JS mirrors its scrollTop to the left so rows stay aligned. The
+ * property column cannot move horizontally because it sits outside the
+ * scrolling element. */
+.bookings-board {
+  display: flex;
+  background: var(--surface);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  height: calc(100vh - 180px);
+  min-height: 480px;
+  overflow: hidden;
+}
+.bookings-board-fixed {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none; /* Firefox */
+  background: var(--surface);
+}
+.bookings-board-fixed::-webkit-scrollbar { display: none; }
+.bookings-board-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.bookings-board-scroll-inner {
+  position: relative;
+}
+.bookings-board-corner {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--bg);
+  border-bottom: 2px solid var(--border);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.bookings-board-property {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.12s ease;
+}
+.bookings-board-property:hover { background: var(--bg); }
+.bookings-board-property-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.6875rem;
+  color: var(--color-primary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.bookings-board-property-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.bookings-board-axis {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 56px;
+  background: var(--bg);
+  border-bottom: 2px solid var(--border);
+}
+.bookings-board-axis-tick {
+  position: absolute;
+  top: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.bookings-board-axis-label {
+  position: absolute;
+  top: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.bookings-board-weekend {
+  position: absolute;
+  top: 56px; /* below the axis */
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.045);
+  pointer-events: none;
+  z-index: 0;
+}
+.bookings-board-gridline {
+  position: absolute;
+  top: 56px; /* below the axis */
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.bookings-board-gridline--month { width: 2px; background: var(--border); }
+.bookings-board-gridline--week  { width: 1px; background: var(--border-light); }
+.bookings-board-gridline--day   { width: 1px; background: rgba(0, 0, 0, 0.04); }
+.bookings-board-track {
+  position: relative;
+  height: 34px;
+  border-bottom: 1px solid var(--border-light);
+}
+.booking-bar {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-radius: 5px;
+  background: var(--info);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid rgba(0,0,0,0.1);
+  transition: box-shadow 0.12s ease, transform 0.12s ease;
+  z-index: 1;
+}
+.booking-bar:hover {
+  box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+  transform: translateY(-1px);
+  z-index: 2;
+}
+.booking-bar--confirmed   { background: var(--info);    }
+.booking-bar--tentative   { background: var(--warning); }
+.booking-bar--in_stay,
+.booking-bar--checked_in  { background: var(--success); }
+.booking-bar--completed,
+.booking-bar--checked_out { background: var(--color-primary); }
+.booking-bar--cancelled   {
+  background: var(--text-light);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+.bookings-board-today {
+  position: absolute;
+  top: 56px; /* below the axis */
+  bottom: 0;
+  width: 2px;
+  background: var(--error);
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* ===== Responsive ===== */
