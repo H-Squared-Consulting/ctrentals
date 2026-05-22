@@ -13,8 +13,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { useToast } from '../components/ToastProvider';
+import DataTable from '../components/DataTable';
+import type { DataRow } from '../components/DataTable';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import EmptyState from '../components/EmptyState';
 import { CT_RENTALS_PARTNER_ID } from './constants';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 interface Guest {
   id: string;
@@ -41,7 +49,9 @@ export default function GuestsPage() {
   const [countryFilter, setCountryFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [editing, setEditing] = useState<Guest | null>(null);
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [form, setForm] = useState(EMPTY_FORM);
+  const [initialForm, setInitialForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   // Stays = bookings linked to the open guest. Loaded lazily when the
   // edit modal opens, not in the list table — the list view doesn't
@@ -87,18 +97,27 @@ export default function GuestsPage() {
   function openAdd() {
     setEditing({ id: '', partner_id: CT_RENTALS_PARTNER_ID } as Guest);
     setForm(EMPTY_FORM);
+    setInitialForm(EMPTY_FORM);
+    setMode('edit');
   }
-  function openEdit(g: Guest) {
-    setEditing(g);
-    setForm({
+  function openView(g: Guest) {
+    const next = {
       name: g.name || '',
       email: g.email || '',
       phone: g.phone || '',
       country: g.country || '',
       source: g.source || '',
       notes: g.notes || '',
-    });
+    };
+    setEditing(g);
+    setForm(next);
+    setInitialForm(next);
+    setMode('view');
     loadStays(g.id);
+  }
+  function openEditRow(g: Guest) {
+    openView(g);
+    setMode('edit');
   }
 
   async function loadStays(guestId: string) {
@@ -131,12 +150,14 @@ export default function GuestsPage() {
         const { error } = await supabase.from('guests').update(payload).eq('id', editing.id);
         if (error) throw error;
         toast.success('Guest updated');
+        setInitialForm(form);
+        setMode('view');
       } else {
         const { error } = await supabase.from('guests').insert(payload);
         if (error) throw error;
         toast.success('Guest added');
+        setEditing(null);
       }
-      setEditing(null);
       await load();
     } catch (err) {
       toast.error('Failed to save: ' + (err?.message || err));
@@ -182,29 +203,28 @@ export default function GuestsPage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="list-toolbar">
           <div className="list-toolbar-left">
+            <select className="list-filter-select" value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} title="Filter by country">
+              <option value="">All countries</option>
+              {countries.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select className="list-filter-select" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} title="Filter by source">
+              <option value="">All sources</option>
+              {sources.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
             <div className="list-search">
               <span className="list-search-icon">🔍</span>
               <input
                 type="text"
-                placeholder="Search guests..."
+                placeholder="Search by name, email, phone…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               {searchQuery && <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>}
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{filtered.length} of {guests.length}</span>
-            <select className="list-filter-select" value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} title="Filter by country">
-              <option value="">Country: any</option>
-              {countries.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select className="list-filter-select" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} title="Filter by source">
-              <option value="">Source: any</option>
-              {sources.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
           </div>
           <div className="list-toolbar-right">
-            <button className="btn btn-ghost" onClick={() => load()}>↻ Refresh</button>
-            <button className="btn btn-primary" onClick={openAdd}>+ Add Guest</button>
+            <button className="btn btn-primary" onClick={openAdd}>+ New Guest</button>
           </div>
         </div>
       </div>
@@ -219,56 +239,44 @@ export default function GuestsPage() {
           action={guests.length === 0 ? <button className="btn btn-primary" onClick={openAdd}>+ Add guest</button> : null}
         />
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>Country</th>
-                <th>Source</th>
-                <th style={{ width: 48 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(g => (
-                <tr key={g.id} onClick={() => openEdit(g)} style={{ cursor: 'pointer' }}>
-                  <td><strong>{g.name}</strong></td>
-                  <td>{g.email || <span className="text-light">-</span>}</td>
-                  <td>{g.phone || <span className="text-light">-</span>}</td>
-                  <td>{g.country || <span className="text-light">-</span>}</td>
-                  <td>{g.source || <span className="text-light">-</span>}</td>
-                  <td style={{ textAlign: 'center' }}>
-                    <button
-                      type="button"
-                      className="home-owner-row-delete"
-                      onClick={(e) => deleteGuest(g, e)}
-                      title="Delete guest"
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <GuestsTable guests={filtered} onView={openView} onEdit={openEditRow} />
       )}
 
       {editing && (
-        <div className="modal-overlay" onClick={() => setEditing(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <div className="modal-header">
-              <h2 className="modal-title">{editing.id ? 'Edit guest' : 'Add guest'}</h2>
-              <button className="modal-close" onClick={() => setEditing(null)}>&times;</button>
-            </div>
-            <div className="modal-body" style={{ padding: 'var(--s-4)' }}>
+        <DetailModal
+          title={editing.id ? (titleCase(form.name) || 'Guest') : 'Add guest'}
+          subtitle={editing.id ? (
+            <>
+              {form.country && <span>{titleCase(form.country)}</span>}
+              {form.source && <span>· {titleCase(form.source)}</span>}
+            </>
+          ) : 'New CRM record'}
+          accentColour="var(--color-primary-light)"
+          mode={mode}
+          onModeChange={setMode}
+          canEdit
+          isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
+          onSave={save}
+          onCancel={() => { setForm(initialForm); setMode('view'); }}
+          footerActions={editing.id ? (
+            <button className="btn btn-outline-danger" onClick={remove} disabled={saving}>
+              Delete
+            </button>
+          ) : null}
+          onClose={() => setEditing(null)}
+        >
+          <DetailModalSection heading="Contact">
+            <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
               <div className="form-group">
                 <label className="form-label">Name *</label>
-                <input className="form-input" autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <input
+                  className="form-input"
+                  autoFocus={mode === 'edit'}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
                 <div className="form-group">
                   <label className="form-label">Email</label>
                   <input className="form-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -277,8 +285,6 @@ export default function GuestsPage() {
                   <label className="form-label">Phone</label>
                   <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Country</label>
                   <input className="form-input" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="e.g. South Africa" />
@@ -300,43 +306,93 @@ export default function GuestsPage() {
                 <label className="form-label">Notes</label>
                 <textarea className="form-input" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
               </div>
+            </fieldset>
+          </DetailModalSection>
 
-              {editing.id && (
-                <div style={{ marginTop: 'var(--s-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--s-3)' }}>
-                  <div className="form-label" style={{ marginBottom: 6 }}>Stays</div>
-                  {staysLoading ? (
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-light)' }}>Loading…</div>
-                  ) : stays.length === 0 ? (
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-light)' }}>
-                      No stays linked yet. Bookings created with this guest selected will show up here.
-                    </div>
-                  ) : (
-                    <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {stays.map((b: any) => (
-                        <li key={b.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: '0.8125rem', padding: '6px 10px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
-                          <span style={{ fontWeight: 600 }}>{b.partner_properties?.property_name || '—'}</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>
-                            {new Date(b.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })} → {new Date(b.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
-                            <span style={{ marginLeft: 8, fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{b.status}</span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+          {editing.id && (
+            <DetailModalSection heading="Stays" headingRight={stays.length || null}>
+              {staysLoading ? (
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text-light)' }}>Loading…</div>
+              ) : stays.length === 0 ? (
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                  No stays linked yet. Bookings created with this guest selected will show up here.
                 </div>
+              ) : (
+                <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {stays.map((b: any) => (
+                    <li key={b.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: '0.8125rem', padding: '8px 12px', background: 'var(--bg)', borderRadius: 6 }}>
+                      <span style={{ fontWeight: 600 }}>{titleCase(b.partner_properties?.property_name) || '—'}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {new Date(b.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })} to {new Date(b.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        <span style={{ marginLeft: 8, fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{b.status}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </div>
-            <div className="modal-footer">
-              {editing.id && (
-                <button className="btn btn-danger" onClick={remove} disabled={saving}>Delete</button>
-              )}
-              <div style={{ flex: 1 }} />
-              <button className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
+            </DetailModalSection>
+          )}
+        </DetailModal>
       )}
     </div>
+  );
+}
+
+// ─── Sortable guests table ───────────────────────────────────────────
+
+interface GuestRow extends DataRow {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  country: string;
+  source: string;
+  guest: Guest;
+}
+
+function GuestsTable({
+  guests, onView, onEdit,
+}: {
+  guests: Guest[];
+  onView: (g: Guest) => void;
+  onEdit: (g: Guest) => void;
+}) {
+  const rows: GuestRow[] = guests.map(g => ({
+    id: g.id,
+    name: titleCase(g.name),
+    email: g.email ? g.email.toLowerCase() : '',
+    phone: g.phone || '',
+    country: titleCase(g.country || ''),
+    source: titleCase(g.source || ''),
+    guest: g,
+  }));
+
+  const columns = [
+    { key: 'name', label: 'Name', sortable: true, render: (row: DataRow) => <strong>{(row as GuestRow).name || <span className="text-light">-</span>}</strong> },
+    { key: 'email', label: 'Email', sortable: true, render: (row: DataRow) => (row as GuestRow).email || <span className="text-light">-</span> },
+    { key: 'phone', label: 'Phone', sortable: true, render: (row: DataRow) => (row as GuestRow).phone || <span className="text-light">-</span> },
+    { key: 'country', label: 'Country', sortable: true, render: (row: DataRow) => (row as GuestRow).country || <span className="text-light">-</span> },
+    { key: 'source', label: 'Source', sortable: true, render: (row: DataRow) => (row as GuestRow).source || <span className="text-light">-</span> },
+    {
+      key: 'actions', label: '', align: 'right' as const, width: '90px',
+      render: (row: DataRow) => (
+        <div className="list-actions" onClick={(e) => e.stopPropagation()}>
+          <button type="button" className="list-action-icon" title="View guest" onClick={() => onView((row as GuestRow).guest)}>👁</button>
+          <button type="button" className="list-action-icon" title="Edit guest" onClick={() => onEdit((row as GuestRow).guest)}>✏️</button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <DataTable
+      columns={columns}
+      data={rows}
+      loading={false}
+      searchable={false}
+      resultsBarContent={null}
+      defaultSort={{ key: 'name', direction: 'asc' }}
+      onRowClick={(row: DataRow) => onView((row as GuestRow).guest)}
+    />
   );
 }
