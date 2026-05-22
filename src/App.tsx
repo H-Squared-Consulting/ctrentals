@@ -138,13 +138,15 @@ export function App() {
           sensible. */}
       <Route path="/brochures" element={<Navigate to="/properties" replace />} />
 
-      {/* Operations — Pipeline unifies the old Enquiries + Proposals pages
-          into a single deal-flow view. Old URLs redirect so existing
-          bookmarks / external links don't 404. */}
-      <Route path="/operations" element={<Navigate to="/operations/pipeline" replace />} />
-      <Route path="/operations/pipeline" element={<Page><PipelinePage /></Page>} />
-      <Route path="/operations/enquiries" element={<Navigate to="/operations/pipeline" replace />} />
-      <Route path="/operations/proposals" element={<Navigate to="/operations/pipeline" replace />} />
+      {/* Operations — Enquiries and Proposals share the same Pipeline
+          (deal-flow) view. They render at distinct URLs so the sub-nav
+          tab the user clicked stays highlighted and the page title
+          reflects their choice. Old /operations/pipeline bookmarks
+          redirect to Enquiries. */}
+      <Route path="/operations" element={<Navigate to="/operations/enquiries" replace />} />
+      <Route path="/operations/enquiries" element={<Page><PipelinePage /></Page>} />
+      <Route path="/operations/proposals" element={<Page><PipelinePage /></Page>} />
+      <Route path="/operations/pipeline" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/bookings" element={<Page><BookingCalendarPage /></Page>} />
 
       {/* CRM */}
