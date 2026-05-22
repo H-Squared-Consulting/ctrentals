@@ -11,12 +11,18 @@
  */
 
 import { useState } from 'react';
+import ActionModal from '../components/ActionModal';
 import { useToast } from '../components/ToastProvider';
 import PricingWidget, { snapshotToText } from '../components/PricingWidget';
 import CreateProposalModal from '../components/CreateProposalModal';
 import type { PricingSnapshot } from '../components/PricingWidget';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
 import type { PricingProposal } from '../types/pricing';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 interface PricingModalProps {
   property: { id: string; property_name: string };
@@ -110,27 +116,24 @@ export default function PricingModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal pricing-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {isEdit ? 'Edit Pricing — ' : 'Pricing — '}{property.property_name}
-          </h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
-          <PricingWidget
-            property={property}
-            supabase={supabase}
-            initialSnapshot={editPricingProposal ?? null}
-            onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
-            onShareCalc={handleShareCalc}
-            saving={saving}
-            actionLabel={isEdit ? 'Save Pricing' : 'Create Proposal'}
-          />
-        </div>
-      </div>
+    <>
+      <ActionModal
+        title={isEdit ? 'Edit pricing' : 'Pricing calculator'}
+        subtitle={titleCase(property.property_name)}
+        width={900}
+        hideFooter
+        onClose={onClose}
+      >
+        <PricingWidget
+          property={property}
+          supabase={supabase}
+          initialSnapshot={editPricingProposal ?? null}
+          onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
+          onShareCalc={handleShareCalc}
+          saving={saving}
+          actionLabel={isEdit ? 'Save Pricing' : 'Create Proposal'}
+        />
+      </ActionModal>
 
       {creatingFromSnapshot && (
         <CreateProposalModal
@@ -142,6 +145,6 @@ export default function PricingModal({
           onCreated={() => { setCreatingFromSnapshot(null); onClose(); }}
         />
       )}
-    </div>
+    </>
   );
 }
