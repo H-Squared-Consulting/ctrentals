@@ -18,6 +18,7 @@ import SeasonTagsPage from './pages/SeasonTagsPage';
 import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 import FinancePricingPage from './pages/FinancePricingPage';
 import HomePage from './pages/HomePage';
+import AcceptInvitePage from './pages/AcceptInvitePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -126,6 +127,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      {/* Invite acceptance — must be reachable without an existing session. */}
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
       {/* Home */}
       <Route path="/dashboard" element={<Page><HomePage /></Page>} />

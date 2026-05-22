@@ -14,7 +14,6 @@ interface AuthContextValue {
   loading: boolean;
   supabase: typeof supabase;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: string | null; needsEmailConfirmation: boolean }>;
   signOut: () => Promise<void>;
 }
 
@@ -45,23 +44,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null };
   }
 
-  async function signUp(email: string, password: string) {
-    // If the Supabase project has "Confirm email" enabled, data.session will
-    // be null and the user has to click an email link before signing in.
-    // Otherwise the new account is logged in immediately.
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin + '/properties',
-      },
-    });
-    return {
-      error: error?.message ?? null,
-      needsEmailConfirmation: !error && !data.session,
-    };
-  }
-
   async function signOut() {
     await supabase.auth.signOut();
     setSession(null);
@@ -69,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, user, loading, supabase, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ session, user, loading, supabase, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
