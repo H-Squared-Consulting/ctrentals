@@ -123,8 +123,8 @@ export default function SendProposalDialog({ proposal, supabase, onClose, onSent
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {hasPhone && (
           <button
-            className="btn btn-outline"
-            style={{ color: '#25D366', borderColor: '#25D366', justifyContent: 'flex-start' }}
+            className="btn btn-outline-whatsapp"
+            style={{ justifyContent: 'flex-start' }}
             onClick={sendWhatsApp}
             disabled={marking}
           >

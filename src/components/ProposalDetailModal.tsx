@@ -230,7 +230,7 @@ export default function ProposalDetailModal({
         👁 Preview
       </a>
       {proposal.guest_phone && (
-        <button className="btn btn-outline" style={{ color: '#25D366', borderColor: '#25D366' }} onClick={() => { sendWhatsApp(); onClose(); }}>
+        <button className="btn btn-outline-whatsapp" onClick={() => { sendWhatsApp(); onClose(); }}>
           WhatsApp
         </button>
       )}
