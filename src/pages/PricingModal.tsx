@@ -14,6 +14,7 @@ import { useState } from 'react';
 import ActionModal from '../components/ActionModal';
 import { useToast } from '../components/ToastProvider';
 import PricingWidget, { snapshotToText } from '../components/PricingWidget';
+import PricingDashboard from '../components/PricingDashboard';
 import CreateProposalModal from '../components/CreateProposalModal';
 import type { PricingSnapshot } from '../components/PricingWidget';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
@@ -120,19 +121,30 @@ export default function PricingModal({
       <ActionModal
         title={isEdit ? 'Edit pricing' : 'Pricing calculator'}
         subtitle={titleCase(property.property_name)}
-        width={900}
+        width={isEdit ? 900 : 560}
         hideFooter
         onClose={onClose}
       >
-        <PricingWidget
-          property={property}
-          supabase={supabase}
-          initialSnapshot={editPricingProposal ?? null}
-          onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
-          onShareCalc={handleShareCalc}
-          saving={saving}
-          actionLabel={isEdit ? 'Save Pricing' : 'Create Proposal'}
-        />
+        {isEdit ? (
+          // Edit mode keeps the older PricingWidget until the dashboard
+          // gets snapshot-hydration in the next PR.
+          <PricingWidget
+            property={property}
+            supabase={supabase}
+            initialSnapshot={editPricingProposal ?? null}
+            onCreateProposal={handleSavePricing}
+            onShareCalc={handleShareCalc}
+            saving={saving}
+            actionLabel="Save Pricing"
+          />
+        ) : (
+          <PricingDashboard
+            property={property}
+            supabase={supabase}
+            onCreateProposal={handleCreateProposal}
+            actionLabel="Create proposal from this"
+          />
+        )}
       </ActionModal>
 
       {creatingFromSnapshot && (

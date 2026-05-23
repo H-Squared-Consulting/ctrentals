@@ -12,13 +12,20 @@
  *     for the per-night price)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ActionModal from './ActionModal';
 import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import type { PricingSnapshot } from './PricingWidget';
+
+interface GuestRow {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+}
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -91,6 +98,69 @@ export default function CreateProposalModal({
   // calculated this" and "I'm committing to a sendable proposal."
   const [step, setStep] = useState<'review' | 'details'>('review');
 
+  // ── Guest lookup state ──
+  // selectedGuest is set once the user picks an existing guest (via search
+  // or via the email-blur dedupe prompt). When set, the name/email/phone
+  // fields lock and the proposal links to that guest on save. Empty =
+  // creating a new guest from whatever's in the fields.
+  const [selectedGuest, setSelectedGuest] = useState<GuestRow | null>(null);
+  const [guestSearch, setGuestSearch] = useState('');
+  const [guestMatches, setGuestMatches] = useState<GuestRow[]>([]);
+  const [emailMatch, setEmailMatch] = useState<GuestRow | null>(null);
+  const isLocked = selectedGuest != null;
+
+  // Debounced search of the guests table by name or email.
+  useEffect(() => {
+    if (isLocked) { setGuestMatches([]); return; }
+    const q = guestSearch.trim();
+    if (q.length < 2) { setGuestMatches([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from('guests')
+        .select('id, name, email, phone')
+        .eq('partner_id', CT_RENTALS_PARTNER_ID)
+        .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+        .order('name')
+        .limit(8);
+      if (!cancelled) setGuestMatches((data as GuestRow[]) || []);
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [guestSearch, supabase, isLocked]);
+
+  function applyGuest(g: GuestRow) {
+    setSelectedGuest(g);
+    setGuestName(g.name);
+    setGuestEmail(g.email || '');
+    setGuestPhone(g.phone || '');
+    setGuestSearch('');
+    setGuestMatches([]);
+    setEmailMatch(null);
+  }
+
+  function switchGuest() {
+    setSelectedGuest(null);
+    setEmailMatch(null);
+  }
+
+  // On email blur (only when not already linked to a guest), check the
+  // guests table for an exact match and offer to link rather than create
+  // a duplicate. Belt-and-braces — a DB unique constraint on
+  // (partner_id, lower(email)) should follow in a schema PR with Jordon.
+  async function onEmailBlur() {
+    if (isLocked) return;
+    const e = guestEmail.trim().toLowerCase();
+    if (!e) { setEmailMatch(null); return; }
+    const { data } = await supabase
+      .from('guests')
+      .select('id, name, email, phone')
+      .eq('partner_id', CT_RENTALS_PARTNER_ID)
+      .ilike('email', e)
+      .limit(1);
+    if (data && data.length > 0) setEmailMatch(data[0] as GuestRow);
+    else setEmailMatch(null);
+  }
+
   async function handleSubmit() {
     if (saving) return;
     if (!guestName.trim()) { toast.warning('Recipient name is required'); return; }
@@ -107,6 +177,28 @@ export default function CreateProposalModal({
 
     setSaving(true);
     try {
+      // 0) Resolve the guest_id — link to existing or create a new row.
+      // If the user picked an existing guest via search or the email-blur
+      // prompt, we already have selectedGuest. Otherwise insert a new
+      // guests row from the entered name/email/phone so every proposal
+      // carries a guest_id (the workflow rebuild's CRM link).
+      let guestId: string | null = selectedGuest?.id ?? null;
+      if (!guestId) {
+        const guestInsert = await supabase
+          .from('guests')
+          .insert({
+            partner_id: CT_RENTALS_PARTNER_ID,
+            name: guestName.trim(),
+            email: guestEmail.trim() || null,
+            phone: guestPhone.trim() || null,
+            status: 'lead',
+          })
+          .select('id')
+          .single();
+        if (guestInsert.error) throw guestInsert.error;
+        guestId = guestInsert.data.id;
+      }
+
       // 1) Persist the pricing snapshot first so we have an ID to link.
       const b = snapshot.breakdown;
       const pricingPayload = {
@@ -152,6 +244,10 @@ export default function CreateProposalModal({
         enquiry_id: enquiryPrefill?.id || null,
         property_id: property.id,
         pricing_proposal_id: pricingProposalId,
+        // Link to the resolved guest record. Snapshot fields below stay
+        // populated so older readers + historical accuracy don't break
+        // when the guest record is later edited.
+        guest_id: guestId,
         guest_name: guestName.trim(),
         guest_email: guestEmail.trim() || null,
         guest_phone: guestPhone.trim() || null,
@@ -255,6 +351,57 @@ export default function CreateProposalModal({
             <strong>{fmtRand(guestPrice)} / night</strong>
           </div>
 
+          {/* Existing-guest lookup — sits above the editable fields so the
+              user is gently nudged to link rather than re-type a known
+              contact. Free-text below still works if she ignores it. */}
+          <div className="form-group">
+            <label className="form-label">Existing guest? (optional)</label>
+            <input
+              type="text"
+              className="form-input"
+              value={guestSearch}
+              onChange={(e) => setGuestSearch(e.target.value)}
+              placeholder="🔍 Search by name or email…"
+              disabled={isLocked}
+            />
+            {!isLocked && guestSearch.trim().length >= 2 && guestMatches.length > 0 && (
+              <div style={{ marginTop: 6, border: '1px solid var(--border)', borderRadius: 6, maxHeight: 200, overflowY: 'auto', background: 'var(--surface)' }}>
+                {guestMatches.map(g => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => applyGuest(g)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--border-light)', cursor: 'pointer' }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{titleCase(g.name)}</div>
+                    {(g.email || g.phone) && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {g.email || ''}{g.email && g.phone ? ' · ' : ''}{g.phone || ''}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!isLocked && guestSearch.trim().length >= 2 && guestMatches.length === 0 && (
+              <div style={{ marginTop: 6, padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                No matches. Fill the fields below to create a new guest.
+              </div>
+            )}
+            {isLocked && selectedGuest && (
+              <div style={{ marginTop: 6, padding: '8px 12px', background: 'var(--success-bg, var(--bg))', borderRadius: 6, fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <span>✓ Linked to <strong>{titleCase(selectedGuest.name)}</strong></span>
+                <button
+                  type="button"
+                  onClick={switchGuest}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', padding: 0 }}
+                >
+                  Switch
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="form-group">
             <label className="form-label">{isAgent ? 'Agent name' : 'Guest name'} *</label>
             <input
@@ -263,6 +410,7 @@ export default function CreateProposalModal({
               value={guestName}
               onChange={(e) => setGuestName(e.target.value)}
               placeholder={isAgent ? 'e.g. Anneline Klaase' : 'e.g. Hayley Harrod'}
+              readOnly={isLocked}
               autoFocus
             />
           </div>
@@ -275,8 +423,19 @@ export default function CreateProposalModal({
                 className="form-input"
                 value={guestEmail}
                 onChange={(e) => setGuestEmail(e.target.value)}
+                onBlur={onEmailBlur}
                 placeholder="recipient@example.com"
+                readOnly={isLocked}
               />
+              {emailMatch && !isLocked && (
+                <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--warning-bg)', borderRadius: 6, fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span>Email matches <strong>{titleCase(emailMatch.name)}</strong>.</span>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => applyGuest(emailMatch)}>Link</button>
+                    <button type="button" className="btn btn-ghost" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => setEmailMatch(null)}>Use anyway</button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Phone</label>
@@ -286,6 +445,7 @@ export default function CreateProposalModal({
                 value={guestPhone}
                 onChange={(e) => setGuestPhone(e.target.value)}
                 placeholder="+27 …"
+                readOnly={isLocked}
               />
             </div>
           </div>
