@@ -259,9 +259,9 @@ export default function PropertiesPage() {
       key: 'is_published', label: 'Status', align: 'center' as const,
       render: (row: DataRow) => {
         const p = row as Property;
-        if (p.is_archived) return <span className="status-badge" style={{ background: '#FEE2E2', color: '#991B1B' }}>Archived</span>;
-        if (p.is_published) return <span className="status-badge" style={{ background: '#D1FAE5', color: '#059669' }}>Active</span>;
-        return <span className="status-badge" style={{ background: '#FEF3C7', color: '#92400E' }}>Inactive</span>;
+        if (p.is_archived) return <span className="ops-status-pill ops-status-pill--archived">Archived</span>;
+        if (p.is_published) return <span className="ops-status-pill ops-status-pill--active">Active</span>;
+        return <span className="ops-status-pill ops-status-pill--inactive">Inactive</span>;
       },
     },
   ];
