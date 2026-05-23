@@ -48,7 +48,16 @@ export default function PropertiesPage() {
   const [bedCounts, setBedCounts] = useState<number[]>([]);
   const [bathCounts, setBathCounts] = useState<number[]>([]);
   const [sleepCounts, setSleepCounts] = useState<number[]>([]);
-  const [suburbFilter, setSuburbFilter] = useState<string>('');
+  const [suburbFilter, setSuburbFilter] = useState<string[]>([]);
+  /** Card view sort. Table view sorts via DataTable's column headers.
+   *  Key + direction encoded as one string so a native select works. */
+  type SortKey =
+    | 'bedrooms-desc' | 'bedrooms-asc'
+    | 'property_name-asc' | 'property_name-desc'
+    | 'suburb-asc'
+    | 'sleeps-desc' | 'sleeps-asc'
+    | 'dailyrate-desc' | 'dailyrate-asc';
+  const [sortKey, setSortKey] = useState<SortKey>('bedrooms-desc');
   // Property whose Share dialog (Branded / Agent variant picker) is open.
   // Both the card's Copy and Preview buttons route here so the user picks
   // which brochure variant before sharing — otherwise the choice silently
@@ -199,13 +208,39 @@ export default function PropertiesPage() {
     if (bedCounts.length) list = list.filter(p => p.bedrooms != null && bedCounts.includes(p.bedrooms));
     if (bathCounts.length) list = list.filter(p => p.bathrooms != null && bathCounts.includes(p.bathrooms));
     if (sleepCounts.length) list = list.filter(p => p.sleeps != null && sleepCounts.includes(p.sleeps));
-    if (suburbFilter) list = list.filter(p => p.suburb === suburbFilter);
+    if (suburbFilter.length) list = list.filter(p => p.suburb != null && suburbFilter.includes(p.suburb));
     return list;
   }, [properties, searchQuery, statusFilter, bedCounts, bathCounts, sleepCounts, suburbFilter]);
 
-  const filtersActive = !!(bedCounts.length || bathCounts.length || sleepCounts.length || suburbFilter);
+  /** Sorted list for card view. Table view ignores this and uses
+   *  DataTable's own column sorting. */
+  const sortedCardProperties = useMemo(() => {
+    const [field, dir] = sortKey.split('-') as [string, 'asc' | 'desc'];
+    const mult = dir === 'asc' ? 1 : -1;
+    const list = [...filteredProperties];
+    list.sort((a, b) => {
+      let av: number | string | null;
+      let bv: number | string | null;
+      if (field === 'dailyrate') {
+        av = dailyRateById[a.id] ?? null;
+        bv = dailyRateById[b.id] ?? null;
+      } else {
+        av = (a as Property)[field as keyof Property] as number | string | null;
+        bv = (b as Property)[field as keyof Property] as number | string | null;
+      }
+      // Nulls always sort last regardless of direction.
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mult;
+      return String(av).localeCompare(String(bv)) * mult;
+    });
+    return list;
+  }, [filteredProperties, sortKey, dailyRateById]);
+
+  const filtersActive = !!(bedCounts.length || bathCounts.length || sleepCounts.length || suburbFilter.length);
   function clearFilters() {
-    setBedCounts([]); setBathCounts([]); setSleepCounts([]); setSuburbFilter('');
+    setBedCounts([]); setBathCounts([]); setSleepCounts([]); setSuburbFilter([]);
   }
 
   const columns = [
@@ -290,28 +325,48 @@ export default function PropertiesPage() {
 
   return (
     <div>
-      {/* ── Toolbar ── */}
+      {/* ── Toolbar — baseline order: view → filters → sort → search → count ── */}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="list-toolbar">
           <div className="list-toolbar-left">
-            <div className="list-search">
-              <span className="list-search-icon">🔍</span>
-              <input
-                type="text"
-                placeholder="Search properties..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>
-              )}
+            <div className="view-toggle">
+              <button
+                className={`view-toggle-btn ${viewMode === 'cards' ? 'active' : ''}`}
+                onClick={() => setViewMode('cards')}
+                title="Card view"
+              >
+                ▦ Cards
+              </button>
+              <button
+                className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+                onClick={() => setViewMode('table')}
+                title="Table view"
+              >
+                ☰ Table
+              </button>
             </div>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {filteredProperties.length} of {properties.length} total
-            </span>
-            {/* Distinguishing-attribute filters — bedrooms, bathrooms,
-                sleeps, suburb. Compact selects so they fit inline with
-                search; show Clear when anything's active. */}
+            {/* Status — single-select keeps the toolbar to one row.
+                Inactive = temporarily parked. Archived = retired. */}
+            <select
+              className="list-filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              title="Status filter"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive ({inactiveCount})</option>
+              <option value="archived">Archived ({archivedCount})</option>
+              <option value="all">All ({properties.length})</option>
+            </select>
+            {/* Distinguishing-attribute filters — all multi-select so
+                "3 OR 4 beds" / "Camps Bay OR Clifton" work without
+                dragging in extras. */}
+            <MultiPicker
+              label="Suburb"
+              options={suburbOptions}
+              selected={suburbFilter}
+              onChange={(v) => setSuburbFilter(v.map(String))}
+            />
             <MultiPicker
               label="Beds"
               options={bedOptions}
@@ -330,53 +385,48 @@ export default function PropertiesPage() {
               selected={sleepCounts}
               onChange={(v) => setSleepCounts(v as number[])}
             />
-            <select
-              className="list-filter-select"
-              value={suburbFilter}
-              onChange={(e) => setSuburbFilter(e.target.value)}
-              title="Filter by suburb"
-            >
-              <option value="">Suburb: any</option>
-              {suburbOptions.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
             {filtersActive && (
               <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }} onClick={clearFilters}>
                 Clear filters
               </button>
             )}
-            {/* Single status select keeps the toolbar to one row.
-                Inactive = temporarily parked. Archived = retired.   */}
-            <select
-              className="list-filter-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              title="Status filter"
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive ({inactiveCount})</option>
-              <option value="archived">Archived ({archivedCount})</option>
-              <option value="all">All ({properties.length})</option>
-            </select>
+            {/* Sort — only relevant for card view; DataTable handles
+                sorting via column headers in table mode. */}
+            {viewMode === 'cards' && (
+              <select
+                className="list-filter-select"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                title="Sort properties"
+              >
+                <option value="bedrooms-desc">Beds: most first</option>
+                <option value="bedrooms-asc">Beds: fewest first</option>
+                <option value="property_name-asc">Name: A → Z</option>
+                <option value="property_name-desc">Name: Z → A</option>
+                <option value="suburb-asc">Suburb: A → Z</option>
+                <option value="sleeps-desc">Sleeps: most first</option>
+                <option value="dailyrate-desc">Daily rate: high to low</option>
+                <option value="dailyrate-asc">Daily rate: low to high</option>
+              </select>
+            )}
+            <div className="list-search">
+              <span className="list-search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search properties..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>
+              )}
+            </div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+              {filteredProperties.length} of {properties.length} total
+            </span>
           </div>
           <div className="list-toolbar-right">
-            <div className="view-toggle">
-              <button
-                className={`view-toggle-btn ${viewMode === 'cards' ? 'active' : ''}`}
-                onClick={() => setViewMode('cards')}
-                title="Card view"
-              >
-                ▦
-              </button>
-              <button
-                className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
-                onClick={() => setViewMode('table')}
-                title="Table view"
-              >
-                ☰
-              </button>
-            </div>
-            <button className="btn btn-ghost" onClick={() => loadProperties()}>↻ Refresh</button>
-            <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ Add Property</button>
+            <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ New Property</button>
           </div>
         </div>
       </div>
@@ -384,7 +434,7 @@ export default function PropertiesPage() {
       {/* ── Card View ── */}
       {viewMode === 'cards' && (
         <div className="property-grid">
-          {filteredProperties.length === 0 ? (
+          {sortedCardProperties.length === 0 ? (
             <div style={{ gridColumn: '1 / -1' }}>
               <EmptyState
                 icon={statusFilter === 'active' ? '🏡' : statusFilter === 'archived' ? '📥' : '🛋'}
@@ -404,7 +454,7 @@ export default function PropertiesPage() {
               />
             </div>
           ) : (
-            filteredProperties.map(property => (
+            sortedCardProperties.map(property => (
               <div
                 key={property.id}
                 className="property-card"
