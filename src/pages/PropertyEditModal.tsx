@@ -5,14 +5,18 @@
  */
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import DetailModal from '../components/DetailModal';
+import BrochureShareMenu from '../components/BrochureShareMenu';
+import { useDirty } from '../lib/dirtyState';
 import GallerySectionsEditor, { deriveFlatColumns } from '../components/GallerySectionsEditor';
 import { useToast } from '../components/ToastProvider';
 import { PROPERTY_TYPE_OPTIONS, AVAILABILITY_OPTIONS } from './constants';
 import type { Baseline } from '../types/pricing';
 import ProposalDetailModal from '../components/ProposalDetailModal';
 import SendProposalDialog from '../components/SendProposalDialog';
+import NewProposalLauncher from '../components/NewProposalLauncher';
 import PricingModal from './PricingModal';
+import BookingModal from './BookingModal';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { useDirty } from '../lib/dirtyState';
@@ -32,41 +36,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [mode, setMode] = useState(isNew ? 'edit' : initialMode);
   const viewOnly = mode === 'view';
 
-  // Unsaved-changes guard. We snapshot the initial form on mount and any
-  // close attempt (Escape, Back button, click on the X) gets routed through
-  // requestClose() which shows a confirm dialog when the form is dirty.
-  // The snapshot is refreshed after a successful Save so the user can keep
-  // editing without false-positive prompts.
+  // Unsaved-changes guard. We snapshot the initial form on mount; DetailModal
+  // pops the dirty-check prompt on close. The snapshot is refreshed after a
+  // successful Save so the user can keep editing without false-positive prompts.
   const initialFormRef = useRef(null);
-  const [unsavedPrompt, setUnsavedPrompt] = useState(false);
-
-  // Escape acts as a back button. Body scroll is locked while the editor
-  // is open — the editor renders via a portal at document.body level, so
-  // the underlying page shouldn't bleed through.
-  useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    function onKey(e) { if (e.key === 'Escape') requestClose(); }
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      document.removeEventListener('keydown', onKey);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Track whether the body has scrolled past zero so the header can pick
-  // up a subtle shadow / shrink — gives a "stuck" feel rather than a flat,
-  // static bar.
-  const bodyRef = useRef(null);
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return;
-    function onScroll() { setScrolled(el.scrollTop > 4); }
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
 
   // CTR codes are the team's canonical property identifier (CTR0001, CTR0002…).
   // Generated at create time from `MAX(slug)` on the existing rows; locked
@@ -158,19 +131,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   }, [form]);
 
   // Tell the silent auto-update reloader to defer a refresh while the
-  // property editor has unsaved changes.
+  // property editor has unsaved changes. DetailModal handles the dirty
+  // close prompt itself; this registry call is purely for the global
+  // auto-reload deferral.
   useDirty(isDirty);
 
-  /** Routes every close path through here so a dirty form pops the confirm
-   *  dialog instead of slipping out without saving. Clean forms close
-   *  immediately. */
-  function requestClose() {
-    if (isDirty) {
-      setUnsavedPrompt(true);
-      return;
-    }
-    onClose();
-  }
   const [deleting, setDeleting] = useState(false);
   // Owner dropdown options for the Overview tab. Reloadable so an
   // owner created via the inline + button shows up immediately.
@@ -312,10 +277,8 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const TABS = [
     { id: 'overview', label: 'Overview' },
     { id: 'gallery', label: 'Gallery' },
-    { id: 'listing', label: 'Listing' },
-    { id: 'brochure', label: 'Brochure' },
-    { id: 'pricing', label: 'Pricing' },
     { id: 'proposals', label: 'Proposals' },
+    { id: 'bookings', label: 'Bookings' },
   ];
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -329,9 +292,17 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [editPricingFor, setEditPricingFor] = useState(null);
   /** Proposal in the inline-send confirmation dialog. */
   const [sendingProposal, setSendingProposal] = useState(null);
-  /** Open PricingModal in create mode → starts a new proposal scoped to
-   *  this property without bouncing the user out to Pipeline. */
-  const [creatingProposal, setCreatingProposal] = useState(false);
+  /** Opens the shared NewProposalLauncher (property-picker → PricingModal)
+   *  so the New Proposal flow inside the Property modal matches the one
+   *  on the Proposals page / FAB. */
+  const [proposalLauncherOpen, setProposalLauncherOpen] = useState(false);
+  /** Opens the shared BookingModal pre-scoped to this property so the
+   *  New Booking flow matches the one on the Bookings calendar. */
+  const [editingBooking, setEditingBooking] = useState<any>(null);
+  /** Opens the shared <BrochureShareMenu> from the Links section. Same
+   *  modal the property card uses, so the share experience is identical
+   *  whether entered from the card or from inside the editor. */
+  const [sharingBrochure, setSharingBrochure] = useState(false);
 
   async function refetchProposals() {
     const { data } = await supabase
@@ -571,173 +542,126 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     <h3 className="editor-section-heading">{children}</h3>
   );
 
-  // Brochure section — preview link + share actions for an existing property.
-  // The brochure is auto-generated from the photos + property fields, so this
-  // is a read-only section (no edit layout). Used inside the property modal.
-  const BrochureShare = ({ property, form }) => {
-    const [copied, setCopied] = useState(false);
-    const slug = property.slug || form.slug;
-    const url = slug
-      ? `${window.location.origin}/brochures/${encodeURIComponent(slug)}`
-      : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
-    const subject = encodeURIComponent(`${form.property_name || 'Property'} brochure`);
-    const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
-    const waText = encodeURIComponent(`Brochure for ${form.property_name || 'this property'}: ${url}`);
-    async function copy() {
-      try { await navigator.clipboard.writeText(url); }
-      catch { /* clipboard blocked — silently no-op */ }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-    return (
-      <div className="brochure-share">
-        <div className="brochure-share-url" title={url}>{url}</div>
-        <div className="brochure-share-actions">
-          <button type="button" className="btn btn-primary" onClick={copy} style={{ fontSize: '0.8125rem' }}>
-            {copied ? '✓ Link copied' : '🔗 Copy link'}
-          </button>
-          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={url} target="_blank" rel="noopener noreferrer">
-            👁 Open preview
-          </a>
-          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={`https://wa.me/?text=${waText}`} target="_blank" rel="noopener noreferrer">
-            💬 WhatsApp
-          </a>
-          <a className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} href={`mailto:?subject=${subject}&body=${body}`}>
-            ✉️ Email
-          </a>
-        </div>
-        <div className="brochure-share-hint">
-          The brochure pulls photos + details from this property automatically — there's no separate brochure layout to edit. Save your changes before sharing.
-        </div>
-      </div>
-    );
-  };
-
-  return createPortal((
-    <div className="page-editor">
-      <div className={`page-editor-header ${scrolled ? 'is-scrolled' : ''}`}>
-        <button className="page-editor-back" onClick={requestClose} aria-label="Back to properties">
-          <span className="page-editor-back-arrow" aria-hidden>←</span>
-          Back to properties
+  // Visual state cues passed to the shared <DetailModal> shell.
+  // Accent strip colour mirrors the property's published state so the
+  // user gets an immediate read on whether the property is live.
+  const accentColour = form.is_archived
+    ? 'var(--text-light)'
+    : form.is_published
+    ? 'var(--success)'
+    : 'var(--info)';
+  const stageLabel = form.is_archived ? 'Archived' : form.is_published ? 'Active' : 'Inactive';
+  const closedBadge = form.is_archived ? (
+    <span className="detail-modal-mode-badge detail-modal-mode-badge--closed">Archived</span>
+  ) : undefined;
+  const banner = form.is_archived ? (
+    <div className="detail-modal-banner" style={{ background: 'var(--bg)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }}>
+      This property is <strong>archived</strong> — retired from your inventory. Use <em>Unarchive</em> below to bring it back as Inactive (hidden but easy to reactivate).
+    </div>
+  ) : undefined;
+  // Archive flow lives in the footer alongside Save / Cancel via the
+  // shared DetailModal footer slot. Matches where outcome actions live
+  // on the other detail modals (Mark Booked / Mark Lost on deals etc.).
+  const footerActions = !isNew ? (
+    form.is_archived ? (
+      <button
+        className="btn btn-ghost"
+        onClick={handleUnarchive}
+        disabled={saving}
+        title="Bring this property back into circulation as Inactive"
+      >
+        Unarchive
+      </button>
+    ) : confirmingArchive ? (
+      <>
+        <button className="btn btn-ghost" onClick={() => setConfirmingArchive(false)}>
+          Cancel archive
         </button>
-        <h2 className="page-editor-title">
-          {isNew ? 'New property' : form.property_name || 'Edit property'}
-          {/* Mode badges — match the language used in the shared
-              <DetailModal>. Three states: viewing, editing-clean, unsaved. */}
-          {viewOnly && (
-            <span className="page-editor-viewonly-badge" title="View only — click Edit to make changes">
-              👁 Viewing
-            </span>
-          )}
-          {!viewOnly && !isDirty && !saving && !isNew && (
-            <span className="page-editor-viewonly-badge" title="Edit mode — no unsaved changes">
-              ✏ Editing
-            </span>
-          )}
-          {!viewOnly && isDirty && !saving && (
-            <span className="page-editor-unsaved-badge" title="You have unsaved changes">
-              ● Unsaved
-            </span>
-          )}
-        </h2>
-        <div className="page-editor-header-actions">
-          {viewOnly ? (
-            // View-only entry point lands the user here with everything
-            // locked. They can flip to edit from this single button —
-            // mirrors the property card's explicit Edit affordance.
-            <button
-              className="btn btn-primary"
-              onClick={() => setMode('edit')}
-              title="Switch to edit mode"
-            >
-              ✏ Edit
-            </button>
-          ) : (<>
-          {!isNew && (
-            form.is_archived ? (
-              <button
-                className="btn btn-ghost"
-                onClick={handleUnarchive}
-                disabled={saving}
-                title="Bring this property back into circulation as Inactive"
-              >
-                Unarchive
-              </button>
-            ) : confirmingArchive ? (
-              <>
-                <button className="btn btn-ghost" onClick={() => setConfirmingArchive(false)}>
-                  Cancel
-                </button>
-                <button className="btn btn-danger" onClick={handleArchive} disabled={saving}>
-                  Confirm archive
-                </button>
-              </>
-            ) : (
-              <button
-                className="btn btn-danger"
-                onClick={() => setConfirmingArchive(true)}
-                disabled={saving}
-                title="Archive — permanently retires this property"
-              >
-                Archive
-              </button>
-            )
-          )}
-          {!isNew && (
-            // Cancel: discard pending edits and flip back to view mode.
-            // Hidden on new-property creation (there's no view mode to
-            // flip back to; the Back arrow handles "abandon this draft").
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                if (isDirty) {
-                  const ok = window.confirm('You have unsaved changes. Discard them?');
-                  if (!ok) return;
-                }
-                if (initialFormRef.current) setForm(initialFormRef.current);
-                setMode('view');
-              }}
-              disabled={saving}
-              title="Discard changes and return to view mode"
-            >
-              Cancel
-            </button>
-          )}
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving || (!isDirty && !isNew)}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          </>)}
-        </div>
-      </div>
+        <button className="btn btn-danger" onClick={handleArchive} disabled={saving}>
+          Confirm archive
+        </button>
+      </>
+    ) : (
+      <button
+        className="btn btn-danger"
+        onClick={() => setConfirmingArchive(true)}
+        disabled={saving}
+        title="Archive — retire from your inventory entirely (sold, contract ended). Different from Inactive: archived properties also drop off your main lists."
+      >
+        Archive
+      </button>
+    )
+  ) : undefined;
 
-      {/* Tab bar — matches the sub-nav style elsewhere so the editor feels
-          part of the platform rather than its own UI. */}
-      <div className="page-editor-tabs">
-        <div className="page-editor-tabs-inner">
-          <div className="subnav" role="tablist">
-            {TABS.map(t => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === t.id}
-                className={`subnav-link ${activeTab === t.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
+  return (
+    <>
+      <DetailModal
+        title={isNew ? 'New property' : form.property_name || 'Property'}
+        subtitle={isNew ? undefined : stageLabel}
+        accentColour={accentColour}
+        mode={viewOnly ? 'view' : 'edit'}
+        onModeChange={(m) => {
+          if (m === 'view' && isDirty) {
+            const ok = window.confirm('You have unsaved changes. Discard them?');
+            if (!ok) return;
+            if (initialFormRef.current) setForm(initialFormRef.current);
+          }
+          setMode(m);
+        }}
+        canEdit={!form.is_archived}
+        isDirty={isDirty || isNew}
+        onSave={handleSave}
+        onCancel={() => {
+          if (isDirty) {
+            const ok = window.confirm('You have unsaved changes. Discard them?');
+            if (!ok) return;
+          }
+          if (initialFormRef.current) setForm(initialFormRef.current);
+          setMode('view');
+        }}
+        closedBadge={closedBadge}
+        banner={banner}
+        footerActions={footerActions}
+        onClose={onClose}
+      >
+        {/* Tab nav — sits at the top of the modal body so the user can
+            switch concerns without leaving the modal. */}
+        <div className="page-editor-tabs">
+          <div className="page-editor-tabs-inner">
+            <div className="subnav" role="tablist">
+              {TABS.map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === t.id}
+                  className={`subnav-link ${activeTab === t.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="page-editor-body" ref={bodyRef}>
         <div className={`page-editor-card ${viewOnly ? 'page-editor-card--view' : ''}`}>
-        <fieldset
-          disabled={viewOnly}
-          className="page-editor-fieldset"
-        >
           {activeTab === 'overview' && (<>
+          {/* Links section sits OUTSIDE the per-tab fieldset so the Share
+              brochure button stays clickable in view mode. The publish toggle
+              and external URL input inside handle viewOnly explicitly. */}
+          <SectionHeading>Links</SectionHeading>
+          <PropertyLinksSection
+            property={property}
+            form={form}
+            isNew={isNew}
+            viewOnly={viewOnly}
+            onPublishChange={(checked) => setForm({ ...form, is_published: checked })}
+            onBookingUrlChange={(v) => setForm({ ...form, booking_url: v })}
+            onShare={() => setSharingBrochure(true)}
+          />
+
+          <fieldset disabled={viewOnly} className="page-editor-fieldset">
           <SectionHeading>Identity</SectionHeading>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
@@ -929,136 +853,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             >+ Add Bedroom</button>
           </div>
 
+          </fieldset>
           </>)}
 
-          {activeTab === 'pricing' && (<>
-          {isNew ? (
-            <div className="editor-tab-empty">Save this property first to unlock detailed pricing (baselines, channel profiles, scenarios).</div>
-          ) : (
-            <>
-              <SectionHeading>Baselines</SectionHeading>
-              <div className="baseline-editor">
-                {baselines.map((bl) => {
-                  const edit = baselineEdits[bl.id];
-                  const editing = !bl.locked && !!edit;
-                  return (
-                    <div key={bl.id} className="baseline-row">
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{bl.year}/{bl.year + 1}</div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Daily</label>
-                        {editing ? (
-                          <input
-                            type="number"
-                            className="form-input"
-                            value={edit.daily_rate}
-                            onChange={(e) => setBaselineEdits(prev => ({ ...prev, [bl.id]: { ...prev[bl.id], daily_rate: e.target.value } }))}
-                            min={0}
-                            step="0.01"
-                          />
-                        ) : (
-                          <div style={{ fontSize: '0.875rem' }}>R{Number(bl.daily_rate).toLocaleString()}</div>
-                        )}
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Monthly</label>
-                        {editing ? (
-                          <input
-                            type="number"
-                            className="form-input"
-                            value={edit.monthly_rate}
-                            onChange={(e) => setBaselineEdits(prev => ({ ...prev, [bl.id]: { ...prev[bl.id], monthly_rate: e.target.value } }))}
-                            min={0}
-                            step="0.01"
-                          />
-                        ) : (
-                          <div style={{ fontSize: '0.875rem' }}>R{Number(bl.monthly_rate).toLocaleString()}</div>
-                        )}
-                      </div>
-
-                      {/* Locked baselines are read-only; unlock first to edit.
-                          The button label spells out what clicking it will do
-                          so the action isn't hidden behind a lock emoji. */}
-                      {bl.locked ? (
-                        <button
-                          className="btn btn-ghost"
-                          style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                          onClick={() => handleToggleBaselineLock(bl)}
-                          title="Unlock so you can edit these rates"
-                        >
-                          🔒 Unlock to edit
-                        </button>
-                      ) : editing ? (
-                        <>
-                          <button
-                            className="btn btn-primary"
-                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                            onClick={() => handleUpdateBaseline(bl)}
-                          >
-                            Save
-                          </button>
-                          <button
-                            className="btn btn-ghost"
-                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                            onClick={() => setBaselineEdits(prev => { const next = { ...prev }; delete next[bl.id]; return next; })}
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="btn btn-ghost"
-                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                            onClick={() => setBaselineEdits(prev => ({ ...prev, [bl.id]: { daily_rate: String(bl.daily_rate), monthly_rate: String(bl.monthly_rate) } }))}
-                          >
-                            ✏️ Edit rates
-                          </button>
-                          <button
-                            className="btn btn-ghost"
-                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                            onClick={() => handleToggleBaselineLock(bl)}
-                            title="Lock to prevent accidental changes"
-                          >
-                            🔓 Lock
-                          </button>
-                        </>
-                      )}
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }}
-                        onClick={() => handleDeleteBaseline(bl.id)}
-                        title="Delete this year's baseline"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  );
-                })}
-                <div className="baseline-row" style={{ marginTop: '4px' }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Season</label>
-                    <select className="form-input" value={newBaseline.year} onChange={(e) => setNewBaseline({ ...newBaseline, year: Number(e.target.value) })}>
-                      {[currentYear, currentYear + 1].map((y) => (<option key={y} value={y}>{y}/{y + 1}</option>))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Daily Rate</label>
-                    <input type="number" className="form-input" value={newBaseline.daily_rate} onChange={(e) => setNewBaseline({ ...newBaseline, daily_rate: e.target.value })} min={0} step="0.01" placeholder="0.00" />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Monthly Rate</label>
-                    <input type="number" className="form-input" value={newBaseline.monthly_rate} onChange={(e) => setNewBaseline({ ...newBaseline, monthly_rate: e.target.value })} min={0} step="0.01" placeholder="0.00" />
-                  </div>
-                  <button className="btn btn-primary" style={{ fontSize: '0.6875rem', padding: '4px 10px' }} onClick={handleSaveBaseline}>Save</button>
-                  <div />
-                </div>
-              </div>
-
-            </>
-          )}
-          </>)}
-
-          {activeTab === 'gallery' && (<>
+          {activeTab === 'gallery' && (
+          <fieldset disabled={viewOnly} className="page-editor-fieldset">
           <SectionHeading>Photos</SectionHeading>
           <GallerySectionsEditor
             propertyId={property.id || 'new'}
@@ -1066,18 +865,11 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             onChange={(next) => setForm(prev => ({ ...prev, gallery_sections: next }))}
             supabase={supabase}
           />
-          </>)}
-
-          {activeTab === 'brochure' && (<>
-          <SectionHeading>Brochure</SectionHeading>
-          {isNew ? (
-            <div className="editor-tab-empty">Save this property first — the brochure is auto-generated once it exists in the database.</div>
-          ) : (
-            <BrochureShare property={property} form={form} />
+          </fieldset>
           )}
-          </>)}
 
-          {activeTab === 'overview' && (<>
+          {activeTab === 'overview' && (
+          <fieldset disabled={viewOnly} className="page-editor-fieldset">
           <SectionHeading>Amenities</SectionHeading>
           {(() => {
             // Parse current tags
@@ -1154,61 +946,13 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             );
           })()}
 
-          </>)}
-
-          {activeTab === 'listing' && (<>
-          <SectionHeading>Publish status</SectionHeading>
-          {form.is_archived ? (
-            <div className="editor-tab-empty">
-              <strong>This property is archived.</strong> Use the <em>Unarchive</em> button at the top to bring it back as Inactive before publishing.
-            </div>
-          ) : (
-            <label className="editor-toggle">
-              <input
-                type="checkbox"
-                checked={!!form.is_published}
-                onChange={(e) => setForm({ ...form, is_published: e.target.checked })}
-              />
-              <span className="editor-toggle-track"><span className="editor-toggle-thumb" /></span>
-              <span className="editor-toggle-label">
-                {form.is_published
-                  ? 'Active — visible on the public site and brochures'
-                  : 'Inactive — temporarily hidden, can be reactivated any time'}
-              </span>
-            </label>
+          </fieldset>
           )}
-
-          {!isNew && (
-            <>
-              <SectionHeading>Public URL</SectionHeading>
-              {(() => {
-                const slug = property.slug || form.slug;
-                const publicUrl = slug
-                  ? `${window.location.origin}/brochures/${encodeURIComponent(slug)}`
-                  : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
-                return (
-                  <div className="brochure-share">
-                    <div className="brochure-share-url" title={publicUrl}>{publicUrl}</div>
-                    <div className="brochure-share-actions">
-                      <a className="btn btn-primary" style={{ fontSize: '0.8125rem' }} href={publicUrl} target="_blank" rel="noopener noreferrer">
-                        👁 Open listing
-                      </a>
-                    </div>
-                    <div className="brochure-share-hint">
-                      A dedicated listing page is in production — for now the public brochure doubles as the property's public face.
-                    </div>
-                  </div>
-                );
-              })()}
-            </>
-          )}
-
-          <SectionHeading>External listings</SectionHeading>
-          <div className="form-group"><label className="form-label">Booking URL</label><input type="url" className="form-input" value={form.booking_url} onChange={(e) => setForm({ ...form, booking_url: e.target.value })} placeholder="https://..." /></div>
-          <div className="form-group"><label className="form-label">Listing Links (JSON)</label><textarea className="form-input" rows={3} value={form.listing_links} onChange={(e) => setForm({ ...form, listing_links: e.target.value })} placeholder='[{"platform": "airbnb", "url": "https://..."}]' /></div>
-          </>)}
 
           {activeTab === 'proposals' && (<>
+          {/* Proposals tab sits OUTSIDE any fieldset — the + New Proposal,
+              Mark Booked and Cancel buttons are outcome actions, not edits
+              to the property record, so they remain clickable in view mode. */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
             <SectionHeading>Proposals for this property</SectionHeading>
             {!isNew && (
@@ -1216,7 +960,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                 type="button"
                 className="btn btn-primary"
                 style={{ fontSize: '0.75rem', flexShrink: 0 }}
-                onClick={() => setCreatingProposal(true)}
+                onClick={() => setProposalLauncherOpen(true)}
               >
                 + New Proposal
               </button>
@@ -1241,9 +985,35 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           )}
           </>)}
 
-        </fieldset>
+          {activeTab === 'bookings' && (<>
+          {/* Mirrors the Proposals tab — same heading + button + empty
+              state shape. + New Booking opens the shared BookingModal
+              (same one the Bookings calendar uses) pre-scoped to this
+              property. */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+            <SectionHeading>Bookings for this property</SectionHeading>
+            {!isNew && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ fontSize: '0.75rem', flexShrink: 0 }}
+                onClick={() => setEditingBooking({ property_id: property.id })}
+              >
+                + New Booking
+              </button>
+            )}
+          </div>
+          {isNew ? (
+            <div className="editor-tab-empty">Save this property first to start tracking bookings against it.</div>
+          ) : (
+            <div className="editor-tab-empty">
+              No bookings yet for this property. Use <strong>+ New Booking</strong> above to start one.
+            </div>
+          )}
+          </>)}
+
         </div>
-      </div>
+      </DetailModal>
 
       {selectedProposal && (
         <ProposalDetailModal
@@ -1276,11 +1046,21 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         />
       )}
 
-      {creatingProposal && (
-        <PricingModal
-          property={{ id: property.id, property_name: property.property_name }}
+      {proposalLauncherOpen && (
+        <NewProposalLauncher
+          onClose={() => { setProposalLauncherOpen(false); refetchProposals(); }}
+        />
+      )}
+
+      {editingBooking && (
+        <BookingModal
+          booking={editingBooking}
+          properties={[property]}
           supabase={supabase}
-          onClose={() => { setCreatingProposal(false); refetchProposals(); }}
+          user={user}
+          partnerId={partnerId}
+          onClose={() => setEditingBooking(null)}
+          onSave={() => setEditingBooking(null)}
         />
       )}
 
@@ -1301,58 +1081,195 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         />
       )}
 
-      {/* Unsaved changes confirm — only path out of the editor when the
-          form is dirty. Save persists then exits; Discard exits without
-          touching the DB; Cancel keeps the user in the editor. */}
-      {unsavedPrompt && (
-        <div className="modal-overlay" onClick={() => setUnsavedPrompt(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
-            <div className="modal-header">
-              <h2 className="modal-title">Unsaved changes</h2>
-              <button className="modal-close" onClick={() => setUnsavedPrompt(false)}>&times;</button>
-            </div>
-            <div className="modal-body" style={{ padding: 'var(--s-4)' }}>
-              <p style={{ margin: 0, fontSize: '0.875rem' }}>
-                You have changes that haven't been saved. Save them now, or
-                discard and leave the editor as it was?
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-danger"
-                onClick={() => { setUnsavedPrompt(false); onClose(); }}
-                disabled={saving}
-              >
-                Discard changes
-              </button>
-              <div style={{ flex: 1 }} />
-              <button className="btn btn-ghost" onClick={() => setUnsavedPrompt(false)} disabled={saving}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  await handleSave();
-                  setUnsavedPrompt(false);
-                  onClose();
-                }}
-                disabled={saving}
-              >
-                {saving ? 'Saving…' : 'Save & leave'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {sharingBrochure && (
+        <BrochureShareMenu
+          property={{
+            id: property.id,
+            slug: property.slug || form.slug,
+            property_name: form.property_name || property.property_name,
+            hero_image_url: property.hero_image_url || form.hero_image_url,
+            suburb: form.suburb,
+            city: form.city,
+          }}
+          onClose={() => setSharingBrochure(false)}
+        />
       )}
-
-    </div>
-  ), document.body);
+    </>
+  );
 }
 
 // ─── Proposals list (grouped by Pipeline stage) ─────────────────────────
 // Mirrors the Pipeline page so users can act on a proposal without leaving
 // the property editor. Stages match the Kanban column labels exactly so
 // the mental model is consistent.
+
+// ─── Links section ──────────────────────────────────────────────────────
+// Lives at the top of the Overview tab. Surfaces every URL associated with
+// the property in one logical place: publish status, public listing page,
+// brochure variants (branded / agent), external listing platform.
+//
+// New properties don't yet have a slug, so the share URLs can't be built.
+// In that case we show a friendly "save first" message instead of empty rows.
+
+/** Editable URL input with inline Copy / Open buttons. Used for the
+ *  external listing field where the user types the URL themselves. */
+function ExternalUrlInput({ value, disabled, onChange }: { value: string; disabled?: boolean; onChange: (v: string) => void }) {
+  const [copied, setCopied] = useState(false);
+  const trimmed = (value || '').trim();
+  const isValid = /^https?:\/\//i.test(trimmed);
+  async function copy() {
+    if (!trimmed) return;
+    try { await navigator.clipboard.writeText(trimmed); }
+    catch { /* clipboard blocked — silently no-op */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <div className="property-url-input-row">
+      <input
+        type="url"
+        className="form-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="https://..."
+        disabled={disabled}
+      />
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={copy}
+        disabled={!trimmed}
+        title={trimmed ? 'Copy this URL' : 'Add a URL to copy'}
+      >
+        {copied ? '✓ Copied' : '🔗 Copy'}
+      </button>
+      {isValid ? (
+        <a
+          className="btn btn-ghost"
+          href={trimmed}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open this URL in a new tab"
+        >
+          👁 Open
+        </a>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled
+          title={trimmed ? 'Enter a full URL starting with https://' : 'Add a URL to open'}
+        >
+          👁 Open
+        </button>
+      )}
+    </div>
+  );
+}
+
+function LinkRow({ label, hint, url, disabled }: { label: string; hint?: string; url?: string; disabled?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    if (!url) return;
+    try { await navigator.clipboard.writeText(url); }
+    catch { /* clipboard blocked — silently no-op */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <div className={`property-link-row${disabled ? ' is-disabled' : ''}`}>
+      <div className="property-link-meta">
+        <span className="property-link-label">{label}</span>
+        {hint && <span className="property-link-hint">{hint}</span>}
+      </div>
+      <div className="property-link-actions">
+        {disabled || !url ? (
+          <span className="property-link-pending">Not yet available</span>
+        ) : (
+          <>
+            <button type="button" className="btn btn-ghost" onClick={copy} title={`Copy ${label.toLowerCase()} link`}>
+              {copied ? '✓ Copied' : '🔗 Copy link'}
+            </button>
+            <a className="btn btn-ghost" href={url} target="_blank" rel="noopener noreferrer" title={`Open ${label.toLowerCase()} in a new tab`}>
+              👁 Open
+            </a>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PropertyLinksSection({
+  property, form, isNew, viewOnly, onPublishChange, onBookingUrlChange, onShare,
+}: {
+  property: any;
+  form: any;
+  isNew: boolean;
+  viewOnly: boolean;
+  onPublishChange: (checked: boolean) => void;
+  onBookingUrlChange: (value: string) => void;
+  onShare: () => void;
+}) {
+  const canShare = !isNew && !form.is_archived;
+
+  return (
+    <div className="property-links">
+      {!form.is_archived && (
+        <div className="property-links-toprow">
+          <label className="editor-toggle">
+            <input
+              type="checkbox"
+              checked={!!form.is_published}
+              onChange={(e) => onPublishChange(e.target.checked)}
+              disabled={viewOnly}
+            />
+            <span className="editor-toggle-track"><span className="editor-toggle-thumb" /></span>
+            <span className="editor-toggle-label">
+              {form.is_published
+                ? 'Active — visible to guests on the public site and shareable brochures'
+                : 'Inactive — hidden from guests but kept in your inventory. Flip back on any time'}
+            </span>
+          </label>
+          {canShare && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onShare}
+              title="Share this property's brochure (branded or agent variant)"
+            >
+              📤 Share brochure
+            </button>
+          )}
+        </div>
+      )}
+
+      {isNew ? (
+        <div className="editor-tab-empty">
+          Save this property first. The listing URL is generated automatically once the property exists in the database.
+        </div>
+      ) : (
+        <LinkRow
+          label="Southern Escapes public listing page"
+          hint="Coming soon"
+          disabled
+        />
+      )}
+
+      <div className="form-group" style={{ marginTop: '14px', marginBottom: 0 }}>
+        <label className="form-label">External listing URL</label>
+        <ExternalUrlInput
+          value={form.booking_url}
+          disabled={viewOnly}
+          onChange={onBookingUrlChange}
+        />
+        <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+          Where this property is listed externally (Airbnb, Booking.com, etc). One link for now — multi-platform support is coming.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const PROPERTY_PROPOSAL_STAGES = [
   { key: 'quoted',     label: 'Proposal created', tone: 'draft' },

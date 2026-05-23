@@ -3128,6 +3128,27 @@ select.form-input { cursor: pointer; }
   .detail-modal-footer-hint { order: 99; text-align: center; }
 }
 
+/* When the tab nav lives inside a DetailModal body (Property modal),
+   the body padding already handles the side margin so the inner tab
+   rail doesn't need its own constraint. */
+.detail-modal-body .page-editor-tabs {
+  margin: -16px -20px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.detail-modal-body .page-editor-tabs-inner {
+  max-width: none;
+  padding: 6px 20px 0;
+  margin: 0;
+}
+/* Property form card no longer needs page-editor's outer padding /
+   centring when it sits inside the standard detail-modal body. */
+.detail-modal-body .page-editor-card {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+
 /* ================================================================
    Bookings board — property rows on Y, time on X. Bars sit at the
    booked dates on each property's row. Horizontal scroll for the
@@ -3976,6 +3997,91 @@ select.form-input { cursor: pointer; }
 }
 .brochure-share-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .brochure-share-hint { font-size: 0.75rem; color: var(--text-light); }
+
+/* Property Links section — top of the Overview tab. Tight single-row
+   per link: label + short hint on the left, Copy + Open buttons on the
+   right. URL string itself isn't shown — the buttons are the action. */
+.property-links { display: flex; flex-direction: column; gap: 6px; }
+/* Publish-toggle row also hosts the primary "Share brochure" CTA so the
+   user has one obvious place to start sharing from inside the editor. */
+.property-links-toprow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.property-link-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+.property-link-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.property-link-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.property-link-hint {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+}
+.property-link-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.property-link-actions .btn {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+}
+.property-link-row.is-disabled { opacity: 0.7; }
+/* Editable URL input + inline Copy / Open buttons. Used for the external
+   listing field where the user types the URL themselves. Matches the
+   button language of LinkRow so the section feels coherent. */
+.property-url-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.property-url-input-row .form-input { flex: 1; min-width: 0; }
+.property-url-input-row .btn {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+@media (max-width: 540px) {
+  .property-url-input-row { flex-wrap: wrap; }
+  .property-url-input-row .form-input { flex-basis: 100%; }
+}
+.property-link-pending {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--border-light);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+@media (max-width: 540px) {
+  .property-link-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .property-link-actions { justify-content: flex-end; }
+}
 
 /* ===== Toast notifications ===== */
 .toast-stack {
