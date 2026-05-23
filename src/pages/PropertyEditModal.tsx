@@ -622,9 +622,21 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         </button>
         <h2 className="page-editor-title">
           {isNew ? 'New property' : form.property_name || 'Edit property'}
+          {/* Mode badges — match the language used in the shared
+              <DetailModal>. Three states: viewing, editing-clean, unsaved. */}
           {viewOnly && (
-            <span className="page-editor-viewonly-badge" title="View-only — click Edit to make changes">
-              👁 View only
+            <span className="page-editor-viewonly-badge" title="View only — click Edit to make changes">
+              👁 Viewing
+            </span>
+          )}
+          {!viewOnly && !isDirty && !saving && !isNew && (
+            <span className="page-editor-viewonly-badge" title="Edit mode — no unsaved changes">
+              ✏ Editing
+            </span>
+          )}
+          {!viewOnly && isDirty && !saving && (
+            <span className="page-editor-unsaved-badge" title="You have unsaved changes">
+              ● Unsaved
             </span>
           )}
         </h2>
@@ -638,7 +650,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               onClick={() => setMode('edit')}
               title="Switch to edit mode"
             >
-              ✏️ Edit
+              ✏ Edit
             </button>
           ) : (<>
           {!isNew && (
@@ -671,13 +683,28 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               </button>
             )
           )}
-          {isDirty && !saving && (
-            <span className="page-editor-unsaved-badge" title="You have unsaved changes">
-              ● Unsaved
-            </span>
+          {!isNew && (
+            // Cancel: discard pending edits and flip back to view mode.
+            // Hidden on new-property creation (there's no view mode to
+            // flip back to; the Back arrow handles "abandon this draft").
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                if (isDirty) {
+                  const ok = window.confirm('You have unsaved changes. Discard them?');
+                  if (!ok) return;
+                }
+                if (initialFormRef.current) setForm(initialFormRef.current);
+                setMode('view');
+              }}
+              disabled={saving}
+              title="Discard changes and return to view mode"
+            >
+              Cancel
+            </button>
           )}
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : (isDirty ? 'Save changes' : 'Save')}
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || (!isDirty && !isNew)}>
+            {saving ? 'Saving…' : 'Save'}
           </button>
           </>)}
         </div>
