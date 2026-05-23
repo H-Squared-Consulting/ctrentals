@@ -12,7 +12,13 @@
  */
 
 import { useState } from 'react';
+import ActionModal from './ActionModal';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 export interface SendableProposal {
   id: string;
@@ -85,74 +91,70 @@ export default function SendProposalDialog({ proposal, supabase, onClose, onSent
   const hasEmail = !!proposal.guest_email;
   const hasContact = hasPhone || hasEmail;
 
+  const propertyName = titleCase(proposal.property_name);
+  const guestName = titleCase(proposal.guest_name);
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">Send Proposal</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        <div className="modal-body">
-          <div style={{ padding: '10px 14px', background: 'var(--border-light)', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.8125rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Property</span>
-              <strong>{proposal.property_name}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Recipient</span>
-              <span>{proposal.guest_name}{proposal.is_agent ? ' (agent)' : ''}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              <span>Ref</span>
-              <span style={{ fontFamily: 'monospace' }}>{proposal.ref_code}</span>
-            </div>
+    <ActionModal
+      title="Send proposal"
+      subtitle={`To ${guestName}${proposal.is_agent ? ' (agent)' : ''}`}
+      width={520}
+      summary={
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span className="form-label" style={{ margin: 0 }}>Property</span>
+            <strong>{propertyName}</strong>
           </div>
-
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-            Pick how to send the proposal link. The proposal will be marked as Sent once shared.
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {hasPhone && (
-              <button
-                className="btn btn-outline"
-                style={{ color: '#25D366', borderColor: '#25D366', justifyContent: 'flex-start' }}
-                onClick={sendWhatsApp}
-                disabled={marking}
-              >
-                📱 Send via WhatsApp
-              </button>
-            )}
-            {hasEmail && (
-              <button
-                className="btn btn-outline"
-                style={{ justifyContent: 'flex-start' }}
-                onClick={sendEmail}
-                disabled={marking}
-              >
-                ✉ Send via Email
-              </button>
-            )}
-            <button
-              className="btn btn-outline"
-              style={{ justifyContent: 'flex-start' }}
-              onClick={copyAndMark}
-              disabled={marking}
-            >
-              {copied ? '✓ Link copied to clipboard' : '🔗 Copy link & mark sent'}
-            </button>
-            {!hasContact && (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', padding: '8px 4px 0', borderTop: '1px dashed var(--border)' }}>
-                No email or phone on file — add contact details to send via WhatsApp or Email next time.
-              </div>
-            )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span className="form-label" style={{ margin: 0 }}>Recipient</span>
+            <span style={{ fontWeight: 500 }}>{guestName}</span>
           </div>
-        </div>
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-secondary" onClick={onClose} disabled={marking}>Cancel</button>
-        </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+            <span className="form-label" style={{ margin: 0 }}>Ref</span>
+            <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{proposal.ref_code}</span>
+          </div>
+        </>
+      }
+      onClose={onClose}
+    >
+      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+        Pick how to send the proposal link. The proposal will be marked as Sent once shared.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {hasPhone && (
+          <button
+            className="btn btn-outline"
+            style={{ color: '#25D366', borderColor: '#25D366', justifyContent: 'flex-start' }}
+            onClick={sendWhatsApp}
+            disabled={marking}
+          >
+            📱 Send via WhatsApp
+          </button>
+        )}
+        {hasEmail && (
+          <button
+            className="btn btn-outline"
+            style={{ justifyContent: 'flex-start' }}
+            onClick={sendEmail}
+            disabled={marking}
+          >
+            ✉ Send via Email
+          </button>
+        )}
+        <button
+          className="btn btn-outline"
+          style={{ justifyContent: 'flex-start' }}
+          onClick={copyAndMark}
+          disabled={marking}
+        >
+          {copied ? '✓ Link copied to clipboard' : '🔗 Copy link & mark sent'}
+        </button>
+        {!hasContact && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '8px 4px 0', borderTop: '1px dashed var(--border)' }}>
+            No email or phone on file. Add contact details to send via WhatsApp or Email next time.
+          </div>
+        )}
       </div>
-    </div>
+    </ActionModal>
   );
 }

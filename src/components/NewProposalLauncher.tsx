@@ -13,11 +13,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import ActionModal from './ActionModal';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { SkeletonRows } from './Skeleton';
 import EmptyState from './EmptyState';
 import PricingModal from '../pages/PricingModal';
 import type { EnquiryPrefill } from './CreateProposalModal';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 interface Property {
   id: string;
@@ -95,61 +101,54 @@ export default function NewProposalLauncher({ onClose, enquiryPrefill }: Props) 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '720px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
-      >
-        <div className="modal-header">
-          <h2 className="modal-title">New Proposal — pick a property</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
+    <ActionModal
+      title="New proposal"
+      subtitle="Pick a property to start the proposal"
+      width={720}
+      hideCancel
+      onClose={onClose}
+    >
+      <input
+        type="search"
+        className="form-input"
+        placeholder="Search properties by name or suburb…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        autoFocus
+        style={{ marginBottom: 12 }}
+      />
 
-        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
-          <input
-            type="search"
-            className="form-input"
-            placeholder="Search properties by name or suburb…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            style={{ marginBottom: '12px' }}
-          />
-
-          {loading ? (
-            <SkeletonRows count={5} />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon="🏠"
-              title={search ? 'No properties match' : 'No active properties'}
-              description={search ? 'Try a different search term.' : 'Publish a property first.'}
-            />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {filtered.map(p => (
-                <button
-                  key={p.id}
-                  className="prop-select-row prop-select-row--active"
-                  onClick={() => setSelected(p)}
-                  style={{ textAlign: 'left', border: '1px solid var(--border)', background: 'var(--bg)', cursor: 'pointer' }}
-                >
-                  {p.hero_image_url && (
-                    <img src={p.hero_image_url} alt="" className="prop-select-thumb" />
-                  )}
-                  <div className="prop-select-info">
-                    <span className="prop-select-name">{p.property_name}</span>
-                    <span className="prop-select-meta">
-                      {p.bedrooms ? `${p.bedrooms} bed` : ''}{p.suburb ? ` · ${p.suburb}` : ''}{p.city && p.city !== p.suburb ? `, ${p.city}` : ''}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-light)', alignSelf: 'center' }}>→</span>
-                </button>
-              ))}
-            </div>
-          )}
+      {loading ? (
+        <SkeletonRows count={5} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon="🏠"
+          title={search ? 'No properties match' : 'No active properties'}
+          description={search ? 'Try a different search term.' : 'Publish a property first.'}
+        />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filtered.map(p => (
+            <button
+              key={p.id}
+              className="prop-select-row prop-select-row--active"
+              onClick={() => setSelected(p)}
+              style={{ textAlign: 'left', border: '1px solid var(--border)', background: 'var(--bg)', cursor: 'pointer' }}
+            >
+              {p.hero_image_url && (
+                <img src={p.hero_image_url} alt="" className="prop-select-thumb" />
+              )}
+              <div className="prop-select-info">
+                <span className="prop-select-name">{titleCase(p.property_name)}</span>
+                <span className="prop-select-meta">
+                  {p.bedrooms ? `${p.bedrooms} bed` : ''}{p.suburb ? ` · ${titleCase(p.suburb)}` : ''}{p.city && p.city !== p.suburb ? `, ${titleCase(p.city)}` : ''}
+                </span>
+              </div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-light)', alignSelf: 'center' }}>→</span>
+            </button>
+          ))}
         </div>
-      </div>
-    </div>
+      )}
+    </ActionModal>
   );
 }

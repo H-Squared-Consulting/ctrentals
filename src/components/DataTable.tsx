@@ -250,72 +250,77 @@ function DataTable({
 
       {description && <div className="datatable-description">{description}</div>}
 
-      {/* Toolbar */}
-      <div className="list-toolbar">
-        <div className="list-toolbar-left">
-          {selectable && paginatedData.length > 0 && (
-            <label className="list-select-all">
-              <input type="checkbox" checked={isAllSelected} onChange={handleSelectAll} />
-              Select All
-            </label>
-          )}
+      {/* Toolbar — only render when there's actually something inside it.
+       * Callers (like the Ops pages) wrap the table in their own toolbar
+       * and pass searchable=false, no filters, no headerActions: in that
+       * case the internal toolbar would render as an empty white strip. */}
+      {(searchable || filters.length > 0 || selectable || headerActions) && (
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
+            {selectable && paginatedData.length > 0 && (
+              <label className="list-select-all">
+                <input type="checkbox" checked={isAllSelected} onChange={handleSelectAll} />
+                Select All
+              </label>
+            )}
 
-          {searchable && (
-            <div className="list-search">
-              <span className="list-search-icon">🔍</span>
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>
+            {searchable && (
+              <div className="list-search">
+                <span className="list-search-icon">🔍</span>
+                <input
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>
+                )}
+              </div>
+            )}
+
+            {filters.length > 0 && (
+              <button className="list-filter-toggle" onClick={() => setFiltersExpanded(!filtersExpanded)}>
+                <span>⚙</span>
+                <span>Filters</span>
+                {activeFilterCount > 0 && <span className="list-filter-badge">{activeFilterCount}</span>}
+                <span className="list-filter-arrow">{filtersExpanded ? '▲' : '▼'}</span>
+              </button>
+            )}
+
+            <div className="list-filters-inline">
+              {filters.map(filter => (
+                <select
+                  key={filter.key}
+                  className="list-filter"
+                  value={filterValues[filter.key] || 'all'}
+                  onChange={(e) => handleFilterChange(filter.key, e.target.value)}
+                >
+                  <option value="all">{filter.label}: All</option>
+                  {filter.options.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              ))}
+            </div>
+          </div>
+
+          {headerActions && (
+            <div className="list-toolbar-right">
+              {(typeof headerActions === 'object' && ('primary' in (headerActions as HeaderActions) || 'secondary' in (headerActions as HeaderActions) || 'onSync' in (headerActions as HeaderActions) || 'overflow' in (headerActions as HeaderActions))) ? (
+                <ToolbarActions
+                  primary={(headerActions as HeaderActions).primary}
+                  secondary={(headerActions as HeaderActions).secondary}
+                  onSync={(headerActions as HeaderActions).onSync}
+                  overflow={(headerActions as HeaderActions).overflow}
+                />
+              ) : (
+                headerActions as ReactNode
               )}
             </div>
           )}
-
-          {filters.length > 0 && (
-            <button className="list-filter-toggle" onClick={() => setFiltersExpanded(!filtersExpanded)}>
-              <span>⚙</span>
-              <span>Filters</span>
-              {activeFilterCount > 0 && <span className="list-filter-badge">{activeFilterCount}</span>}
-              <span className="list-filter-arrow">{filtersExpanded ? '▲' : '▼'}</span>
-            </button>
-          )}
-
-          <div className="list-filters-inline">
-            {filters.map(filter => (
-              <select
-                key={filter.key}
-                className="list-filter"
-                value={filterValues[filter.key] || 'all'}
-                onChange={(e) => handleFilterChange(filter.key, e.target.value)}
-              >
-                <option value="all">{filter.label}: All</option>
-                {filter.options.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            ))}
-          </div>
         </div>
-
-        {headerActions && (
-          <div className="list-toolbar-right">
-            {(typeof headerActions === 'object' && ('primary' in (headerActions as HeaderActions) || 'secondary' in (headerActions as HeaderActions) || 'onSync' in (headerActions as HeaderActions) || 'overflow' in (headerActions as HeaderActions))) ? (
-              <ToolbarActions
-                primary={(headerActions as HeaderActions).primary}
-                secondary={(headerActions as HeaderActions).secondary}
-                onSync={(headerActions as HeaderActions).onSync}
-                overflow={(headerActions as HeaderActions).overflow}
-              />
-            ) : (
-              headerActions as ReactNode
-            )}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Mobile: Expandable filters */}
       {filters.length > 0 && (
@@ -336,20 +341,23 @@ function DataTable({
         </div>
       )}
 
-      {/* Results bar */}
-      <div className="results-bar">
-        {resultsBarContent || (
-          <>
-            {sortedData.length} of {data.length} items
-            {searchQuery && ` matching "${searchQuery}"`}
-            {selectable && selectedIds.size > 0 && (
-              <span style={{ marginLeft: '1rem', fontWeight: 600, color: 'var(--color-primary)' }}>
-                | {selectedIds.size} selected
-              </span>
-            )}
-          </>
-        )}
-      </div>
+      {/* Results bar — same suppression rule: don't render if the caller
+       * has explicitly opted out (resultsBarContent === null). */}
+      {resultsBarContent !== null && (
+        <div className="results-bar">
+          {resultsBarContent || (
+            <>
+              {sortedData.length} of {data.length} items
+              {searchQuery && ` matching "${searchQuery}"`}
+              {selectable && selectedIds.size > 0 && (
+                <span style={{ marginLeft: '1rem', fontWeight: 600, color: 'var(--color-primary)' }}>
+                  | {selectedIds.size} selected
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       {paginatedData.length === 0 ? (

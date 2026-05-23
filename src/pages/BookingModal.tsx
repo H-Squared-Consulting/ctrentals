@@ -1,20 +1,81 @@
+/**
+ * BookingModal -- Create / view / edit a booking.
+ *
+ * Standard Tier A modal built on <DetailModal>. View mode by default
+ * (fields locked); ✏ Edit flips to edit mode. Status transitions
+ * (Mark Checked In / Mark Checked Out / Mark Cancelled) live as
+ * outcome buttons in the footer and work in both modes, same pattern
+ * as the Deal modal's Mark Booked / Mark Lost.
+ *
+ * Replaces the legacy inline status-flip popover that used to live on
+ * BookingCalendarPage — all status changes now route through here.
+ */
+
 /* eslint-disable */
 // @ts-nocheck
-/**
- * BookingModal -- Create / edit a booking
- */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import DateInput from '../components/DateInput';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 
-export default function BookingModal({ booking, properties, onClose, onSave, supabase, user, partnerId }) {
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
+
+/** Map a booking status (pre- or post-migration) to a status-pill variant. */
+function statusPillKey(status: string): string {
+  switch (status) {
+    case 'tentative':   return 'ready';      // amber
+    case 'confirmed':   return 'sent';       // blue
+    case 'in_stay':
+    case 'checked_in':  return 'interested'; // green
+    case 'completed':
+    case 'checked_out': return 'won';        // dark green
+    case 'cancelled':   return 'declined';   // grey
+    default:            return 'drafting';
+  }
+}
+
+/** Human-readable label for the current status. */
+function statusLabel(status: string): string {
+  const opt = BOOKING_STATUS_OPTIONS.find((o: any) => o.value === status);
+  return opt?.label || titleCase(status);
+}
+
+/** Accent strip colour for the modal top-edge. */
+function statusAccent(status: string): string {
+  switch (status) {
+    case 'tentative':   return 'var(--warning)';
+    case 'confirmed':   return 'var(--info)';
+    case 'in_stay':
+    case 'checked_in':  return 'var(--success)';
+    case 'completed':
+    case 'checked_out': return 'var(--color-primary)';
+    case 'cancelled':   return 'var(--text-light)';
+    default:            return 'var(--text-light)';
+  }
+}
+
+export default function BookingModal({
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode,
+}: {
+  booking: any;
+  properties: any[];
+  onClose: () => void;
+  onSave: (enquiryId?: string) => void | Promise<void>;
+  supabase: any;
+  user: any;
+  partnerId: string;
+  initialMode?: 'view' | 'edit';
+}) {
   const toast = useToast();
   const isNew = !booking.id;
   const isFromEnquiry = !!booking._fromEnquiry;
 
-  const [form, setForm] = useState({
+  const initialForm = useMemo(() => ({
     property_id: booking.property_id || '',
     guest_id: booking.guest_id || '',
     guest_name: booking.guest_name || '',
@@ -35,13 +96,15 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
     extras: booking.extras || '',
     notes: booking.notes || '',
     status: booking.status || 'confirmed',
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [booking.id]);
 
+  const [form, setForm] = useState(initialForm);
+  const [mode, setMode] = useState<'view' | 'edit'>(initialMode || (isNew ? 'edit' : 'view'));
   const [saving, setSaving] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Guests for the picker. Loaded once on mount; the modal is short-lived
-  // so we don't bother subscribing to updates.
+
+  // Guests for the picker. Loaded once on mount.
   const [guestOptions, setGuestOptions] = useState<any[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -56,13 +119,13 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
     return () => { cancelled = true; };
   }, [supabase, partnerId]);
 
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  const isCancelled = form.status === 'cancelled';
+
   function pickGuest(id: string) {
     if (!id) { setForm(f => ({ ...f, guest_id: '' })); return; }
     const g = guestOptions.find((x: any) => x.id === id);
     if (!g) return;
-    // Autofill the guest fields from the CRM record so the booking shows
-    // the right name even if the CRM record is later edited; we still
-    // store the FK so the link survives changes.
     setForm(f => ({
       ...f,
       guest_id: g.id,
@@ -73,7 +136,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
     }));
   }
 
-  async function handleSave() {
+  async function save() {
     if (!form.guest_name.trim()) { toast.error('Guest name is required'); return; }
     if (!form.property_id) { toast.error('Please select a property'); return; }
     if (!form.check_in || !form.check_out) { toast.error('Check-in and check-out dates are required'); return; }
@@ -81,7 +144,7 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
 
     setSaving(true);
     try {
-      const payload = {
+      const payload: any = {
         partner_id: partnerId,
         property_id: form.property_id,
         enquiry_id: booking.enquiry_id || null,
@@ -111,14 +174,16 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
         payload.created_by = user?.id || null;
         const { error } = await supabase.from('bookings').insert(payload);
         if (error) throw error;
+        toast.success('Booking created');
       } else {
         const { error } = await supabase.from('bookings').update(payload).eq('id', booking.id);
         if (error) throw error;
+        toast.success('Booking updated');
+        setMode('view');
       }
 
-      // Pass enquiry_id back so the parent can update enquiry status
       if (onSave) await onSave(isFromEnquiry ? booking.enquiry_id : undefined);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving booking:', err);
       toast.error('Failed to save: ' + err.message);
     } finally {
@@ -126,13 +191,40 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
     }
   }
 
+  /** Flip the booking status without going through the full save flow.
+   *  Persists immediately so the user sees the column / pill update. */
+  async function flipStatus(next: string) {
+    if (!booking.id) {
+      // For new bookings, just update the form — actual save happens on Save.
+      setForm(f => ({ ...f, status: next }));
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: next, updated_at: new Date().toISOString() })
+        .eq('id', booking.id);
+      if (error) throw error;
+      setForm(f => ({ ...f, status: next }));
+      toast.success(`Booking marked ${statusLabel(next)}`);
+      if (onSave) await onSave();
+    } catch (err: any) {
+      toast.error('Failed to update: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDelete() {
+    if (!confirm('Delete this booking? This cannot be undone.')) return;
     setDeleting(true);
     try {
       const { error } = await supabase.from('bookings').delete().eq('id', booking.id);
       if (error) throw error;
+      toast.success('Booking deleted');
       if (onSave) await onSave();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting booking:', err);
       toast.error('Failed to delete: ' + err.message);
     } finally {
@@ -140,172 +232,360 @@ export default function BookingModal({ booking, properties, onClose, onSave, sup
     }
   }
 
-  const SectionHeading = ({ children }) => (
-    <h3 style={{ margin: '1.5rem 0 0.75rem', fontSize: '0.875rem', fontWeight: 600, textTransform: 'uppercase', color: '#6B7280', letterSpacing: '0.05em' }}>
-      {children}
-    </h3>
+  const propertyName = properties.find(p => p.id === form.property_id)?.property_name || '';
+  const propertySlug = properties.find(p => p.id === form.property_id)?.slug || '';
+  const title = isNew
+    ? (isFromEnquiry ? 'Convert enquiry to booking' : 'New booking')
+    : titleCase(form.guest_name) || 'Booking';
+
+  const subtitle = isNew ? (
+    isFromEnquiry ? 'Guest details pre-filled from the enquiry' : 'Direct booking'
+  ) : (
+    <>
+      <span className={`ops-status-pill ops-status-pill--${statusPillKey(form.status)}`}>
+        <span className="ops-status-pill-dot" />
+        {statusLabel(form.status)}
+      </span>
+      {propertyName && <span>· {titleCase(propertyName)}</span>}
+      {propertySlug && <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{propertySlug}</span>}
+      {form.check_in && form.check_out && (
+        <span>· {form.check_in} to {form.check_out}</span>
+      )}
+    </>
   );
 
+  // Footer outcome buttons depend on current status.
+  // Treat both pre-migration (checked_in / checked_out / tentative) and
+  // post-migration (in_stay / completed) values as equivalent.
+  const isStayed = form.status === 'in_stay' || form.status === 'checked_in';
+  const isFinished = form.status === 'completed' || form.status === 'checked_out';
+  const canCheckIn = !isStayed && !isFinished && !isCancelled && !isNew;
+  const canCheckOut = isStayed && !isCancelled && !isNew;
+  const canCancel = !isCancelled && !isFinished && !isNew;
+  const canReopen = (isCancelled || isFinished) && !isNew;
+
+  const footerActions = isNew ? null : (
+    <>
+      {canCheckIn && (
+        <button
+          className="btn btn-outline-success"
+          onClick={() => flipStatus('in_stay')}
+          disabled={saving}
+          title="Guest has checked in"
+        >
+          🔑 Mark Checked In
+        </button>
+      )}
+      {canCheckOut && (
+        <button
+          className="btn btn-outline-success"
+          onClick={() => flipStatus('completed')}
+          disabled={saving}
+          title="Guest has checked out"
+        >
+          ✓ Mark Checked Out
+        </button>
+      )}
+      {canCancel && (
+        <button
+          className="btn btn-outline-danger"
+          onClick={() => flipStatus('cancelled')}
+          disabled={saving}
+          title="Cancel this booking"
+        >
+          ✕ Cancel booking
+        </button>
+      )}
+      {canReopen && (
+        <button
+          className="btn btn-ghost"
+          onClick={() => flipStatus('confirmed')}
+          disabled={saving}
+          title="Reopen this booking"
+        >
+          ↺ Reopen
+        </button>
+      )}
+      <button
+        className="btn btn-outline-danger"
+        onClick={handleDelete}
+        disabled={deleting}
+      >
+        {deleting ? 'Deleting…' : 'Delete'}
+      </button>
+    </>
+  );
+
+  const fieldsDisabled = mode === 'view';
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {isNew ? (isFromEnquiry ? 'Convert Enquiry to Booking' : 'New Booking') : 'Edit Booking'}
-          </h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
+    <DetailModal
+      title={title}
+      subtitle={subtitle}
+      accentColour={statusAccent(form.status)}
+      mode={mode}
+      onModeChange={setMode}
+      canEdit={!isCancelled}
+      isDirty={isDirty}
+      onSave={save}
+      onCancel={() => { setForm(initialForm); setMode('view'); }}
+      footerActions={footerActions}
+      footerHint={
+        mode === 'edit'
+          ? <>Editing booking details. <strong>Save</strong> to keep changes.</>
+          : <>Click <strong>Edit</strong> to change booking details. Status buttons work in either mode.</>
+      }
+      onClose={onClose}
+    >
+      {isFromEnquiry && (
+        <div className="detail-modal-banner detail-modal-banner--success">
+          Converting from enquiry. Guest details have been pre-filled. Select a property and confirm dates.
         </div>
+      )}
 
-        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          {isFromEnquiry && (
-            <div style={{ padding: '0.75rem', background: '#DBEAFE', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.8125rem', color: '#1E40AF' }}>
-              Converting from enquiry. Guest details have been pre-filled. Select a property and confirm.
-            </div>
-          )}
-
-          <SectionHeading>Property & Dates</SectionHeading>
+      <DetailModalSection heading="Stay & property">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
           <div className="form-group">
             <label className="form-label">Property *</label>
-            <select className="form-input" value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value })}>
-              <option value="">-- Select property --</option>
-              {properties.map((p) => (
-                <option key={p.id} value={p.id}>{p.property_name}{p.bedrooms ? ` (${p.bedrooms} bed)` : ''}{p.suburb ? ` — ${p.suburb}` : ''}</option>
+            <select
+              className="form-input"
+              value={form.property_id}
+              onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+            >
+              <option value="">Select a property…</option>
+              {properties.map((p: any) => (
+                <option key={p.id} value={p.id}>
+                  {titleCase(p.property_name)}{p.bedrooms ? ` (${p.bedrooms} bed)` : ''}{p.suburb ? ` · ${titleCase(p.suburb)}` : ''}
+                </option>
               ))}
             </select>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Check In *</label>
-              <DateInput className="form-input" value={form.check_in} onChange={(v) => setForm({ ...form, check_in: v })} placeholder="e.g. 27 Mar 2026" />
+              <label className="form-label">Check in *</label>
+              <DateInput
+                className="form-input"
+                value={form.check_in}
+                onChange={(v) => setForm({ ...form, check_in: v })}
+                placeholder="e.g. 27 Mar 2026"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">Check Out *</label>
-              <DateInput className="form-input" value={form.check_out} onChange={(v) => setForm({ ...form, check_out: v })} placeholder="e.g. 3 Apr 2026" />
+              <label className="form-label">Check out *</label>
+              <DateInput
+                className="form-input"
+                value={form.check_out}
+                onChange={(v) => setForm({ ...form, check_out: v })}
+                placeholder="e.g. 3 Apr 2026"
+              />
             </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">Status</label>
-              <select className="form-input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                {BOOKING_STATUS_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              <select
+                className="form-input"
+                value={form.status}
+                onChange={(e) => setForm({ ...form, status: e.target.value })}
+              >
+                {BOOKING_STATUS_OPTIONS.map((o: any) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
             <div className="form-group">
               <label className="form-label">Platform</label>
-              <select className="form-input" value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
-                <option value="">-- Select --</option>
-                {PLATFORM_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              <select
+                className="form-input"
+                value={form.platform}
+                onChange={(e) => setForm({ ...form, platform: e.target.value })}
+              >
+                <option value="">Direct / unspecified</option>
+                {PLATFORM_OPTIONS.map((o: any) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
           </div>
+        </fieldset>
+      </DetailModalSection>
 
-          <SectionHeading>Guest Details</SectionHeading>
+      <DetailModalSection heading="Guest">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
           <div className="form-group">
-            <label className="form-label">Guest (from CRM)</label>
+            <label className="form-label">Linked CRM guest</label>
             <select className="form-input" value={form.guest_id} onChange={(e) => pickGuest(e.target.value)}>
               <option value="">— Not linked / one-off guest —</option>
               {guestOptions.map((g: any) => (
                 <option key={g.id} value={g.id}>
-                  {g.name}{g.email ? ` · ${g.email}` : ''}
+                  {titleCase(g.name)}{g.email ? ` · ${g.email.toLowerCase()}` : ''}
                 </option>
               ))}
             </select>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 4 }}>
-              Link a CRM guest so this stay shows up in their record. Leave unlinked for walk-ins; add them in CRM &rarr; Guests later.
+            <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', marginTop: 4 }}>
+              Link a CRM guest so this stay shows up in their record. Leave unlinked for walk-ins.
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Guest Name *</label>
-              <input type="text" className="form-input" value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value, guest_id: '' })} placeholder="Full name" />
+              <label className="form-label">Guest name *</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.guest_name}
+                onChange={(e) => setForm({ ...form, guest_name: e.target.value, guest_id: '' })}
+                placeholder="Full name"
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Nationality</label>
-              <input type="text" className="form-input" value={form.guest_nationality} onChange={(e) => setForm({ ...form, guest_nationality: e.target.value })} />
+              <input
+                type="text"
+                className="form-input"
+                value={form.guest_nationality}
+                onChange={(e) => setForm({ ...form, guest_nationality: e.target.value })}
+              />
             </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">Email</label>
-              <input type="email" className="form-input" value={form.guest_email} onChange={(e) => setForm({ ...form, guest_email: e.target.value })} />
+              <input
+                type="email"
+                className="form-input"
+                value={form.guest_email}
+                onChange={(e) => setForm({ ...form, guest_email: e.target.value })}
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Phone</label>
-              <input type="tel" className="form-input" value={form.guest_phone} onChange={(e) => setForm({ ...form, guest_phone: e.target.value })} />
+              <input
+                type="tel"
+                className="form-input"
+                value={form.guest_phone}
+                onChange={(e) => setForm({ ...form, guest_phone: e.target.value })}
+              />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Total Guests</label>
-              <input type="number" className="form-input" value={form.guests_total} onChange={(e) => setForm({ ...form, guests_total: e.target.value })} min={1} />
+              <label className="form-label">Total guests</label>
+              <input
+                type="number"
+                className="form-input"
+                value={form.guests_total}
+                onChange={(e) => setForm({ ...form, guests_total: e.target.value })}
+                min={1}
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Adults</label>
-              <input type="number" className="form-input" value={form.guests_adults} onChange={(e) => setForm({ ...form, guests_adults: e.target.value })} min={0} />
+              <input
+                type="number"
+                className="form-input"
+                value={form.guests_adults}
+                onChange={(e) => setForm({ ...form, guests_adults: e.target.value })}
+                min={0}
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Children</label>
-              <input type="number" className="form-input" value={form.guests_children} onChange={(e) => setForm({ ...form, guests_children: e.target.value })} min={0} />
+              <input
+                type="number"
+                className="form-input"
+                value={form.guests_children}
+                onChange={(e) => setForm({ ...form, guests_children: e.target.value })}
+                min={0}
+              />
             </div>
           </div>
+        </fieldset>
+      </DetailModalSection>
 
-          <SectionHeading>Financial</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+      <DetailModalSection heading="Financial">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Total Amount</label>
-              <input type="number" className="form-input" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} min={0} step="0.01" />
+              <label className="form-label">Total amount</label>
+              <input
+                type="number"
+                className="form-input"
+                value={form.total_amount}
+                onChange={(e) => setForm({ ...form, total_amount: e.target.value })}
+                min={0}
+                step="0.01"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">Balance Due</label>
-              <input type="number" className="form-input" value={form.balance_due} onChange={(e) => setForm({ ...form, balance_due: e.target.value })} min={0} step="0.01" />
+              <label className="form-label">Balance due</label>
+              <input
+                type="number"
+                className="form-input"
+                value={form.balance_due}
+                onChange={(e) => setForm({ ...form, balance_due: e.target.value })}
+                min={0}
+                step="0.01"
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Currency</label>
-              <select className="form-input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
-                <option value="ZAR">ZAR</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option>
+              <select
+                className="form-input"
+                value={form.currency}
+                onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              >
+                <option value="ZAR">ZAR</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
               </select>
             </div>
           </div>
+        </fieldset>
+      </DetailModalSection>
 
-          <SectionHeading>Admin</SectionHeading>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+      <DetailModalSection heading="Admin">
+        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
               <label className="form-label">Manager</label>
-              <input type="text" className="form-input" value={form.manager} onChange={(e) => setForm({ ...form, manager: e.target.value })} placeholder="Who manages this booking" />
+              <input
+                type="text"
+                className="form-input"
+                value={form.manager}
+                onChange={(e) => setForm({ ...form, manager: e.target.value })}
+                placeholder="Who manages this booking"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">House Contact</label>
-              <input type="text" className="form-input" value={form.house_contact} onChange={(e) => setForm({ ...form, house_contact: e.target.value })} placeholder="Property contact person" />
+              <label className="form-label">House contact</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.house_contact}
+                onChange={(e) => setForm({ ...form, house_contact: e.target.value })}
+                placeholder="Property contact person"
+              />
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Extras</label>
-            <input type="text" className="form-input" value={form.extras} onChange={(e) => setForm({ ...form, extras: e.target.value })} placeholder="e.g., cot, bath, linen" />
+            <input
+              type="text"
+              className="form-input"
+              value={form.extras}
+              onChange={(e) => setForm({ ...form, extras: e.target.value })}
+              placeholder="e.g. cot, bath, linen"
+            />
           </div>
           <div className="form-group">
             <label className="form-label">Notes</label>
-            <textarea className="form-input" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Internal notes..." />
+            <textarea
+              className="form-input"
+              rows={3}
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Internal notes…"
+            />
           </div>
-        </div>
-
-        <div className="modal-footer">
-          {!isNew && !showDeleteConfirm && (
-            <button className="btn btn-outline" style={{ color: '#dc2626' }} onClick={() => setShowDeleteConfirm(true)}>Delete</button>
-          )}
-          {!isNew && showDeleteConfirm && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ color: '#dc2626', fontSize: '0.875rem' }}>Delete this booking?</span>
-              <button className="btn btn-outline" style={{ color: '#dc2626' }} onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting...' : 'Confirm'}</button>
-              <button className="btn btn-ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
-            </div>
-          )}
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : isFromEnquiry ? 'Create Booking' : 'Save'}
-          </button>
-        </div>
-      </div>
-    </div>
+        </fieldset>
+      </DetailModalSection>
+    </DetailModal>
   );
 }

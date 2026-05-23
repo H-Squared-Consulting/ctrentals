@@ -12,8 +12,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { useToast } from '../components/ToastProvider';
+import DataTable from '../components/DataTable';
+import type { DataRow } from '../components/DataTable';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import EmptyState from '../components/EmptyState';
 import { CT_RENTALS_PARTNER_ID } from './constants';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
 
 interface HomeOwner {
   id: string;
@@ -45,8 +53,13 @@ export default function HomeOwnersPage() {
   const [properties, setProperties] = useState<PropertyLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [portfolioFilter, setPortfolioFilter] = useState<'' | 'with' | 'without'>('');
   const [editing, setEditing] = useState<HomeOwner | null>(null);
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [form, setForm] = useState(EMPTY_FORM);
+  const [initialForm, setInitialForm] = useState(EMPTY_FORM);
+  const [initialSelectedIds, setInitialSelectedIds] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   // Property assignment state for the edit/add modal. Diffed against the
   // current portfolio on save so we only touch the rows that actually change.
@@ -78,24 +91,38 @@ export default function HomeOwnersPage() {
     return map;
   }, [properties]);
 
+  const companies = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of owners) if (o.company) set.add(o.company);
+    return Array.from(set).sort();
+  }, [owners]);
+
   const filtered = useMemo(() => {
-    if (!searchQuery) return owners;
-    const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
     return owners.filter(o => {
+      if (companyFilter && o.company !== companyFilter) return false;
+      if (portfolioFilter) {
+        const has = (portfolioByOwner[o.id] || []).length > 0;
+        if (portfolioFilter === 'with' && !has) return false;
+        if (portfolioFilter === 'without' && has) return false;
+      }
+      if (!searchQuery) return true;
+      const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       const text = [o.name, o.company, o.email, o.phone].filter(Boolean).join(' ').toLowerCase();
       return terms.every(t => text.includes(t));
     });
-  }, [owners, searchQuery]);
+  }, [owners, searchQuery, companyFilter, portfolioFilter, portfolioByOwner]);
 
   function openAdd() {
     setEditing({ id: '', partner_id: CT_RENTALS_PARTNER_ID } as HomeOwner);
     setForm(EMPTY_FORM);
+    setInitialForm(EMPTY_FORM);
     setSelectedPropertyIds(new Set());
+    setInitialSelectedIds(new Set());
     setPropertyPickerSearch('');
+    setMode('edit');
   }
-  function openEdit(o: HomeOwner) {
-    setEditing(o);
-    setForm({
+  function openView(o: HomeOwner) {
+    const next = {
       name: o.name || '',
       email: o.email || '',
       phone: o.phone || '',
@@ -103,10 +130,19 @@ export default function HomeOwnersPage() {
       vat_number: o.vat_number || '',
       payment_notes: o.payment_notes || '',
       notes: o.notes || '',
-    });
-    // Seed the picker with whatever properties currently point at this owner.
-    setSelectedPropertyIds(new Set((portfolioByOwner[o.id] || []).map(p => p.id)));
+    };
+    const ownedIds = new Set((portfolioByOwner[o.id] || []).map(p => p.id));
+    setEditing(o);
+    setForm(next);
+    setInitialForm(next);
+    setSelectedPropertyIds(ownedIds);
+    setInitialSelectedIds(ownedIds);
     setPropertyPickerSearch('');
+    setMode('view');
+  }
+  function openEditRow(o: HomeOwner) {
+    openView(o);
+    setMode('edit');
   }
 
   async function save() {
@@ -212,11 +248,20 @@ export default function HomeOwnersPage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="list-toolbar">
           <div className="list-toolbar-left">
+            <select className="list-filter-select" value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)} title="Filter by company">
+              <option value="">All companies</option>
+              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select className="list-filter-select" value={portfolioFilter} onChange={(e) => setPortfolioFilter(e.target.value as any)} title="Filter by portfolio">
+              <option value="">Any portfolio</option>
+              <option value="with">Has properties</option>
+              <option value="without">No properties</option>
+            </select>
             <div className="list-search">
               <span className="list-search-icon">🔍</span>
               <input
                 type="text"
-                placeholder="Search owners..."
+                placeholder="Search by name, company, email…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -225,8 +270,7 @@ export default function HomeOwnersPage() {
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{filtered.length} of {owners.length}</span>
           </div>
           <div className="list-toolbar-right">
-            <button className="btn btn-ghost" onClick={() => load()}>↻ Refresh</button>
-            <button className="btn btn-primary" onClick={openAdd}>+ Add Owner</button>
+            <button className="btn btn-primary" onClick={openAdd}>+ New Owner</button>
           </div>
         </div>
       </div>
@@ -241,116 +285,169 @@ export default function HomeOwnersPage() {
           action={owners.length === 0 ? <button className="btn btn-primary" onClick={openAdd}>+ Add owner</button> : null}
         />
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Company</th>
-                <th>VAT No.</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th style={{ textAlign: 'center' }}>Properties</th>
-                <th style={{ width: 48 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(o => {
-                const portfolio = portfolioByOwner[o.id] || [];
-                return (
-                  <tr key={o.id} onClick={() => openEdit(o)} style={{ cursor: 'pointer' }}>
-                    <td><strong>{o.name}</strong></td>
-                    <td>{o.company || <span className="text-light">-</span>}</td>
-                    <td>{o.vat_number || <span className="text-light">-</span>}</td>
-                    <td>{o.email || <span className="text-light">-</span>}</td>
-                    <td>{o.phone || <span className="text-light">-</span>}</td>
-                    <td style={{ textAlign: 'center' }}>{portfolio.length || <span className="text-light">-</span>}</td>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        type="button"
-                        className="home-owner-row-delete"
-                        onClick={(e) => deleteOwner(o, e)}
-                        title="Delete owner"
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <OwnersTable
+          owners={filtered}
+          portfolioByOwner={portfolioByOwner}
+          onView={openView}
+          onEdit={openEditRow}
+        />
       )}
 
-      {editing && (
-        <div className="modal-overlay" onClick={() => setEditing(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
-            <div className="modal-header">
-              <h2 className="modal-title">{editing.id ? 'Edit owner' : 'Add owner'}</h2>
-              <button className="modal-close" onClick={() => setEditing(null)}>&times;</button>
-            </div>
-            <div className="modal-body" style={{ padding: 'var(--s-4)' }}>
-              <div className="form-group">
-                <label className="form-label">Name *</label>
-                <input className="form-input" autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Company</label>
-                <input className="form-input" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      {editing && (() => {
+        const portfolio = editing.id ? (portfolioByOwner[editing.id] || []) : [];
+        const isDirty =
+          JSON.stringify(form) !== JSON.stringify(initialForm) ||
+          [...selectedPropertyIds].sort().join(',') !== [...initialSelectedIds].sort().join(',');
+        return (
+          <DetailModal
+            title={editing.id ? (titleCase(form.name) || 'Owner') : 'Add owner'}
+            subtitle={editing.id ? (
+              <>
+                {form.company && <span>{titleCase(form.company)}</span>}
+                <span>· {portfolio.length} {portfolio.length === 1 ? 'property' : 'properties'}</span>
+              </>
+            ) : 'New CRM record'}
+            accentColour="var(--color-primary-light)"
+            mode={mode}
+            onModeChange={setMode}
+            canEdit
+            isDirty={isDirty}
+            onSave={save}
+            onCancel={() => {
+              setForm(initialForm);
+              setSelectedPropertyIds(initialSelectedIds);
+              setMode('view');
+            }}
+            footerActions={editing.id ? (
+              <button className="btn btn-outline-danger" onClick={remove} disabled={saving}>
+                Delete
+              </button>
+            ) : null}
+            onClose={() => setEditing(null)}
+          >
+            <DetailModalSection heading="Owner details">
+              <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
                 <div className="form-group">
-                  <label className="form-label">Email</label>
-                  <input className="form-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                  <label className="form-label">Name *</label>
+                  <input className="form-input" autoFocus={mode === 'edit'} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Phone</label>
-                  <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                  <label className="form-label">Company</label>
+                  <input className="form-input" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
                 </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">VAT No.</label>
-                <input className="form-input" value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="Only required if listed under a company" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Payment notes</label>
-                <textarea className="form-input" rows={2} value={form.payment_notes} onChange={(e) => setForm({ ...form, payment_notes: e.target.value })} placeholder="Bank details / payout instructions" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Notes</label>
-                <textarea className="form-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-              </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input className="form-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">VAT No.</label>
+                  <input className="form-input" value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="Only required if listed under a company" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Payment notes</label>
+                  <textarea className="form-input" rows={2} value={form.payment_notes} onChange={(e) => setForm({ ...form, payment_notes: e.target.value })} placeholder="Bank details / payout instructions" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notes</label>
+                  <textarea className="form-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+                </div>
+              </fieldset>
+            </DetailModalSection>
 
-              {/* Property assignment — pick which properties belong to this
-                  owner. Combobox: input toggles a dropdown of all available
-                  properties; typing filters; click closes after adding one
-                  so the user can add several in sequence without the list
-                  taking over the modal. Diff is applied on save. */}
-              <PropertyPicker
-                allProperties={properties}
-                owners={owners}
-                editingOwnerId={editing.id}
-                selectedIds={selectedPropertyIds}
-                onChange={setSelectedPropertyIds}
-                search={propertyPickerSearch}
-                setSearch={setPropertyPickerSearch}
-                open={propertyPickerOpen}
-                setOpen={setPropertyPickerOpen}
-              />
-            </div>
-            <div className="modal-footer">
-              {editing.id && (
-                <button className="btn btn-danger" onClick={remove} disabled={saving}>Delete</button>
-              )}
-              <div style={{ flex: 1 }} />
-              <button className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
-      )}
+            <DetailModalSection heading="Properties" headingRight={selectedPropertyIds.size || null}>
+              <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
+                <PropertyPicker
+                  allProperties={properties}
+                  owners={owners}
+                  editingOwnerId={editing.id}
+                  selectedIds={selectedPropertyIds}
+                  onChange={setSelectedPropertyIds}
+                  search={propertyPickerSearch}
+                  setSearch={setPropertyPickerSearch}
+                  open={propertyPickerOpen}
+                  setOpen={setPropertyPickerOpen}
+                />
+              </fieldset>
+            </DetailModalSection>
+          </DetailModal>
+        );
+      })()}
     </div>
+  );
+}
+
+// ─── Sortable owners table ──────────────────────────────────────────────
+
+interface OwnerRow extends DataRow {
+  id: string;
+  name: string;
+  company: string;
+  vat_number: string;
+  email: string;
+  phone: string;
+  properties_count: number;
+  owner: HomeOwner;
+}
+
+function OwnersTable({
+  owners, portfolioByOwner, onView, onEdit,
+}: {
+  owners: HomeOwner[];
+  portfolioByOwner: Record<string, PropertyLite[]>;
+  onView: (o: HomeOwner) => void;
+  onEdit: (o: HomeOwner) => void;
+}) {
+  const rows: OwnerRow[] = owners.map(o => ({
+    id: o.id,
+    name: titleCase(o.name),
+    company: titleCase(o.company || ''),
+    vat_number: o.vat_number || '',
+    email: o.email ? o.email.toLowerCase() : '',
+    phone: o.phone || '',
+    properties_count: (portfolioByOwner[o.id] || []).length,
+    owner: o,
+  }));
+
+  const columns = [
+    { key: 'name', label: 'Name', sortable: true, render: (row: DataRow) => <strong>{(row as OwnerRow).name || <span className="text-light">-</span>}</strong> },
+    { key: 'company', label: 'Company', sortable: true, render: (row: DataRow) => (row as OwnerRow).company || <span className="text-light">-</span> },
+    { key: 'vat_number', label: 'VAT No.', sortable: true, render: (row: DataRow) => (row as OwnerRow).vat_number || <span className="text-light">-</span> },
+    { key: 'email', label: 'Email', sortable: true, hideOnMobile: true, render: (row: DataRow) => (row as OwnerRow).email || <span className="text-light">-</span> },
+    { key: 'phone', label: 'Phone', sortable: true, hideOnMobile: true, render: (row: DataRow) => (row as OwnerRow).phone || <span className="text-light">-</span> },
+    {
+      key: 'properties_count', label: 'Properties', sortable: true, align: 'center' as const, width: '110px',
+      render: (row: DataRow) => {
+        const n = (row as OwnerRow).properties_count;
+        return n > 0 ? <strong>{n}</strong> : <span className="text-light">-</span>;
+      },
+    },
+    {
+      key: 'actions', label: '', align: 'right' as const, width: '90px',
+      render: (row: DataRow) => (
+        <div className="list-actions" onClick={(e) => e.stopPropagation()}>
+          <button type="button" className="list-action-icon" title="View owner" onClick={() => onView((row as OwnerRow).owner)}>👁</button>
+          <button type="button" className="list-action-icon" title="Edit owner" onClick={() => onEdit((row as OwnerRow).owner)}>✏️</button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <DataTable
+      columns={columns}
+      data={rows}
+      loading={false}
+      searchable={false}
+      resultsBarContent={null}
+      defaultSort={{ key: 'name', direction: 'asc' }}
+      onRowClick={(row: DataRow) => onView((row as OwnerRow).owner)}
+    />
   );
 }
 

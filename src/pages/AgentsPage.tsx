@@ -1,14 +1,31 @@
+/**
+ * AgentsPage -- Manage booking agents (name, company, email, commission).
+ *
+ * Follows the standard list-page baseline from docs/DESIGN-SYSTEM.md:
+ *   - Toolbar: filters -> search -> count -> + New Agent
+ *   - List rows with view/edit icons; row click opens DetailModal in view
+ *   - Add + edit both flow through the same DetailModal
+ *   - Active/inactive shown via shared .ops-status-pill semantic variants
+ */
+
 /* eslint-disable */
 // @ts-nocheck
-/**
- * AgentsPage -- Manage booking agents (name, company, email, commission)
- */
 
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../components/ToastProvider';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
+import DataTable from '../components/DataTable';
+import type { DataRow } from '../components/DataTable';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import type { Agent } from '../types/pricing';
+
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+}
+
+const EMPTY_FORM = { name: '', company: '', email: '', default_commission_pct: '15' };
 
 export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const toast = useToast();
@@ -18,24 +35,17 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', company: '', email: '', default_commission_pct: '' });
 
+  // Toolbar state
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState('active'); // 'active' | 'inactive' | 'all'
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newAgent, setNewAgent] = useState({ name: '', company: '', email: '', default_commission_pct: '15' });
+  const [activeFilter, setActiveFilter] = useState<'active' | 'inactive' | 'all'>('active');
+  const [companyFilter, setCompanyFilter] = useState('');
 
-  async function toggleActive(agent) {
-    try {
-      const next = !agent.is_active;
-      const { error } = await supabase.from('agents').update({ is_active: next }).eq('id', agent.id);
-      if (error) throw error;
-      setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_active: next } : a));
-    } catch (err) {
-      toast.error('Failed to update: ' + err.message);
-    }
-  }
+  // Modal state
+  const [editing, setEditing] = useState<Agent | null>(null);
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [initialForm, setInitialForm] = useState(EMPTY_FORM);
 
   useEffect(() => { if (!embedded) setPageTitle('Agents'); }, [setPageTitle, embedded]);
 
@@ -45,101 +55,117 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       const { data, error } = await supabase.from('agents').select('*').order('company').order('name');
       if (error) throw error;
       setAgents(data || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading agents:', err);
     } finally {
       setLoading(false);
     }
   }
-
   useEffect(() => { if (supabase) loadAgents(); }, [supabase]);
 
-  async function handleAdd() {
-    if (!newAgent.name.trim()) { toast.error('Agent name is required'); return; }
+  const companies = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of agents) if (a.company) set.add(a.company);
+    return Array.from(set).sort();
+  }, [agents]);
+
+  const inactiveCount = useMemo(() => agents.filter(a => a.is_active === false).length, [agents]);
+
+  const filtered = useMemo(() => {
+    let result = agents;
+    // Treat missing is_active as true so legacy rows show as active.
+    if (activeFilter === 'active')   result = result.filter(a => a.is_active !== false);
+    if (activeFilter === 'inactive') result = result.filter(a => a.is_active === false);
+    if (companyFilter)               result = result.filter(a => a.company === companyFilter);
+    if (searchQuery.trim()) {
+      const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      result = result.filter(a => {
+        const text = [a.name, a.company, a.email].filter(Boolean).join(' ').toLowerCase();
+        return terms.every(t => text.includes(t));
+      });
+    }
+    return result;
+  }, [agents, searchQuery, activeFilter, companyFilter]);
+
+  function openAdd() {
+    setEditing({ id: '' } as Agent);
+    setForm(EMPTY_FORM);
+    setInitialForm(EMPTY_FORM);
+    setMode('edit');
+  }
+  function openView(a: Agent) {
+    const next = {
+      name: a.name || '',
+      company: a.company || '',
+      email: a.email || '',
+      default_commission_pct: String(a.default_commission_pct ?? ''),
+    };
+    setEditing(a);
+    setForm(next);
+    setInitialForm(next);
+    setMode('view');
+  }
+  function openEditRow(a: Agent) {
+    openView(a);
+    setMode('edit');
+  }
+
+  async function save() {
+    if (!form.name.trim()) { toast.error('Agent name is required'); return; }
     setSaving(true);
     try {
       const payload = {
-        name: newAgent.name.trim(),
-        company: newAgent.company.trim() || null,
-        email: newAgent.email.trim() || null,
-        default_commission_pct: parseFloat(newAgent.default_commission_pct) || 0,
+        name: form.name.trim(),
+        company: form.company.trim() || null,
+        email: form.email.trim() || null,
+        default_commission_pct: parseFloat(form.default_commission_pct) || 0,
       };
-      const { data, error } = await supabase.from('agents').insert(payload).select();
-      if (error) throw error;
-      setAgents((prev) => [...prev, data[0]].sort((a, b) => (a.company || '').localeCompare(b.company || '') || a.name.localeCompare(b.name)));
-      setNewAgent({ name: '', company: '', email: '', default_commission_pct: '15' });
-      setShowAddForm(false);
-    } catch (err) {
-      toast.error('Failed to save: ' + err.message);
+      if (editing?.id) {
+        const { error } = await supabase.from('agents').update(payload).eq('id', editing.id);
+        if (error) throw error;
+        toast.success('Agent updated');
+        setInitialForm(form);
+        setMode('view');
+      } else {
+        const { error } = await supabase.from('agents').insert(payload);
+        if (error) throw error;
+        toast.success('Agent added');
+        setEditing(null);
+      }
+      await loadAgents();
+    } catch (err: any) {
+      toast.error('Failed to save: ' + (err?.message || err));
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleSaveEdit() {
-    if (!editForm.name.trim()) { toast.error('Agent name is required'); return; }
+  async function toggleActive() {
+    if (!editing?.id) return;
+    const next = editing.is_active === false;
     try {
-      const payload = {
-        name: editForm.name.trim(),
-        company: editForm.company.trim() || null,
-        email: editForm.email.trim() || null,
-        default_commission_pct: parseFloat(editForm.default_commission_pct) || 0,
-      };
-      const { error } = await supabase.from('agents').update(payload).eq('id', editingId);
+      const { error } = await supabase.from('agents').update({ is_active: next }).eq('id', editing.id);
       if (error) throw error;
-      setAgents((prev) =>
-        prev.map((a) => (a.id === editingId ? { ...a, ...payload } : a))
-          .sort((a, b) => (a.company || '').localeCompare(b.company || '') || a.name.localeCompare(b.name))
-      );
-      setEditingId(null);
-    } catch (err) {
-      toast.error('Failed to update: ' + err.message);
+      setEditing({ ...editing, is_active: next } as Agent);
+      await loadAgents();
+    } catch (err: any) {
+      toast.error('Failed to update: ' + (err?.message || err));
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this agent?')) return;
+  async function remove() {
+    if (!editing?.id) return;
+    if (!confirm(`Delete ${editing.name}? This cannot be undone.`)) return;
     try {
-      const { error } = await supabase.from('agents').delete().eq('id', id);
+      const { error } = await supabase.from('agents').delete().eq('id', editing.id);
       if (error) throw error;
-      setAgents((prev) => prev.filter((a) => a.id !== id));
-    } catch (err) {
-      toast.error('Failed to delete: ' + err.message);
+      toast.success('Agent deleted');
+      setEditing(null);
+      await loadAgents();
+    } catch (err: any) {
+      toast.error('Failed to delete: ' + (err?.message || err));
     }
   }
-
-  function startEdit(agent: Agent) {
-    setEditingId(agent.id);
-    setEditForm({
-      name: agent.name,
-      company: agent.company || '',
-      email: agent.email || '',
-      default_commission_pct: String(agent.default_commission_pct),
-    });
-  }
-
-  const inactiveCount = useMemo(() => agents.filter(a => a.is_active === false).length, [agents]);
-
-  // Group by company for display
-  const grouped = useMemo(() => {
-    let filtered = agents;
-    // Treat missing is_active as true so older rows show up as active.
-    if (activeFilter === 'active') filtered = filtered.filter(a => a.is_active !== false);
-    else if (activeFilter === 'inactive') filtered = filtered.filter(a => a.is_active === false);
-    if (searchQuery) {
-      filtered = filtered.filter((a) => {
-        const text = [a.name, a.company, a.email].filter(Boolean).join(' ').toLowerCase();
-        return searchQuery.toLowerCase().split(/\s+/).every((t) => text.includes(t));
-      });
-    }
-    const groups: Record<string, Agent[]> = {};
-    filtered.forEach((a) => {
-      const key = a.company || 'Independent';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(a);
-    });
-    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
-  }, [agents, searchQuery, activeFilter]);
 
   if (loading) {
     return <div className="page-loader"><div className="spinner" /></div>;
@@ -147,133 +173,241 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
 
   return (
     <div>
-      <div className="card" style={{ marginBottom: '16px' }}>
+      {/* Toolbar — baseline order: filters -> search -> count -> + New */}
+      <div className="card" style={{ marginBottom: 16 }}>
         <div className="list-toolbar">
           <div className="list-toolbar-left">
-            <div className="list-search" style={{ maxWidth: '300px' }}>
+            <select
+              className="list-filter-select"
+              value={activeFilter}
+              onChange={(e) => setActiveFilter(e.target.value as any)}
+              title="Filter by status"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive ({inactiveCount})</option>
+              <option value="all">All ({agents.length})</option>
+            </select>
+            <select
+              className="list-filter-select"
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value)}
+              title="Filter by company"
+            >
+              <option value="">All companies</option>
+              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div className="list-search">
               <span className="list-search-icon">🔍</span>
               <input
                 type="text"
-                placeholder="Search agents or companies..."
+                placeholder="Search by name, company, email…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               {searchQuery && <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>}
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {agents.length} agents
+              {filtered.length} of {agents.length}
             </span>
-            <select
-              className="list-filter-select"
-              value={activeFilter}
-              onChange={(e) => setActiveFilter(e.target.value)}
-              title="Filter by active state"
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive ({inactiveCount})</option>
-              <option value="all">All</option>
-            </select>
           </div>
           <div className="list-toolbar-right">
-            <button className="btn btn-ghost" onClick={loadAgents}>↻ Refresh</button>
-            <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
-              {showAddForm ? '× Cancel' : '+ Add Agent'}
-            </button>
+            <button className="btn btn-primary" onClick={openAdd}>+ New Agent</button>
           </div>
         </div>
       </div>
 
-      {/* ── Add new agent (collapsible) ── */}
-      {showAddForm && (
-        <div className="card" style={{ marginBottom: '16px', padding: '16px' }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '10px' }}>Add Agent</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 100px auto', gap: '8px', alignItems: 'end' }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Name</label>
-              <input type="text" className="form-input" value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} placeholder="Agent name" />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Company</label>
-              <input type="text" className="form-input" value={newAgent.company} onChange={(e) => setNewAgent({ ...newAgent, company: e.target.value })} placeholder="Company name" />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Email</label>
-              <input type="email" className="form-input" value={newAgent.email} onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })} placeholder="email@..." />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Comm %</label>
-              <input type="number" className="form-input" value={newAgent.default_commission_pct} onChange={(e) => setNewAgent({ ...newAgent, default_commission_pct: e.target.value })} min={0} max={100} step="0.5" />
-            </div>
-            <button className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={handleAdd} disabled={saving}>
-              {saving ? '...' : 'Save'}
-            </button>
-          </div>
-        </div>
-      )}
+      <AgentsTable
+        agents={filtered}
+        onView={openView}
+        onEdit={openEditRow}
+        emptyMessage={
+          agents.length === 0
+            ? 'No agents yet. Click + New Agent to add one.'
+            : 'No agents match your filters.'
+        }
+      />
 
-      {/* ── List grouped by company ── */}
-      {grouped.length === 0 ? (
-        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-light)' }}>
-          No agents yet. Click "+ Add Agent" to create one.
-        </div>
-      ) : (
-        grouped.map(([company, companyAgents]) => (
-          <div key={company} className="card" style={{ marginBottom: '12px' }}>
-            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text)' }}>
-                {company}
-              </h3>
-              <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>{companyAgents.length} agent{companyAgents.length !== 1 ? 's' : ''}</span>
-            </div>
-            <div>
-              {companyAgents.map((agent) => (
-                <div
-                  key={agent.id}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: editingId === agent.id ? '1fr 1fr 1fr 100px auto' : '180px 1fr 80px auto',
-                    gap: '12px',
-                    alignItems: 'center',
-                    padding: '10px 16px',
-                    borderBottom: '1px solid var(--border-light)',
-                  }}
-                >
-                  {editingId === agent.id ? (
-                    <>
-                      <input className="form-input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="Name" />
-                      <input className="form-input" value={editForm.company} onChange={(e) => setEditForm({ ...editForm, company: e.target.value })} placeholder="Company" />
-                      <input className="form-input" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} placeholder="Email" />
-                      <input className="form-input" type="number" value={editForm.default_commission_pct} onChange={(e) => setEditForm({ ...editForm, default_commission_pct: e.target.value })} min={0} max={100} step="0.5" />
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <button className="btn btn-primary" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={handleSaveEdit}>Save</button>
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={() => setEditingId(null)}>Cancel</button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500, opacity: agent.is_active === false ? 0.55 : 1 }}>
-                        {agent.name}
-                        {agent.is_active === false && <span style={{ marginLeft: 8, fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-light)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Inactive</span>}
-                      </span>
-                      <a href={agent.email ? `mailto:${agent.email}` : undefined} style={{ fontSize: '0.8125rem', color: 'var(--color-primary)', textDecoration: 'none' }}>
-                        {agent.email || <span style={{ color: 'var(--text-light)' }}>-</span>}
-                      </a>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>{agent.default_commission_pct}%</span>
-                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={() => toggleActive(agent)} title={agent.is_active === false ? 'Reactivate this agent' : 'Mark this agent inactive'}>
-                          {agent.is_active === false ? 'Activate' : 'Deactivate'}
-                        </button>
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px' }} onClick={() => startEdit(agent)}>Edit</button>
-                        <button className="btn btn-ghost" style={{ fontSize: '0.6875rem', padding: '4px 8px', color: 'var(--error)' }} onClick={() => handleDelete(agent.id)}>Delete</button>
-                      </div>
-                    </>
-                  )}
+      {editing && (
+        <DetailModal
+          title={editing.id ? (titleCase(form.name) || 'Agent') : 'Add agent'}
+          subtitle={editing.id ? (
+            <>
+              {form.company && <span>{titleCase(form.company)}</span>}
+              {form.default_commission_pct && <span>· {form.default_commission_pct}% commission</span>}
+            </>
+          ) : 'New booking agent'}
+          accentColour="var(--color-primary-light)"
+          mode={mode}
+          onModeChange={setMode}
+          canEdit
+          isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
+          onSave={save}
+          onCancel={() => { setForm(initialForm); setMode('view'); }}
+          footerActions={editing.id ? (
+            <>
+              <button
+                className={editing.is_active === false ? 'btn btn-outline-success' : 'btn btn-ghost'}
+                onClick={toggleActive}
+                disabled={saving}
+              >
+                {editing.is_active === false ? '↺ Reactivate' : '⏸ Deactivate'}
+              </button>
+              <button className="btn btn-outline-danger" onClick={remove} disabled={saving}>
+                Delete
+              </button>
+            </>
+          ) : null}
+          onClose={() => setEditing(null)}
+        >
+          <DetailModalSection heading="Agent details">
+            <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Name *</label>
+                  <input
+                    className="form-input"
+                    autoFocus={mode === 'edit'}
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  />
                 </div>
-              ))}
-            </div>
-          </div>
-        ))
+                <div className="form-group">
+                  <label className="form-label">Company</label>
+                  <input
+                    className="form-input"
+                    value={form.company}
+                    onChange={(e) => setForm({ ...form, company: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Default commission %</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={form.default_commission_pct}
+                    onChange={(e) => setForm({ ...form, default_commission_pct: e.target.value })}
+                    min={0}
+                    max={100}
+                    step="0.5"
+                  />
+                </div>
+              </div>
+            </fieldset>
+          </DetailModalSection>
+        </DetailModal>
       )}
     </div>
+  );
+}
+
+// ─── Sortable agents table ────────────────────────────────────────────
+
+interface AgentRow extends DataRow {
+  id: string;
+  name: string;
+  company: string;
+  email: string;
+  commission: number;
+  status: string;
+  is_active: boolean;
+  agent: Agent;
+}
+
+function AgentsTable({
+  agents, onView, onEdit, emptyMessage,
+}: {
+  agents: Agent[];
+  onView: (a: Agent) => void;
+  onEdit: (a: Agent) => void;
+  emptyMessage: string;
+}) {
+  const rows: AgentRow[] = agents.map(a => {
+    const isActive = a.is_active !== false;
+    return {
+      id: a.id,
+      name: titleCase(a.name),
+      company: titleCase(a.company || ''),
+      email: a.email ? a.email.toLowerCase() : '',
+      commission: Number(a.default_commission_pct) || 0,
+      status: isActive ? 'Active' : 'Inactive',
+      is_active: isActive,
+      agent: a,
+    };
+  });
+
+  const columns = [
+    {
+      key: 'name', label: 'Agent', sortable: true,
+      render: (row: DataRow) => <strong>{(row as AgentRow).name || <span className="text-light">-</span>}</strong>,
+    },
+    {
+      key: 'company', label: 'Company', sortable: true,
+      render: (row: DataRow) => (row as AgentRow).company || <span className="text-light">-</span>,
+    },
+    {
+      key: 'email', label: 'Email', sortable: true,
+      render: (row: DataRow) => (row as AgentRow).email || <span className="text-light">-</span>,
+    },
+    {
+      key: 'commission', label: 'Commission', sortable: true, align: 'right' as const,
+      render: (row: DataRow) => <span style={{ fontWeight: 600 }}>{(row as AgentRow).commission}%</span>,
+    },
+    {
+      key: 'status', label: 'Status', sortable: true, align: 'center' as const,
+      render: (row: DataRow) => {
+        const r = row as AgentRow;
+        return (
+          <span className={`ops-status-pill ops-status-pill--${r.is_active ? 'active' : 'inactive'}`}>
+            <span className="ops-status-pill-dot" />
+            {r.status}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'actions', label: '', align: 'right' as const, width: '90px',
+      render: (row: DataRow) => (
+        <div className="list-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="list-action-icon"
+            title="View agent"
+            onClick={() => onView((row as AgentRow).agent)}
+          >
+            👁
+          </button>
+          <button
+            type="button"
+            className="list-action-icon"
+            title="Edit agent"
+            onClick={() => onEdit((row as AgentRow).agent)}
+          >
+            ✏️
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <DataTable
+      columns={columns}
+      data={rows}
+      loading={false}
+      searchable={false}
+      resultsBarContent={null}
+      defaultSort={{ key: 'company', direction: 'asc' }}
+      onRowClick={(row: DataRow) => onView((row as AgentRow).agent)}
+      emptyMessage={emptyMessage}
+    />
   );
 }
