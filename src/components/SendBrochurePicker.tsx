@@ -13,6 +13,7 @@ import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { useToast } from './ToastProvider';
 import { SkeletonRows } from './Skeleton';
 import EmptyState from './EmptyState';
+import ActionModal from './ActionModal';
 
 type ShareMode = 'branded' | 'agent';
 const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || '';
@@ -27,6 +28,8 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
   const [mode, setMode] = useState<ShareMode>('branded');
 
   useEffect(() => {
+    // ActionModal owns the body-scroll lock and Escape handling.
+    // This effect just loads the property list once on mount.
     let cancelled = false;
     (async () => {
       const { data } = await supabase
@@ -40,18 +43,8 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
         setLoading(false);
       }
     })();
-    // Lock background scroll while the modal is open.
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    // Escape closes.
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
-    document.addEventListener('keydown', onKey);
-    return () => {
-      cancelled = true;
-      document.body.style.overflow = prevOverflow;
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [supabase, onClose]);
+    return () => { cancelled = true; };
+  }, [supabase]);
 
   const filtered = useMemo(() => {
     if (!search) return properties;
@@ -85,85 +78,77 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
-        <div className="modal-header">
-          <h2 className="modal-title">Send a brochure</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto', padding: 'var(--s-4)' }}>
-          {/* Branded vs Agent mode applies to every property in the list. */}
-          <div className="bsm-mode" style={{ marginBottom: 'var(--s-3)' }}>
-            <button type="button" className={`bsm-mode-btn ${mode === 'branded' ? 'is-active' : ''}`} onClick={() => setMode('branded')}>
-              <div className="bsm-mode-title">Branded</div>
-              <div className="bsm-mode-sub">Company link, full branding</div>
-            </button>
-            <button type="button" className={`bsm-mode-btn ${mode === 'agent' ? 'is-active' : ''}`} onClick={() => setMode('agent')}>
-              <div className="bsm-mode-title">Agent</div>
-              <div className="bsm-mode-sub">Neutral link, no branding</div>
-            </button>
-          </div>
-          <div className="list-search" style={{ marginBottom: 'var(--s-3)' }}>
-            <span className="list-search-icon">🔍</span>
-            <input
-              type="text"
-              placeholder="Find a property…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-            {search && <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>}
-          </div>
-
-          {loading ? (
-            <SkeletonRows count={6} cols={2} />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon="🔎"
-              title={properties.length === 0 ? 'No active brochures' : 'Nothing matches your search'}
-              description={properties.length === 0
-                ? 'Add or reactivate a property to send its brochure.'
-                : 'Try a different search term.'}
-            />
-          ) : (
-            <ul className="sbp-list">
-              {filtered.map(p => {
-                const url = brochureUrl(p);
-                const subject = encodeURIComponent(`${p.property_name} brochure`);
-                const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
-                const wa = encodeURIComponent(`Brochure for ${p.property_name}: ${url}`);
-                return (
-                  <li key={p.id} className="sbp-row">
-                    <div className="sbp-thumb">
-                      {p.hero_image_url
-                        ? <img src={p.hero_image_url} alt="" loading="lazy" />
-                        : <div className="sbp-thumb-empty">🏠</div>}
-                    </div>
-                    <div className="sbp-meta">
-                      <div className="sbp-name">{p.property_name}</div>
-                      <div className="sbp-loc">{[p.suburb, p.city].filter(Boolean).join(', ')}</div>
-                    </div>
-                    <div className="sbp-actions">
-                      <button className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => copy(p)}>
-                        {copied === p.id ? '✓ Copied' : '🔗 Copy'}
-                      </button>
-                      <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={`https://wa.me/?text=${wa}`} target="_blank" rel="noopener noreferrer">
-                        💬 WhatsApp
-                      </a>
-                      <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={`mailto:?subject=${subject}&body=${body}`}>
-                        ✉️ Email
-                      </a>
-                      <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={url} target="_blank" rel="noopener noreferrer">
-                        👁 Preview
-                      </a>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+    <ActionModal title="Send a brochure" width={720} hideFooter onClose={onClose}>
+      {/* Branded vs Agent mode applies to every property in the list. */}
+      <div className="bsm-mode" style={{ marginBottom: 'var(--s-3)' }}>
+        <button type="button" className={`bsm-mode-btn ${mode === 'branded' ? 'is-active' : ''}`} onClick={() => setMode('branded')}>
+          <div className="bsm-mode-title">Branded</div>
+          <div className="bsm-mode-sub">Company link, full branding</div>
+        </button>
+        <button type="button" className={`bsm-mode-btn ${mode === 'agent' ? 'is-active' : ''}`} onClick={() => setMode('agent')}>
+          <div className="bsm-mode-title">Agent</div>
+          <div className="bsm-mode-sub">Neutral link, no branding</div>
+        </button>
       </div>
-    </div>
+      <div className="list-search" style={{ marginBottom: 'var(--s-3)' }}>
+        <span className="list-search-icon">🔍</span>
+        <input
+          type="text"
+          placeholder="Find a property…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          autoFocus
+        />
+        {search && <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>}
+      </div>
+
+      {loading ? (
+        <SkeletonRows count={6} cols={2} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon="🔎"
+          title={properties.length === 0 ? 'No active brochures' : 'Nothing matches your search'}
+          description={properties.length === 0
+            ? 'Add or reactivate a property to send its brochure.'
+            : 'Try a different search term.'}
+        />
+      ) : (
+        <ul className="sbp-list">
+          {filtered.map(p => {
+            const url = brochureUrl(p);
+            const subject = encodeURIComponent(`${p.property_name} brochure`);
+            const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
+            const wa = encodeURIComponent(`Brochure for ${p.property_name}: ${url}`);
+            return (
+              <li key={p.id} className="sbp-row">
+                <div className="sbp-thumb">
+                  {p.hero_image_url
+                    ? <img src={p.hero_image_url} alt="" loading="lazy" />
+                    : <div className="sbp-thumb-empty">🏠</div>}
+                </div>
+                <div className="sbp-meta">
+                  <div className="sbp-name">{p.property_name}</div>
+                  <div className="sbp-loc">{[p.suburb, p.city].filter(Boolean).join(', ')}</div>
+                </div>
+                <div className="sbp-actions">
+                  <button className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => copy(p)}>
+                    {copied === p.id ? '✓ Copied' : '🔗 Copy'}
+                  </button>
+                  <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={`https://wa.me/?text=${wa}`} target="_blank" rel="noopener noreferrer">
+                    💬 WhatsApp
+                  </a>
+                  <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={`mailto:?subject=${subject}&body=${body}`}>
+                    ✉️ Email
+                  </a>
+                  <a className="btn btn-ghost" style={{ fontSize: '0.75rem' }} href={url} target="_blank" rel="noopener noreferrer">
+                    👁 Preview
+                  </a>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </ActionModal>
   );
 }

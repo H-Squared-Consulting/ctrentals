@@ -17,8 +17,9 @@
  * neutral domain exists, set VITE_AGENT_DOMAIN and the agent URL flips
  * over without any other code change.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useToast } from './ToastProvider';
+import ActionModal from './ActionModal';
 
 type Mode = 'branded' | 'agent';
 
@@ -48,12 +49,6 @@ export default function BrochureShareMenu({
   const [copied, setCopied] = useState(false);
   const [mode, setMode] = useState<Mode>('branded');
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const url = brochureUrl(property, mode);
   const subject = encodeURIComponent(`${property.property_name} brochure`);
   const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
@@ -68,66 +63,58 @@ export default function BrochureShareMenu({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
-        <div className="modal-header">
-          <h2 className="modal-title">Share brochure</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
+    <ActionModal title="Share brochure" width={440} hideFooter onClose={onClose}>
+      <div className="bsm-card">
+        <div className="bsm-thumb">
+          {property.hero_image_url
+            ? <img src={property.hero_image_url} alt="" loading="lazy" />
+            : <div className="bsm-thumb-empty">🏠</div>}
         </div>
-        <div className="modal-body" style={{ padding: 'var(--s-4)' }}>
-          <div className="bsm-card">
-            <div className="bsm-thumb">
-              {property.hero_image_url
-                ? <img src={property.hero_image_url} alt="" loading="lazy" />
-                : <div className="bsm-thumb-empty">🏠</div>}
-            </div>
-            <div>
-              <div className="bsm-name">{property.property_name}</div>
-              <div className="bsm-loc">{[property.suburb, property.city].filter(Boolean).join(', ')}</div>
-            </div>
-          </div>
-
-          {/* Branded vs Agent link toggle. Agents won't share a branded URL
-              that lets their client go direct — this lets the user pick. */}
-          <div className="bsm-mode">
-            <button
-              type="button"
-              className={`bsm-mode-btn ${mode === 'branded' ? 'is-active' : ''}`}
-              onClick={() => setMode('branded')}
-            >
-              <div className="bsm-mode-title">Branded</div>
-              <div className="bsm-mode-sub">Company link, full branding</div>
-            </button>
-            <button
-              type="button"
-              className={`bsm-mode-btn ${mode === 'agent' ? 'is-active' : ''}`}
-              onClick={() => setMode('agent')}
-            >
-              <div className="bsm-mode-title">Agent</div>
-              <div className="bsm-mode-sub">Neutral link, no branding</div>
-            </button>
-          </div>
-
-          <div className="bsm-link">
-            <span className="bsm-link-url" title={url}>{url}</span>
-            <button className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={copy}>
-              {copied ? '✓ Copied' : '🔗 Copy'}
-            </button>
-          </div>
-
-          <div className="bsm-actions">
-            <a className="btn btn-outline" href={`https://wa.me/?text=${wa}`} target="_blank" rel="noopener noreferrer">
-              💬 WhatsApp
-            </a>
-            <a className="btn btn-outline" href={`mailto:?subject=${subject}&body=${body}`}>
-              ✉️ Email
-            </a>
-            <a className="btn btn-outline" href={url} target="_blank" rel="noopener noreferrer">
-              👁 Preview
-            </a>
-          </div>
+        <div>
+          <div className="bsm-name">{property.property_name}</div>
+          <div className="bsm-loc">{[property.suburb, property.city].filter(Boolean).join(', ')}</div>
         </div>
       </div>
-    </div>
+
+      {/* Branded vs Agent link toggle. Agents won't share a branded URL
+          that lets their client go direct — this lets the user pick. */}
+      <div className="bsm-mode">
+        <button
+          type="button"
+          className={`bsm-mode-btn ${mode === 'branded' ? 'is-active' : ''}`}
+          onClick={() => setMode('branded')}
+        >
+          <div className="bsm-mode-title">Branded</div>
+          <div className="bsm-mode-sub">Company link, full branding</div>
+        </button>
+        <button
+          type="button"
+          className={`bsm-mode-btn ${mode === 'agent' ? 'is-active' : ''}`}
+          onClick={() => setMode('agent')}
+        >
+          <div className="bsm-mode-title">Agent</div>
+          <div className="bsm-mode-sub">Neutral link, no branding</div>
+        </button>
+      </div>
+
+      <div className="bsm-link">
+        <span className="bsm-link-url" title={url}>{url}</span>
+        <button className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={copy}>
+          {copied ? '✓ Copied' : '🔗 Copy'}
+        </button>
+      </div>
+
+      <div className="bsm-actions">
+        <a className="btn btn-outline" href={`https://wa.me/?text=${wa}`} target="_blank" rel="noopener noreferrer">
+          💬 WhatsApp
+        </a>
+        <a className="btn btn-outline" href={`mailto:?subject=${subject}&body=${body}`}>
+          ✉️ Email
+        </a>
+        <a className="btn btn-outline" href={url} target="_blank" rel="noopener noreferrer">
+          👁 Preview
+        </a>
+      </div>
+    </ActionModal>
   );
 }
