@@ -284,7 +284,7 @@ export default function ProposalDetailModal({
           <>
             <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>
               {fmtRand(guestPrice)}
-              <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-light)', marginLeft: 6 }}>/ night</span>
+              <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: 6 }}>/ night</span>
             </div>
             <div className="pricing-breakdown" style={{ fontSize: '0.8125rem' }}>
               {ownerNet != null && (
@@ -340,19 +340,19 @@ export default function ProposalDetailModal({
           <div className="form-group">
             <label className="form-label">Sent</label>
             <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
-              {proposal.sent_at ? fmtDateTime(proposal.sent_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>not sent</span>}
+              {proposal.sent_at ? fmtDateTime(proposal.sent_at) : <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>not sent</span>}
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Viewed</label>
             <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
-              {proposal.viewed_at ? fmtDateTime(proposal.viewed_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>not viewed</span>}
+              {proposal.viewed_at ? fmtDateTime(proposal.viewed_at) : <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>not viewed</span>}
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Interest</label>
             <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>
-              {proposal.accepted_at ? fmtDateTime(proposal.accepted_at) : <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>none yet</span>}
+              {proposal.accepted_at ? fmtDateTime(proposal.accepted_at) : <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>none yet</span>}
             </div>
           </div>
         </div>
