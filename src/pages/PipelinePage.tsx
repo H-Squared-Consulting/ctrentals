@@ -1434,8 +1434,8 @@ function DealDetailModal({
       onClose={onClose}
     >
       <DetailModalSection heading="Client details">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Client name</label>
               <input className="form-input" value={form.client_name} onChange={ev => update('client_name', ev.target.value)} />
@@ -1457,8 +1457,8 @@ function DealDetailModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Stay details">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Check-in</label>
               <input type="date" className="form-input" value={form.check_in || ''} onChange={ev => update('check_in', ev.target.value)} />

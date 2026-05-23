@@ -344,7 +344,7 @@ export default function BookingModal({
       )}
 
       <DetailModalSection heading="Stay & property">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
             <label className="form-label">Property *</label>
             <select
@@ -360,7 +360,7 @@ export default function BookingModal({
               ))}
             </select>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Check in *</label>
               <DateInput
@@ -409,7 +409,7 @@ export default function BookingModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Guest">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
             <label className="form-label">Linked CRM guest</label>
             <select className="form-input" value={form.guest_id} onChange={(e) => pickGuest(e.target.value)}>
@@ -424,7 +424,7 @@ export default function BookingModal({
               Link a CRM guest so this stay shows up in their record. Leave unlinked for walk-ins.
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Guest name *</label>
               <input
@@ -499,7 +499,7 @@ export default function BookingModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Financial">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
               <label className="form-label">Total amount</label>
@@ -541,8 +541,8 @@ export default function BookingModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Admin">
-        <fieldset disabled={fieldsDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Manager</label>
               <input

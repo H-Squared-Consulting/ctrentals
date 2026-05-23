@@ -252,7 +252,7 @@ export default function ProposalDetailModal({
       onClose={onClose}
     >
       <DetailModalSection heading="Recipient">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+        <div className="form-grid-2">
           <div className="form-group">
             <label className="form-label">Email</label>
             <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{(proposal.guest_email || '—').toLowerCase()}</div>
@@ -332,7 +332,7 @@ export default function ProposalDetailModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Timeline">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+        <div className="form-grid-2">
           <div className="form-group">
             <label className="form-label">Created</label>
             <div style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{fmtDateTime(proposal.created_at)}</div>

@@ -326,7 +326,7 @@ export default function HomeOwnersPage() {
             onClose={() => setEditing(null)}
           >
             <DetailModalSection heading="Owner details">
-              <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
+              <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
                 <div className="form-group">
                   <label className="form-label">Name *</label>
                   <input className="form-input" autoFocus={mode === 'edit'} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -335,7 +335,7 @@ export default function HomeOwnersPage() {
                   <label className="form-label">Company</label>
                   <input className="form-input" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+                <div className="form-grid-2">
                   <div className="form-group">
                     <label className="form-label">Email</label>
                     <input className="form-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -361,7 +361,7 @@ export default function HomeOwnersPage() {
             </DetailModalSection>
 
             <DetailModalSection heading="Properties" headingRight={selectedPropertyIds.size || null}>
-              <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
+              <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
                 <PropertyPicker
                   allProperties={properties}
                   owners={owners}

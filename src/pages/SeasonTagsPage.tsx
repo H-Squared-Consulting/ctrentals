@@ -306,7 +306,7 @@ export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}
           }
           onClose={() => setAddOpen(false)}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+          <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Season</label>
               <select
