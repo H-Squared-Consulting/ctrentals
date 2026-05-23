@@ -893,53 +893,70 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
             return (
               <div className="amenity-editor">
-                {/* Active tags */}
+                {/* Active tags. In view mode the chips render without the ✕
+                    affordance and without the remove-on-click handler — the
+                    wrapping <fieldset disabled> only stops native form
+                    controls, so the span clicks would otherwise stay live. */}
                 {currentTags.length > 0 && (
                   <div className="amenity-active">
                     {currentTags.map(tag => (
-                      <span key={tag} className="amenity-tag amenity-tag--active" onClick={() => removeTag(tag)}>
-                        {tag} <span className="amenity-tag-x">✕</span>
+                      <span
+                        key={tag}
+                        className="amenity-tag amenity-tag--active"
+                        onClick={viewOnly ? undefined : () => removeTag(tag)}
+                        style={viewOnly ? { cursor: 'default' } : undefined}
+                      >
+                        {tag}
+                        {!viewOnly && <span className="amenity-tag-x">✕</span>}
                       </span>
                     ))}
                   </div>
                 )}
-                {currentTags.length === 0 && (
+                {currentTags.length === 0 && !viewOnly && (
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginBottom: '8px' }}>No amenities added yet. Click below to add.</div>
                 )}
+                {currentTags.length === 0 && viewOnly && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>No amenities listed.</div>
+                )}
 
-                {/* Custom input */}
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="Type custom amenity..."
-                    style={{ flex: 1 }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const val = e.target.value.trim();
-                        if (val) { addTag(val); e.target.value = ''; }
-                      }
-                    }}
-                  />
-                  <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }} onClick={(e) => {
-                    const input = e.target.previousSibling;
-                    if (input && input.value.trim()) { addTag(input.value.trim()); input.value = ''; }
-                  }}>+ Add</button>
-                </div>
-
-                {/* Preset suggestions */}
-                {unusedPresets.length > 0 && (
-                  <div className="amenity-presets">
-                    <div className="amenity-presets-label">Quick add:</div>
-                    <div className="amenity-presets-list">
-                      {unusedPresets.map(tag => (
-                        <span key={tag} className="amenity-tag amenity-tag--preset" onClick={() => addTag(tag)}>
-                          + {tag}
-                        </span>
-                      ))}
+                {/* Custom input + preset suggestions only make sense in edit
+                    mode — they're affordances for adding tags, which view
+                    mode doesn't permit. */}
+                {!viewOnly && (
+                  <>
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Type custom amenity..."
+                        style={{ flex: 1 }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const val = e.target.value.trim();
+                            if (val) { addTag(val); e.target.value = ''; }
+                          }
+                        }}
+                      />
+                      <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }} onClick={(e) => {
+                        const input = e.target.previousSibling;
+                        if (input && input.value.trim()) { addTag(input.value.trim()); input.value = ''; }
+                      }}>+ Add</button>
                     </div>
-                  </div>
+
+                    {unusedPresets.length > 0 && (
+                      <div className="amenity-presets">
+                        <div className="amenity-presets-label">Quick add:</div>
+                        <div className="amenity-presets-list">
+                          {unusedPresets.map(tag => (
+                            <span key={tag} className="amenity-tag amenity-tag--preset" onClick={() => addTag(tag)}>
+                              + {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
