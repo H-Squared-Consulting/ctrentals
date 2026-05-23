@@ -19,7 +19,7 @@
  * older PricingWidget for every pricing entry point in the app.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculatePricing, CTR_DEFAULT, fmtRand } from '../lib/pricingEngine';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import type { Baseline, SeasonTag, Agent, ChannelProfile, PricingBreakdown, PricingProposal } from '../types/pricing';
@@ -222,7 +222,14 @@ export default function PricingDashboard({
   const [scenario, setScenario] = useState<ScenarioType | null>(
     (hydrate?.scenario_type as ScenarioType) ?? initialScenario ?? null,
   );
-  const [selectedSeason, setSelectedSeason] = useState(hydrate?.season_tag || 'Normal');
+  /** Season selection is either the sentinel 'normal' (base rate, ×1) or a
+   *  season_tags row ID. Using the ID (not the name) means per-property
+   *  season tags can't be silently shadowed by a business-wide tag with the
+   *  same name — each row is uniquely selectable. Snapshots store the
+   *  human-readable season name (so they stay meaningful if the tag is
+   *  later renamed or deleted), so edit-mode hydration is deferred to a
+   *  useEffect below that runs once seasonTags has loaded. */
+  const [selectedSeason, setSelectedSeason] = useState<string>('normal');
   const [selectedAgentId, setSelectedAgentId] = useState<string>(
     (hydrate?.agents && hydrate.agents.length > 0 && hydrate.agents[0]?.id)
       || hydrate?.agent_id
@@ -291,11 +298,32 @@ export default function PricingDashboard({
   }, [supabase, property?.id, currentYear]);
 
   const baseRate = baseline?.daily_rate ?? 0;
-  const seasonMultiplier = useMemo(() => {
-    if (!selectedSeason || selectedSeason === 'Normal') return 1;
-    const tag = seasonTags.find(s => s.name === selectedSeason);
-    return tag ? tag.multiplier : 1;
-  }, [seasonTags, selectedSeason]);
+  const selectedSeasonTag = useMemo(
+    () => (selectedSeason === 'normal' ? null : seasonTags.find(s => s.id === selectedSeason) || null),
+    [seasonTags, selectedSeason],
+  );
+  const seasonMultiplier = useMemo(
+    () => (selectedSeasonTag ? Number(selectedSeasonTag.multiplier) : 1),
+    [selectedSeasonTag],
+  );
+
+  // Edit-mode hydration for selectedSeason. Snapshots store the season
+  // name (e.g. "Peak"), but the dropdown values are row IDs. Once
+  // seasonTags has loaded, resolve the snapshot's season_tag to the
+  // matching tag.id — preferring a property-scoped tag over a business-
+  // wide one when both share the name. Ref-guarded so a later refetch
+  // of seasonTags doesn't overwrite the user's subsequent picks.
+  const seasonHydratedRef = useRef(false);
+  useEffect(() => {
+    if (seasonHydratedRef.current) return;
+    if (!hydrate?.season_tag || seasonTags.length === 0) return;
+    const matches = seasonTags.filter(s => s.name === hydrate.season_tag);
+    if (matches.length === 0) { seasonHydratedRef.current = true; return; }
+    const preferred = matches.find(s => s.property_id) ?? matches[0];
+    setSelectedSeason(preferred.id);
+    seasonHydratedRef.current = true;
+  }, [seasonTags, hydrate]);
+
   const activeChannel = useMemo(
     () => channels.find(c => c.id === selectedChannelId) || null,
     [channels, selectedChannelId],
@@ -381,7 +409,10 @@ export default function PricingDashboard({
         : null,
       channelId: scenario === 'platform' ? selectedChannelId || null : null,
       baseline: baseRate,
-      seasonTag: selectedSeason || null,
+      // Snapshot carries the human-readable name (not the row ID) so the
+      // saved proposal stays meaningful even if the season_tags row is
+      // later edited or deleted.
+      seasonTag: selectedSeasonTag?.name ?? null,
       seasonMultiplier,
       ctrPct: defaultCtrPct,
       agentPct: defaultAgentPct,
@@ -476,9 +507,11 @@ export default function PricingDashboard({
         <div className="form-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="form-label" style={{ margin: 0 }}>Season</label>
           <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value)}>
-            <option value="Normal">Normal</option>
+            <option value="normal">Normal (base rate)</option>
             {seasonTags.map(s => (
-              <option key={s.id} value={s.name}>{s.name}</option>
+              <option key={s.id} value={s.id}>
+                {s.name} (×{s.multiplier}){s.property_id ? ' — this property' : ''}
+              </option>
             ))}
           </select>
         </div>
@@ -487,7 +520,7 @@ export default function PricingDashboard({
       {/* Benchmark — read-only default for this channel + season */}
       <div className="detail-modal-section">
         <div className="detail-modal-section-heading">
-          Default · {channelLabel} · {selectedSeason}
+          Default · {channelLabel} · {selectedSeasonTag?.name ?? 'Normal'}
         </div>
         {benchmark && (
           <BreakdownRows
