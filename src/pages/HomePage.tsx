@@ -266,7 +266,7 @@ export default function HomePage() {
 
       {/* Action queue — counts per Pipeline stage. Each card is a link */}
       <section className="home-section">
-        <h3 className="home-section-title">Action queue (live test)</h3>
+        <h3 className="home-section-title">Action queue</h3>
         <div className="home-cards">
           <ActionCard
             label="Enquiry"
