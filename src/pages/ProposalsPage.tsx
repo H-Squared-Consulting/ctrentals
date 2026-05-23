@@ -17,6 +17,7 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import ProposalDetailModal, { type ProposalForDetail } from '../components/ProposalDetailModal';
+import PricingModal from './PricingModal';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 
 interface ProposalRow extends ProposalForDetail {
@@ -111,6 +112,10 @@ export default function ProposalsPage() {
   const [search, setSearch] = useState('');
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
+  /** Hydrated pricing_proposals row for the Edit Pricing → PricingDashboard
+   *  flow. Mirrors the wiring in PipelinePage / PropertyEditModal so the
+   *  entry point appears wherever a proposal is opened. */
+  const [editPricingFor, setEditPricingFor] = useState<any>(null);
 
   // Two filter placeholders, mirroring Enquiries.
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -342,6 +347,28 @@ export default function ProposalsPage() {
           supabase={supabase}
           onClose={() => setOpenProposal(null)}
           onChange={fetchProposals}
+          onEditPricing={async () => {
+            if (!openProposal.pricing_proposal_id) return;
+            const { data } = await supabase
+              .from('pricing_proposals')
+              .select('*')
+              .eq('id', openProposal.pricing_proposal_id)
+              .single();
+            if (data) {
+              setEditPricingFor({ ...data, _propertyName: openProposal.property_name });
+              setOpenProposal(null);
+            }
+          }}
+        />
+      )}
+
+      {editPricingFor && (
+        <PricingModal
+          property={{ id: editPricingFor.property_id, property_name: editPricingFor._propertyName }}
+          supabase={supabase}
+          editPricingProposal={editPricingFor}
+          onClose={() => setEditPricingFor(null)}
+          onPricingSaved={() => { setEditPricingFor(null); fetchProposals(); }}
         />
       )}
     </div>
