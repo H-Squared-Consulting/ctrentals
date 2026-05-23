@@ -2864,9 +2864,11 @@ select.form-input { cursor: pointer; }
 .ops-status-pill--lost       { background: var(--bg);         color: var(--text-light); }
 .ops-status-pill--accepted   { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
 .ops-status-pill--declined   { background: var(--bg);         color: var(--text-light); }
-/* Active / inactive for settings entities (agents, platform defaults). */
+/* Active / inactive for settings entities (agents, platform defaults).
+   Archived is a third state for properties: retired from inventory. */
 .ops-status-pill--active     { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
 .ops-status-pill--inactive   { background: var(--bg);         color: var(--text-light); }
+.ops-status-pill--archived   { background: var(--bg);         color: var(--text-secondary); border-color: var(--border); }
 /* Booking status pill variants. */
 .ops-status-pill--confirmed   { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
 .ops-status-pill--tentative   { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
