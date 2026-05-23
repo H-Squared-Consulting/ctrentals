@@ -158,7 +158,11 @@ export default function PricingDashboard({
   const [loading, setLoading] = useState(true);
 
   const [scenario, setScenario] = useState<ScenarioType | null>(initialScenario ?? null);
-  const [selectedSeason, setSelectedSeason] = useState('Normal');
+  /** Season selection is either the sentinel 'normal' (base rate, ×1) or a
+   *  season_tags row ID. Using the ID (not the name) means per-property
+   *  season tags can't be silently shadowed by a business-wide tag with the
+   *  same name — each row is uniquely selectable. */
+  const [selectedSeason, setSelectedSeason] = useState<string>('normal');
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
 
@@ -210,11 +214,21 @@ export default function PricingDashboard({
   }, [supabase, property?.id, currentYear]);
 
   const baseRate = baseline?.daily_rate ?? 0;
-  const seasonMultiplier = useMemo(() => {
-    if (!selectedSeason || selectedSeason === 'Normal') return 1;
-    const tag = seasonTags.find(s => s.name === selectedSeason);
-    return tag ? tag.multiplier : 1;
-  }, [seasonTags, selectedSeason]);
+  const selectedSeasonTag = useMemo(
+    () => (selectedSeason === 'normal' ? null : seasonTags.find(s => s.id === selectedSeason) || null),
+    [seasonTags, selectedSeason],
+  );
+  const seasonMultiplier = useMemo(
+    () => (selectedSeasonTag ? Number(selectedSeasonTag.multiplier) : 1),
+    [selectedSeasonTag],
+  );
+
+  // NOTE: edit-mode hydration of `selectedSeason` from a saved snapshot's
+  // season name will land alongside PR #22 (which adds the initialSnapshot
+  // prop). When that merges, add a useEffect here that resolves the
+  // snapshot's season_tag (a name like "Peak") to the matching tag.id,
+  // preferring property-scoped over business-wide when both exist with the
+  // same name.
   const activeChannel = useMemo(
     () => channels.find(c => c.id === selectedChannelId) || null,
     [channels, selectedChannelId],
@@ -300,7 +314,10 @@ export default function PricingDashboard({
         : null,
       channelId: scenario === 'platform' ? selectedChannelId || null : null,
       baseline: baseRate,
-      seasonTag: selectedSeason || null,
+      // Snapshot carries the human-readable name (not the row ID) so the
+      // saved proposal stays meaningful even if the season_tags row is
+      // later edited or deleted.
+      seasonTag: selectedSeasonTag?.name ?? null,
       seasonMultiplier,
       ctrPct: defaultCtrPct,
       agentPct: defaultAgentPct,
@@ -395,9 +412,11 @@ export default function PricingDashboard({
         <div className="form-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="form-label" style={{ margin: 0 }}>Season</label>
           <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value)}>
-            <option value="Normal">Normal</option>
+            <option value="normal">Normal (base rate)</option>
             {seasonTags.map(s => (
-              <option key={s.id} value={s.name}>{s.name}</option>
+              <option key={s.id} value={s.id}>
+                {s.name} (×{s.multiplier}){s.property_id ? ' — this property' : ''}
+              </option>
             ))}
           </select>
         </div>
@@ -406,7 +425,7 @@ export default function PricingDashboard({
       {/* Benchmark — read-only default for this channel + season */}
       <div className="detail-modal-section">
         <div className="detail-modal-section-heading">
-          Default · {channelLabel} · {selectedSeason}
+          Default · {channelLabel} · {selectedSeasonTag?.name ?? 'Normal'}
         </div>
         {benchmark && (
           <BreakdownRows
