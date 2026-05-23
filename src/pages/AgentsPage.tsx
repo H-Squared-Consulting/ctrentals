@@ -260,8 +260,8 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
           onClose={() => setEditing(null)}
         >
           <DetailModalSection heading="Agent details">
-            <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+            <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
+              <div className="form-grid-2">
                 <div className="form-group">
                   <label className="form-label">Name *</label>
                   <input

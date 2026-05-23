@@ -266,7 +266,7 @@ export default function GuestsPage() {
           onClose={() => setEditing(null)}
         >
           <DetailModalSection heading="Contact">
-            <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
+            <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
               <div className="form-group">
                 <label className="form-label">Name *</label>
                 <input
@@ -276,7 +276,7 @@ export default function GuestsPage() {
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+              <div className="form-grid-2">
                 <div className="form-group">
                   <label className="form-label">Email</label>
                   <input className="form-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />

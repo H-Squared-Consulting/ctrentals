@@ -760,6 +760,24 @@ body {
 textarea.form-input { resize: vertical; min-height: 60px; }
 select.form-input { cursor: pointer; }
 
+/* 2-column form grid — pairs two .form-group children side by side.
+   Stacks to one column at narrow widths via the existing form rules. */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+/* Reset for <fieldset> elements used purely as a disabled wrapper
+   around form fields (DetailModal view-mode pattern). Cancels the
+   UA-default border/padding/margin so the fieldset is invisible. */
+.form-fieldset-reset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
 /* ===== Login Page ===== */
 .login-page {
   min-height: 100vh;
