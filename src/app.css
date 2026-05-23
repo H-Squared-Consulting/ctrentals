@@ -337,69 +337,6 @@ body {
   transition: var(--transition);
 }
 .overflow-menu-item:hover { background: #F3F4F6; }
-
-/* ===== Summary Cards ===== */
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 1px;
-  background: var(--border);
-  border-bottom: 1px solid var(--border);
-  border-radius: var(--radius) var(--radius) 0 0;
-  overflow: hidden;
-}
-.summary-card {
-  background: var(--surface);
-  padding: 14px 16px;
-  text-align: center;
-  position: relative;
-  transition: var(--transition);
-}
-.summary-card--hovered { background: #FAFBFC; }
-.summary-card__value {
-  font-size: 1.375rem;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--text);
-}
-.summary-card--primary .summary-card__value { color: var(--color-primary); }
-.summary-card--success .summary-card__value { color: var(--success); }
-.summary-card--warning .summary-card__value { color: var(--warning); }
-.summary-card--info .summary-card__value { color: var(--info); }
-.summary-card__label {
-  font-size: 0.625rem;
-  font-weight: 600;
-  color: var(--text-light);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-top: 2px;
-}
-.summary-card__trend { font-size: 0.6875rem; font-weight: 600; margin-top: 1px; }
-.summary-card__trend--up { color: var(--success); }
-.summary-card__trend--down { color: var(--error); }
-.summary-card__tooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--color-secondary);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 0.6875rem;
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-}
-.summary-card__tooltip-arrow {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 4px solid transparent;
-  border-top-color: var(--color-secondary);
-}
-
 /* ===== DataTable Description ===== */
 .datatable-description {
   padding: 10px 16px;
@@ -3354,7 +3291,6 @@ select.form-input { cursor: pointer; }
   .list-filters-inline { display: none; }
   .list-filter-toggle { display: flex; }
   .fab { display: flex; }
-  .summary-cards { grid-template-columns: repeat(2, 1fr); }
   .list-toolbar { padding: 8px 12px; }
   .data-table th, .data-table td { padding-left: 10px; padding-right: 10px; }
   .results-bar { padding: 5px 12px; }
@@ -3367,7 +3303,6 @@ select.form-input { cursor: pointer; }
 }
 
 @media (max-width: 480px) {
-  .summary-cards { grid-template-columns: 1fr 1fr; }
   .list-search { min-width: 140px; }
   .property-grid { grid-template-columns: 1fr; }
 }
