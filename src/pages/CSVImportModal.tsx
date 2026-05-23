@@ -7,6 +7,7 @@
 
 import { useState, useRef } from 'react';
 import { useToast } from '../components/ToastProvider';
+import ActionModal from '../components/ActionModal';
 
 const DB_COLUMNS = [
   { value: '', label: '-- Skip --' },
@@ -177,27 +178,42 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">Import Properties from CSV</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          {step === 'upload' && (
+    <ActionModal
+      title="Import Properties from CSV"
+      width={900}
+      onClose={onClose}
+      secondaryActions={
+        step === 'upload' ? (
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        ) : step === 'map' ? (
+          <button className="btn btn-secondary" onClick={() => setStep('upload')}>Back</button>
+        ) : step === 'preview' ? (
+          <button className="btn btn-secondary" onClick={() => setStep('map')} disabled={importing}>Back</button>
+        ) : null
+      }
+      primaryAction={
+        step === 'map' ? (
+          <button className="btn btn-primary" onClick={() => setStep('preview')} disabled={!getPropertyNameColumn()}>Preview</button>
+        ) : step === 'preview' ? (
+          <button className="btn btn-primary" onClick={handleImport} disabled={importing}>{importing ? 'Importing...' : 'Import'}</button>
+        ) : step === 'done' ? (
+          <button className="btn btn-primary" onClick={onSave}>Done</button>
+        ) : null
+      }
+    >
+      {step === 'upload' && (
             <div>
-              <p style={{ color: '#6B7280', marginBottom: '1rem' }}>Upload a CSV file with property data. The first row should be column headers.</p>
+              <p style={{ color: 'var(--text-light)', marginBottom: '1rem' }}>Upload a CSV file with property data. The first row should be column headers.</p>
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileRef.current?.click()}
-                style={{ border: `2px dashed ${dragOver ? '#0F4C75' : '#d1d5db'}`, borderRadius: '8px', padding: '3rem 2rem', textAlign: 'center', cursor: 'pointer', background: dragOver ? '#f0f7ff' : '#fafafa', transition: 'all 0.2s' }}
+                style={{ border: `2px dashed ${dragOver ? 'var(--color-primary)' : 'var(--border)'}`, borderRadius: '8px', padding: '3rem 2rem', textAlign: 'center', cursor: 'pointer', background: dragOver ? 'var(--color-primary-bg)' : 'var(--bg)', transition: 'all 0.2s' }}
               >
                 <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📄</div>
                 <p style={{ fontWeight: 500, marginBottom: '0.25rem' }}>Drop CSV file here or click to browse</p>
-                <p style={{ fontSize: '0.875rem', color: '#9CA3AF' }}>Expected columns: property_name, suburb, city, bedrooms, sleeps, price_from, etc.</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Expected columns: property_name, suburb, city, bedrooms, sleeps, price_from, etc.</p>
               </div>
               <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={(e) => handleFile(e.target.files[0])} style={{ display: 'none' }} />
             </div>
@@ -205,18 +221,18 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
 
           {step === 'map' && (
             <div>
-              <p style={{ color: '#6B7280', marginBottom: '1rem' }}>Map CSV columns to database fields. Columns mapped to "Skip" will be ignored.</p>
-              <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '6px', fontSize: '0.875rem' }}>
+              <p style={{ color: 'var(--text-light)', marginBottom: '1rem' }}>Map CSV columns to database fields. Columns mapped to "Skip" will be ignored.</p>
+              <div style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--success-bg)', borderRadius: '6px', fontSize: '0.875rem' }}>
                 Found <strong>{csvRows.length}</strong> rows with <strong>{csvHeaders.length}</strong> columns
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 24px 1fr', gap: '0.5rem', alignItems: 'center' }}>
-                <div style={{ fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: '#6B7280' }}>CSV Column</div>
+                <div style={{ fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-light)' }}>CSV Column</div>
                 <div />
-                <div style={{ fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: '#6B7280' }}>Database Field</div>
+                <div style={{ fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-light)' }}>Database Field</div>
                 {csvHeaders.map((header) => (
                   <div key={header} style={{ display: 'contents' }}>
-                    <div style={{ padding: '0.375rem 0.5rem', background: '#f3f4f6', borderRadius: '4px', fontSize: '0.875rem' }}>{header}</div>
-                    <span style={{ textAlign: 'center', color: '#9CA3AF' }}>&rarr;</span>
+                    <div style={{ padding: '0.375rem 0.5rem', background: 'var(--bg)', borderRadius: '4px', fontSize: '0.875rem' }}>{header}</div>
+                    <span style={{ textAlign: 'center', color: 'var(--text-muted)' }}>&rarr;</span>
                     <select className="form-input" value={mapping[header] || ''} onChange={(e) => updateMapping(header, e.target.value)} style={{ fontSize: '0.875rem' }}>
                       {DB_COLUMNS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
                     </select>
@@ -224,7 +240,7 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
                 ))}
               </div>
               {!getPropertyNameColumn() && (
-                <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#fef2f2', borderRadius: '6px', color: '#dc2626', fontSize: '0.875rem' }}>
+                <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--error-bg)', borderRadius: '6px', color: 'var(--error)', fontSize: '0.875rem' }}>
                   Warning: No column is mapped to "Property Name". Every property needs a name.
                 </div>
               )}
@@ -233,7 +249,7 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
 
           {step === 'preview' && (
             <div>
-              <p style={{ color: '#6B7280', marginBottom: '1rem' }}>Preview the data to be imported. Red rows are missing a property name and will be skipped.</p>
+              <p style={{ color: 'var(--text-light)', marginBottom: '1rem' }}>Preview the data to be imported. Red rows are missing a property name and will be skipped.</p>
               {(() => {
                 const mapped = getMappedRows();
                 const validated = validateRows(mapped);
@@ -242,26 +258,26 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
                 const dbCols = [...new Set(Object.values(mapping).filter(Boolean))];
                 return (
                   <>
-                    <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '6px', fontSize: '0.875rem' }}>
+                    <div style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--success-bg)', borderRadius: '6px', fontSize: '0.875rem' }}>
                       <strong>{validCount}</strong> of {validated.length} rows are valid and will be imported
                     </div>
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                         <thead><tr>
-                          <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', borderBottom: '2px solid #e5e7eb', fontWeight: 600 }}>#</th>
-                          {dbCols.map((col) => (<th key={col} style={{ textAlign: 'left', padding: '0.375rem 0.5rem', borderBottom: '2px solid #e5e7eb', fontWeight: 600 }}>{DB_COLUMNS.find((c) => c.value === col)?.label || col}</th>))}
+                          <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', borderBottom: '2px solid var(--border)', fontWeight: 600 }}>#</th>
+                          {dbCols.map((col) => (<th key={col} style={{ textAlign: 'left', padding: '0.375rem 0.5rem', borderBottom: '2px solid var(--border)', fontWeight: 600 }}>{DB_COLUMNS.find((c) => c.value === col)?.label || col}</th>))}
                         </tr></thead>
                         <tbody>
                           {previewRows.map((row, i) => (
-                            <tr key={i} style={{ background: row._valid ? 'transparent' : '#fef2f2' }}>
-                              <td style={{ padding: '0.375rem 0.5rem', borderBottom: '1px solid #f3f4f6', color: '#9CA3AF' }}>{i + 1}</td>
-                              {dbCols.map((col) => (<td key={col} style={{ padding: '0.375rem 0.5rem', borderBottom: '1px solid #f3f4f6', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row[col] || <span style={{ color: '#d1d5db' }}>-</span>}</td>))}
+                            <tr key={i} style={{ background: row._valid ? 'transparent' : 'var(--error-bg)' }}>
+                              <td style={{ padding: '0.375rem 0.5rem', borderBottom: '1px solid var(--border-light)', color: 'var(--text-muted)' }}>{i + 1}</td>
+                              {dbCols.map((col) => (<td key={col} style={{ padding: '0.375rem 0.5rem', borderBottom: '1px solid var(--border-light)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row[col] || <span style={{ color: 'var(--text-placeholder)' }}>-</span>}</td>))}
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    {validated.length > 15 && <p style={{ marginTop: '0.5rem', color: '#9CA3AF', fontSize: '0.8125rem' }}>Showing first 15 of {validated.length} rows</p>}
+                    {validated.length > 15 && <p style={{ marginTop: '0.5rem', color: 'var(--text-muted)', fontSize: '0.8125rem' }}>Showing first 15 of {validated.length} rows</p>}
                   </>
                 );
               })()}
@@ -269,41 +285,31 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
           )}
 
           {step === 'preview' && importing && (
-            <div style={{ marginTop: '1rem', padding: '1rem', background: '#f0f7ff', borderRadius: '6px' }}>
+            <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--color-primary-bg)', borderRadius: '6px' }}>
               <p style={{ fontWeight: 500, marginBottom: '0.5rem' }}>Importing {importProgress} of {getMappedRows().filter((r) => r.property_name?.trim()).length}...</p>
-              <div style={{ height: '6px', background: '#e5e7eb', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${(importProgress / Math.max(getMappedRows().filter((r) => r.property_name?.trim()).length, 1)) * 100}%`, background: '#0F4C75', transition: 'width 0.3s' }} />
+              <div style={{ height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${(importProgress / Math.max(getMappedRows().filter((r) => r.property_name?.trim()).length, 1)) * 100}%`, background: 'var(--color-primary)', transition: 'width 0.3s' }} />
               </div>
             </div>
           )}
 
           {step === 'done' && importResult && (
             <div>
-              <div style={{ padding: '1.5rem', borderRadius: '8px', textAlign: 'center', background: importResult.failed === 0 ? '#f0fdf4' : '#fffbeb' }}>
+              <div style={{ padding: '1.5rem', borderRadius: '8px', textAlign: 'center', background: importResult.failed === 0 ? 'var(--success-bg)' : 'var(--warning-bg)' }}>
                 <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{importResult.failed === 0 ? '✅' : '⚠️'}</div>
                 <p style={{ fontWeight: 600, fontSize: '1.125rem', marginBottom: '0.25rem' }}>Import Complete</p>
-                <p style={{ color: '#6B7280' }}>
+                <p style={{ color: 'var(--text-light)' }}>
                   Successfully imported <strong>{importResult.success}</strong> properties.
-                  {importResult.failed > 0 && <> <span style={{ color: '#dc2626' }}>{importResult.failed} failed.</span></>}
+                  {importResult.failed > 0 && <> <span style={{ color: 'var(--error)' }}>{importResult.failed} failed.</span></>}
                 </p>
                 {importResult.errors.length > 0 && (
-                  <div style={{ marginTop: '1rem', textAlign: 'left', padding: '0.75rem', background: '#fef2f2', borderRadius: '6px', fontSize: '0.8125rem', color: '#dc2626' }}>
+                  <div style={{ marginTop: '1rem', textAlign: 'left', padding: '0.75rem', background: 'var(--error-bg)', borderRadius: '6px', fontSize: '0.8125rem', color: 'var(--error)' }}>
                     {importResult.errors.map((err, i) => <p key={i}>{err}</p>)}
                   </div>
                 )}
               </div>
             </div>
           )}
-        </div>
-
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          {step === 'upload' && <button className="btn btn-secondary" onClick={onClose}>Cancel</button>}
-          {step === 'map' && (<><button className="btn btn-secondary" onClick={() => setStep('upload')}>Back</button><button className="btn btn-primary" onClick={() => setStep('preview')} disabled={!getPropertyNameColumn()}>Preview</button></>)}
-          {step === 'preview' && (<><button className="btn btn-secondary" onClick={() => setStep('map')} disabled={importing}>Back</button><button className="btn btn-primary" onClick={handleImport} disabled={importing}>{importing ? 'Importing...' : 'Import'}</button></>)}
-          {step === 'done' && <button className="btn btn-primary" onClick={onSave}>Done</button>}
-        </div>
-      </div>
-    </div>
+    </ActionModal>
   );
 }
