@@ -161,8 +161,13 @@ BEGIN
     SELECT 1 FROM information_schema.tables
      WHERE table_schema = 'public' AND table_name = 'property_owners'
   ) THEN
+    -- is_primary=true only when the property has no existing join row.
+    -- The partial unique index `property_owners_one_primary` would reject
+    -- a second primary row otherwise (and ON CONFLICT only covers the
+    -- (property_id, owner_id) constraint, not the partial-index one).
     INSERT INTO property_owners (property_id, owner_id, is_primary)
-    SELECT pp.id, pp.owner_id, true
+    SELECT pp.id, pp.owner_id,
+           NOT EXISTS (SELECT 1 FROM property_owners po WHERE po.property_id = pp.id)
       FROM partner_properties pp
      WHERE pp.partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0'
        AND pp.owner_id IS NOT NULL
