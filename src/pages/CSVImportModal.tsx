@@ -7,6 +7,7 @@
 
 import { useState, useRef } from 'react';
 import { useToast } from '../components/ToastProvider';
+import ActionModal from '../components/ActionModal';
 
 const DB_COLUMNS = [
   { value: '', label: '-- Skip --' },
@@ -177,15 +178,30 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">Import Properties from CSV</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-
-        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          {step === 'upload' && (
+    <ActionModal
+      title="Import Properties from CSV"
+      width={900}
+      onClose={onClose}
+      secondaryActions={
+        step === 'upload' ? (
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        ) : step === 'map' ? (
+          <button className="btn btn-secondary" onClick={() => setStep('upload')}>Back</button>
+        ) : step === 'preview' ? (
+          <button className="btn btn-secondary" onClick={() => setStep('map')} disabled={importing}>Back</button>
+        ) : null
+      }
+      primaryAction={
+        step === 'map' ? (
+          <button className="btn btn-primary" onClick={() => setStep('preview')} disabled={!getPropertyNameColumn()}>Preview</button>
+        ) : step === 'preview' ? (
+          <button className="btn btn-primary" onClick={handleImport} disabled={importing}>{importing ? 'Importing...' : 'Import'}</button>
+        ) : step === 'done' ? (
+          <button className="btn btn-primary" onClick={onSave}>Done</button>
+        ) : null
+      }
+    >
+      {step === 'upload' && (
             <div>
               <p style={{ color: '#6B7280', marginBottom: '1rem' }}>Upload a CSV file with property data. The first row should be column headers.</p>
               <div
@@ -294,16 +310,6 @@ export default function CSVImportModal({ partnerId, onClose, onSave, supabase, u
               </div>
             </div>
           )}
-        </div>
-
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          {step === 'upload' && <button className="btn btn-secondary" onClick={onClose}>Cancel</button>}
-          {step === 'map' && (<><button className="btn btn-secondary" onClick={() => setStep('upload')}>Back</button><button className="btn btn-primary" onClick={() => setStep('preview')} disabled={!getPropertyNameColumn()}>Preview</button></>)}
-          {step === 'preview' && (<><button className="btn btn-secondary" onClick={() => setStep('map')} disabled={importing}>Back</button><button className="btn btn-primary" onClick={handleImport} disabled={importing}>{importing ? 'Importing...' : 'Import'}</button></>)}
-          {step === 'done' && <button className="btn btn-primary" onClick={onSave}>Done</button>}
-        </div>
-      </div>
-    </div>
+    </ActionModal>
   );
 }
