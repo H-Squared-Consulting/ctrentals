@@ -60,7 +60,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked,
 }: {
   booking: any;
   properties: any[];
@@ -70,6 +70,8 @@ export default function BookingModal({
   user: any;
   partnerId: string;
   initialMode?: 'view' | 'edit';
+  isBlocked?: boolean;
+  onToggleBlocked?: () => void;
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -266,6 +268,16 @@ export default function BookingModal({
 
   const footerActions = isNew ? null : (
     <>
+      {onToggleBlocked && !isCancelled && (
+        <button
+          className={isBlocked ? 'btn btn-outline-success' : 'btn btn-outline'}
+          onClick={() => { onToggleBlocked(); onClose(); }}
+          disabled={saving}
+          title={isBlocked ? 'Restore this as a real booking' : 'Mark these dates as blocked (owner stay, maintenance, hold)'}
+        >
+          {isBlocked ? '↺ Mark as Booking' : '⊘ Mark as Block'}
+        </button>
+      )}
       {canCheckIn && (
         <button
           className="btn btn-outline-success"

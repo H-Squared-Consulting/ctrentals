@@ -306,9 +306,9 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
         locked by default.
       </p>
 
-      {/* Toolbar — baseline order: year switcher -> status -> search -> count -> save/lock */}
+      {/* Toolbar — view modes + actions on top row, filters + search below. */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="list-toolbar">
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
           <div className="list-toolbar-left">
             <div className="view-toggle">
               {YEAR_OPTIONS.map(y => (
@@ -322,29 +322,6 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
                 </button>
               ))}
             </div>
-            <select
-              className="list-filter-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              title="Filter by publish status"
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="all">All</option>
-            </select>
-            <div className="list-search">
-              <span className="list-search-icon">🔍</span>
-              <input
-                type="text"
-                placeholder="Search by name or code…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              {search && <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>}
-            </div>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {filtered.length} of {properties.length}
-            </span>
           </div>
           <div className="list-toolbar-right">
             {isDirty && (
@@ -371,6 +348,35 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
             >
               {unlocked ? '🔓 Unlocked' : '🔒 Locked'}
             </button>
+          </div>
+        </div>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
+            <select
+              className="list-filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              title="Filter by publish status"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="all">All</option>
+            </select>
+            <div className="list-search">
+              <span className="list-search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search by name or code…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>}
+            </div>
+          </div>
+          <div className="list-toolbar-right">
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+              {filtered.length} of {properties.length}
+            </span>
           </div>
         </div>
       </div>

@@ -405,6 +405,51 @@ body {
   transition: border-color var(--transition);
 }
 .list-search:focus-within { border-color: var(--color-primary-light); background: #fff; }
+
+/* "Date range" trio in the Bookings filter row — narrows the property
+   list to those free for an enquiry's dates. Height matches the sibling
+   .list-filter-select / .list-search elements so the row reads cleanly. */
+.bookings-availability-find {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.bookings-availability-find-label {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-light);
+}
+.bookings-availability-find-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--text-light);
+}
+.bookings-availability-date-input {
+  border: none;
+  background: transparent;
+  padding: 6px 4px;
+  font-size: 0.75rem;
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+  width: 120px;
+}
+.bookings-availability-find .list-filter-select {
+  border: none;
+  background-color: transparent;
+  padding: 6px 22px 6px 4px;
+}
+.bookings-availability-find .list-search-clear {
+  margin: 4px 0;
+}
 .list-search-icon { font-size: 0.75rem; flex-shrink: 0; opacity: 0.5; }
 .list-search input {
   border: none;
@@ -2187,6 +2232,8 @@ select.form-input { cursor: pointer; }
   transition: background 0.12s ease;
 }
 .bookings-board-property:hover { background: var(--bg); }
+.bookings-board-property--alt { background: rgba(0, 0, 0, 0.025); }
+.bookings-board-property--alt:hover { background: var(--bg); }
 .bookings-board-property-code {
   font-family: ui-monospace, monospace;
   font-size: 0.6875rem;
@@ -2263,6 +2310,7 @@ select.form-input { cursor: pointer; }
   height: 34px;
   border-bottom: 1px solid var(--border-light);
 }
+.bookings-board-track--alt { background: rgba(0, 0, 0, 0.025); }
 .booking-bar {
   position: absolute;
   top: 5px;
@@ -2288,16 +2336,40 @@ select.form-input { cursor: pointer; }
   transform: translateY(-1px);
   z-index: 2;
 }
-.booking-bar--confirmed   { background: var(--info);    }
-.booking-bar--tentative   { background: var(--warning); }
-.booking-bar--in_stay,
-.booking-bar--checked_in  { background: var(--success); }
-.booking-bar--completed,
-.booking-bar--checked_out { background: var(--color-primary); }
-.booking-bar--cancelled   {
-  background: var(--text-light);
-  text-decoration: line-through;
-  opacity: 0.75;
+/* Booked = real paying guest (solid blue, "locked in").
+   Blocked = owner stay / maintenance / hold (grey stripes, "off market").
+   Green is reserved for Availability tiles ("go sell this"). */
+.booking-bar--booked  { background: var(--info); }
+.booking-bar--blocked {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(120, 120, 120, 0.85),
+    rgba(120, 120, 120, 0.85) 6px,
+    rgba(90, 90, 90, 0.85) 6px,
+    rgba(90, 90, 90, 0.85) 12px
+  );
+  color: #fff;
+}
+/* Availability view: green tiles in the gaps. */
+.availability-bar {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-radius: 5px;
+  background: rgba(34, 139, 34, 0.18);
+  border: 1px dashed rgba(34, 139, 34, 0.65);
+  color: rgb(20, 80, 20);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
 }
 .bookings-board-today {
   position: absolute;
@@ -3806,4 +3878,5 @@ select.form-input { cursor: pointer; }
   margin: 0;
   min-width: 0;
 }
+
 

@@ -675,7 +675,7 @@ export default function PipelinePage() {
           context-switch; filters and search next; New button anchors the
           far right as the only "make something" action. */}
       <div className="card" style={{ marginBottom: '16px' }}>
-        <div className="list-toolbar">
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
           <div className="list-toolbar-left">
             <div className="view-toggle">
               <button
@@ -693,6 +693,18 @@ export default function PipelinePage() {
                 ☰ List
               </button>
             </div>
+          </div>
+          <div className="list-toolbar-right">
+            <button
+              className="btn btn-primary"
+              onClick={() => { window.location.href = '/enquiry/new'; }}
+            >
+              + New Enquiry
+            </button>
+          </div>
+        </div>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
             <select
               className="list-filter-select"
               value={stageFilter}
@@ -727,17 +739,11 @@ export default function PipelinePage() {
                 <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>
               )}
             </div>
+          </div>
+          <div className="list-toolbar-right">
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
               {filtered.length} of {deals.length}
             </span>
-          </div>
-          <div className="list-toolbar-right">
-            <button
-              className="btn btn-primary"
-              onClick={() => { window.location.href = '/enquiry/new'; }}
-            >
-              + New Enquiry
-            </button>
           </div>
         </div>
       </div>

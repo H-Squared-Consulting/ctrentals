@@ -299,9 +299,9 @@ export default function PropertiesPage() {
 
   return (
     <div>
-      {/* ── Toolbar — baseline order: view → filters → sort → search → count ── */}
+      {/* ── Toolbar — view modes + actions on top row, filters + search below ── */}
       <div className="card" style={{ marginBottom: '16px' }}>
-        <div className="list-toolbar">
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
           <div className="list-toolbar-left">
             <div className="view-toggle">
               <button
@@ -319,6 +319,13 @@ export default function PropertiesPage() {
                 ☰ Table
               </button>
             </div>
+          </div>
+          <div className="list-toolbar-right">
+            <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ New Property</button>
+          </div>
+        </div>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
             {/* Status — single-select keeps the toolbar to one row.
                 Inactive = temporarily parked. Archived = retired. */}
             <select
@@ -395,12 +402,11 @@ export default function PropertiesPage() {
                 <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>
               )}
             </div>
+          </div>
+          <div className="list-toolbar-right">
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
               {filteredProperties.length} of {properties.length} total
             </span>
-          </div>
-          <div className="list-toolbar-right">
-            <button className="btn btn-primary" onClick={() => (setEditorMode('edit'), setEditingProperty({}))}>+ New Property</button>
           </div>
         </div>
       </div>
