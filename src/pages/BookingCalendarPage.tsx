@@ -95,7 +95,15 @@ export default function BookingCalendarPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSuburb, setFilterSuburb] = useState('');
   const [filterBedrooms, setFilterBedrooms] = useState<number[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'live' | 'cancelled' | 'all'>('live');
+  // Status filter — more granular than the old live/cancelled/all so Hayley
+  // can focus the list on what's actually demanding action this week. Date-
+  // based (not status-column-based) so a booking sitting on 'confirmed' but
+  // whose dates say it's mid-stay correctly appears under In stay without
+  // someone having to manually flip the status column.
+  const [statusFilter, setStatusFilter] = useState<'active' | 'upcoming' | 'in_stay' | 'completed' | 'cancelled' | 'all'>('active');
+  /** Date-window narrowing for the list view. The board view has its own
+   *  ← Today → date nav so this filter is hidden there. */
+  const [dateWindow, setDateWindow] = useState<'next_7' | 'next_14' | 'next_30' | 'past' | 'all'>('next_30');
 
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
 
@@ -173,11 +181,73 @@ export default function BookingCalendarPage() {
     return result;
   }, [properties, searchQuery, filterSuburb, filterBedrooms]);
 
-  // Status filter applies to bookings (list view + board bars).
+  // Status + date-window filters applied to the bookings list. Both work
+  // off today's date so "in stay" / "upcoming" / "next 7 days" stay honest
+  // without relying on someone manually flipping the status column.
   const filteredBookings = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const daysFromToday = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+
     let result = bookings;
-    if (statusFilter === 'live') result = result.filter(b => b.status !== 'cancelled');
-    if (statusFilter === 'cancelled') result = result.filter(b => b.status === 'cancelled');
+
+    // Status — date-aware for upcoming / in_stay / completed; pure status
+    // for cancelled. "active" is the operational default (upcoming OR in
+    // stay, not cancelled, not yet completed).
+    switch (statusFilter) {
+      case 'active':
+        result = result.filter(b =>
+          b.status !== 'cancelled' && b.check_out && b.check_out >= today,
+        );
+        break;
+      case 'upcoming':
+        result = result.filter(b =>
+          b.status !== 'cancelled' && b.check_in && b.check_in > today,
+        );
+        break;
+      case 'in_stay':
+        result = result.filter(b =>
+          b.status !== 'cancelled'
+          && b.check_in && b.check_in <= today
+          && b.check_out && b.check_out >= today,
+        );
+        break;
+      case 'completed':
+        result = result.filter(b =>
+          b.status !== 'cancelled' && b.check_out && b.check_out < today,
+        );
+        break;
+      case 'cancelled':
+        result = result.filter(b => b.status === 'cancelled');
+        break;
+      case 'all':
+        // no filter
+        break;
+    }
+
+    // Date window — narrows by check_in into a rolling window. Only the
+    // list view exposes this control; in board view the date navigation
+    // (← Today →) does the job so we skip it to avoid double-narrowing.
+    if (view === 'list' && dateWindow !== 'all') {
+      switch (dateWindow) {
+        case 'next_7':
+          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(7));
+          break;
+        case 'next_14':
+          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(14));
+          break;
+        case 'next_30':
+          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(30));
+          break;
+        case 'past':
+          result = result.filter(b => b.check_out && b.check_out < today);
+          break;
+      }
+    }
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(b =>
@@ -186,7 +256,7 @@ export default function BookingCalendarPage() {
       );
     }
     return result;
-  }, [bookings, statusFilter, searchQuery]);
+  }, [bookings, statusFilter, dateWindow, view, searchQuery]);
 
   const propertyById = useMemo(() => {
     const m = new Map<string, Property>();
@@ -361,13 +431,30 @@ export default function BookingCalendarPage() {
             <select
               className="list-filter-select"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
               title="Filter by status"
             >
-              <option value="live">Live (not cancelled)</option>
-              <option value="cancelled">Cancelled only</option>
+              <option value="active">Active (upcoming + in stay)</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="in_stay">In stay</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
               <option value="all">All</option>
             </select>
+            {view === 'list' && (
+              <select
+                className="list-filter-select"
+                value={dateWindow}
+                onChange={(e) => setDateWindow(e.target.value as typeof dateWindow)}
+                title="Narrow by check-in date window"
+              >
+                <option value="next_7">Next 7 days</option>
+                <option value="next_14">Next 14 days</option>
+                <option value="next_30">Next 30 days</option>
+                <option value="past">Past</option>
+                <option value="all">Any date</option>
+              </select>
+            )}
             <select
               className="list-filter-select"
               value={filterSuburb}

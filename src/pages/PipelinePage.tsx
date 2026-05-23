@@ -29,6 +29,7 @@ import NewProposalLauncher from '../components/NewProposalLauncher';
 import NightCount from '../components/NightCount';
 import ProposalDetailModal from '../components/ProposalDetailModal';
 import SendProposalDialog from '../components/SendProposalDialog';
+import PricingModal from './PricingModal';
 import { nightsBetween } from '../lib/nights';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { fmtRand } from '../lib/pricingEngine';
@@ -327,6 +328,10 @@ export default function PipelinePage() {
   const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit' } | null>(null);
   const openDealInMode = (deal: Deal, mode: 'view' | 'edit' = 'view') => setOpenDeal({ deal, mode });
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
+  /** Hydrated pricing_proposals row for the Edit Pricing → PricingDashboard
+   *  flow. Mirrors the wiring inside PropertyEditModal so the entry point
+   *  is consistent wherever a ProposalDetailModal appears. */
+  const [editPricingFor, setEditPricingFor] = useState<any>(null);
   const [launcherFor, setLauncherFor] = useState<EnquiryPrefill | null>(null);
   /** When set, the launcher opens with no enquiry — for the "+ Standalone
    *  proposal" path. Distinct from launcherFor so the launcher knows the
@@ -780,6 +785,28 @@ export default function PipelinePage() {
           supabase={supabase}
           onClose={() => setOpenProposal(null)}
           onChange={fetchDeals}
+          onEditPricing={async () => {
+            if (!openProposal.pricing_proposal_id) return;
+            const { data } = await supabase
+              .from('pricing_proposals')
+              .select('*')
+              .eq('id', openProposal.pricing_proposal_id)
+              .single();
+            if (data) {
+              setEditPricingFor({ ...data, _propertyName: openProposal.property_name });
+              setOpenProposal(null);
+            }
+          }}
+        />
+      )}
+
+      {editPricingFor && (
+        <PricingModal
+          property={{ id: editPricingFor.property_id, property_name: editPricingFor._propertyName }}
+          supabase={supabase}
+          editPricingProposal={editPricingFor}
+          onClose={() => setEditPricingFor(null)}
+          onPricingSaved={() => { setEditPricingFor(null); fetchDeals(); }}
         />
       )}
 

@@ -1,11 +1,11 @@
 /**
  * PricingModal -- Pricing calculator for a property.
  *
- * Two modes:
+ * Two modes, both routed through the same PricingDashboard:
  *   - mode='create' (default): blank calculator. "Create Proposal" opens
  *     CreateProposalModal which asks for guest details and inserts both a
  *     pricing_proposals snapshot + a linked proposals row in one step.
- *   - mode='edit': calculator pre-filled with an existing pricing_proposal.
+ *   - mode='edit': dashboard pre-filled with an existing pricing_proposal.
  *     "Save Pricing" UPDATEs that snapshot in place. The linked proposal
  *     automatically reflects the new price.
  */
@@ -13,10 +13,9 @@
 import { useState } from 'react';
 import ActionModal from '../components/ActionModal';
 import { useToast } from '../components/ToastProvider';
-import PricingWidget, { snapshotToText } from '../components/PricingWidget';
 import PricingDashboard from '../components/PricingDashboard';
 import CreateProposalModal from '../components/CreateProposalModal';
-import type { PricingSnapshot } from '../components/PricingWidget';
+import type { PricingSnapshot } from '../components/PricingDashboard';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
 import type { PricingProposal } from '../types/pricing';
 
@@ -29,8 +28,8 @@ interface PricingModalProps {
   property: { id: string; property_name: string };
   onClose: () => void;
   supabase: any;
-  /** Edit mode pre-fills the widget with an existing pricing snapshot and
-   *  changes "Create Proposal" → "Save Pricing" (updates in place). */
+  /** Edit mode pre-fills the dashboard with an existing pricing snapshot
+   *  and changes the primary action to "Save pricing" (in-place UPDATE). */
   editPricingProposal?: PricingProposal;
   /** Called after a successful save in edit mode. */
   onPricingSaved?: () => void;
@@ -53,7 +52,7 @@ export default function PricingModal({
 
   const isEdit = Boolean(editPricingProposal);
 
-  // ── Create-mode handler: hand the snapshot off to the modal ──
+  // ── Create-mode handler: hand the snapshot off to CreateProposalModal ──
   function handleCreateProposal(snap: PricingSnapshot) {
     setCreatingFromSnapshot(snap);
   }
@@ -67,9 +66,9 @@ export default function PricingModal({
       const payload = {
         scenario_type: snap.scenarioType,
         agent_id: snap.agentId,
-        // Multi-agent split — Postgres JSONB column; pg-driver serialises the
-        // array straight through. Empty array for non-agent scenarios so we
-        // don't leave stale data on row.
+        // Multi-agent split — Postgres JSONB column; pg-driver serialises
+        // the array straight through. Empty array for non-agent scenarios
+        // so stale data doesn't linger on the row.
         agents: snap.agents.map(a => ({ id: a.id, pct: a.pct })),
         channel_profile_id: snap.channelId,
         baseline_used: snap.baseline,
@@ -105,46 +104,23 @@ export default function PricingModal({
     }
   }
 
-  // ── Share Calc (clipboard) ──
-  async function handleShareCalc(snap: PricingSnapshot) {
-    const text = snapshotToText(snap, property.property_name);
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success('Pricing copied to clipboard');
-    } catch {
-      toast.error('Could not copy to clipboard');
-    }
-  }
-
   return (
     <>
       <ActionModal
         title={isEdit ? 'Edit pricing' : 'Pricing calculator'}
         subtitle={titleCase(property.property_name)}
-        width={isEdit ? 900 : 560}
+        width={560}
         hideFooter
         onClose={onClose}
       >
-        {isEdit ? (
-          // Edit mode keeps the older PricingWidget until the dashboard
-          // gets snapshot-hydration in the next PR.
-          <PricingWidget
-            property={property}
-            supabase={supabase}
-            initialSnapshot={editPricingProposal ?? null}
-            onCreateProposal={handleSavePricing}
-            onShareCalc={handleShareCalc}
-            saving={saving}
-            actionLabel="Save Pricing"
-          />
-        ) : (
-          <PricingDashboard
-            property={property}
-            supabase={supabase}
-            onCreateProposal={handleCreateProposal}
-            actionLabel="Create proposal from this"
-          />
-        )}
+        <PricingDashboard
+          property={property}
+          supabase={supabase}
+          initialSnapshot={editPricingProposal ?? null}
+          onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
+          actionLabel={isEdit ? 'Save pricing' : 'Create proposal from this'}
+          saving={saving}
+        />
       </ActionModal>
 
       {creatingFromSnapshot && (
