@@ -135,11 +135,13 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const isDirty = useMemo(() => {
     if (!initialFormRef.current) return false;
     try {
-      return JSON.stringify(form) !== JSON.stringify(initialFormRef.current);
+      if (JSON.stringify(form) !== JSON.stringify(initialFormRef.current)) return true;
+      if (JSON.stringify(ownerLinks) !== JSON.stringify(initialOwnerLinks)) return true;
+      return false;
     } catch {
       return false;
     }
-  }, [form]);
+  }, [form, ownerLinks, initialOwnerLinks]);
 
   // Tell the silent auto-update reloader to defer a refresh while the
   // property editor has unsaved changes. DetailModal handles the dirty
@@ -160,6 +162,66 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     if (data) setOwners(data);
   }
   useEffect(() => { loadOwners(); }, [supabase, partnerId]);
+
+  // Multi-owner editor state. Each row links one home_owner to this
+  // property with optional ownership_pct and a single is_primary flag
+  // across the rows. `existingDbId` is set on rows that came from the
+  // DB so handleSave can diff add/update/remove without re-reading.
+  // For brand-new properties (no id) we seed an empty starter row so
+  // the user has somewhere to pick straight away.
+  const [ownerLinks, setOwnerLinks] = useState(() => {
+    if (property.id && property.owner_id) {
+      return [{ ownerId: property.owner_id, pct: '', isPrimary: true }];
+    }
+    return [{ ownerId: '', pct: '', isPrimary: true }];
+  });
+  const [initialOwnerLinks, setInitialOwnerLinks] = useState(ownerLinks);
+  const [ownerLinksLoaded, setOwnerLinksLoaded] = useState(false);
+
+  // Load the canonical multi-owner rows from property_owners. Falls
+  // back to the seed row built from partner_properties.owner_id if
+  // the join table query fails (e.g. migration not yet applied).
+  useEffect(() => {
+    if (!property.id) { setOwnerLinksLoaded(true); return; }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('property_owners')
+        .select('id, owner_id, ownership_pct, is_primary')
+        .eq('property_id', property.id);
+      if (cancelled) return;
+      if (error) {
+        // Migration probably not applied yet. Keep the fallback row
+        // built from owner_id at mount so the user can still edit.
+        setOwnerLinksLoaded(true);
+        return;
+      }
+      if (Array.isArray(data) && data.length > 0) {
+        const rows = data.map((r) => ({
+          existingDbId: r.id,
+          ownerId: r.owner_id,
+          pct: r.ownership_pct == null ? '' : String(r.ownership_pct),
+          isPrimary: !!r.is_primary,
+        }));
+        // Ensure exactly one primary — if the DB has none, mark the
+        // first row primary so the UI can never render zero radios.
+        if (!rows.some((r) => r.isPrimary) && rows.length > 0) rows[0].isPrimary = true;
+        setOwnerLinks(rows);
+        setInitialOwnerLinks(rows);
+      } else if (property.owner_id) {
+        const seed = [{ ownerId: property.owner_id, pct: '', isPrimary: true }];
+        setOwnerLinks(seed);
+        setInitialOwnerLinks(seed);
+      } else {
+        const seed = [{ ownerId: '', pct: '', isPrimary: true }];
+        setOwnerLinks(seed);
+        setInitialOwnerLinks(seed);
+      }
+      setOwnerLinksLoaded(true);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [property.id]);
 
   // Inline "Create owner" form state. Lightweight: name + company +
   // VAT + email + phone. Full record can be filled in later from the
@@ -182,23 +244,26 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       const { data, error } = await supabase.from('home_owners').insert(payload).select().single();
       if (error) throw error;
 
-      // Immediately persist the link to partner_properties.owner_id so the
-      // user doesn't have to remember to click Save on the property editor
-      // afterwards. For brand-new properties (no id yet) we just stash the
-      // id on the form — handleSave's payload writes owner_id on insert.
-      if (!isNew && property.id) {
-        const { error: linkErr } = await supabase
-          .from('partner_properties')
-          .update({ owner_id: data.id, updated_at: new Date().toISOString() })
-          .eq('id', property.id);
-        if (linkErr) throw linkErr;
-      }
-
       await loadOwners();
-      setForm(f => ({ ...f, owner_id: data.id }));
+
+      // Drop the new owner into the first blank row of ownerLinks; if
+      // every row is already populated, push a new row instead. The
+      // property_owners write happens on Save (not here) so the user
+      // can change their mind without orphan rows in the DB.
+      setOwnerLinks((rows) => {
+        const next = rows.slice();
+        const blankIdx = next.findIndex((r) => !r.ownerId);
+        if (blankIdx >= 0) {
+          next[blankIdx] = { ...next[blankIdx], ownerId: data.id };
+        } else {
+          next.push({ ownerId: data.id, pct: '', isPrimary: next.length === 0 });
+        }
+        return next;
+      });
+
       setOwnerDraft({ name: '', company: '', vat_number: '', email: '', phone: '' });
       setShowOwnerCreate(false);
-      toast.success(`${data.name} added and linked`);
+      toast.success(`${data.name} added — click Save to link them`);
     } catch (err) {
       toast.error('Failed to create owner: ' + (err?.message || err));
     } finally {
@@ -467,6 +532,42 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
   async function handleSave() {
     if (!form.property_name.trim()) { toast.error('Property name is required'); return; }
+
+    // ── Pre-flight: validate the multi-owner rows before we touch DB ──
+    // Drop blank rows silently; reject duplicates; coerce empty pct to
+    // null; warn (don't block) if the non-null pct sum > 100.
+    const cleanedLinks = ownerLinks
+      .filter((r) => r.ownerId)
+      .map((r) => {
+        const trimmed = (r.pct ?? '').toString().trim();
+        const pctNum = trimmed === '' ? null : Number(trimmed);
+        return { ...r, pct: trimmed, pctNum };
+      });
+    const seen = new Set<string>();
+    for (const r of cleanedLinks) {
+      if (seen.has(r.ownerId)) {
+        toast.error('The same owner is listed twice — remove the duplicate before saving.');
+        return;
+      }
+      seen.add(r.ownerId);
+      if (r.pctNum != null && (Number.isNaN(r.pctNum) || r.pctNum < 0 || r.pctNum > 100)) {
+        toast.error('Ownership % must be between 0 and 100.');
+        return;
+      }
+    }
+    const primariesCount = cleanedLinks.filter((r) => r.isPrimary).length;
+    if (cleanedLinks.length > 0 && primariesCount > 1) {
+      toast.error('Only one owner can be marked Primary.');
+      return;
+    }
+    const sumPct = cleanedLinks.reduce((acc, r) => acc + (r.pctNum ?? 0), 0);
+    if (sumPct > 100) {
+      toast.warning(`Ownership shares add up to ${sumPct}% — over 100%. Saving anyway.`);
+    }
+    const primaryOwnerId = cleanedLinks.find((r) => r.isPrimary)?.ownerId
+      ?? cleanedLinks[0]?.ownerId
+      ?? null;
+
     setSaving(true);
     try {
       const payload = {
@@ -506,7 +607,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         owner_phone: form.owner_phone.trim() || null,
         is_published: form.is_published,
         is_archived: form.is_archived,
-        owner_id: form.owner_id || null,
+        // owner_id mirrors the primary owner from the multi-owner
+        // editor. Kept in sync for back-compat with any code that
+        // still reads partner_properties.owner_id directly.
+        owner_id: primaryOwnerId,
         is_featured: form.is_featured,
         pos_assured: form.pos_assured,
         sort_order: parseInt(form.sort_order, 10) || 0,
@@ -514,14 +618,128 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         notes: form.notes.trim() || null,
       };
 
+      let savedPropertyId = property.id;
       if (isNew) {
         payload.created_by = user?.id || null;
-        const { error } = await supabase.from('partner_properties').insert(payload);
+        const { data, error } = await supabase.from('partner_properties').insert(payload).select('id').single();
         if (error) throw error;
+        savedPropertyId = data.id;
       } else {
         const { error } = await supabase.from('partner_properties').update(payload).eq('id', property.id);
         if (error) throw error;
       }
+
+      // ── Sync property_owners ──
+      // Order matters: clear primary on every kept row first so the
+      // partial unique index can't reject an INSERT/UPDATE later.
+      if (savedPropertyId) {
+        try {
+          // 1. Fetch the current DB state for this property.
+          const { data: existingRows, error: fetchErr } = await supabase
+            .from('property_owners')
+            .select('id, owner_id, ownership_pct, is_primary')
+            .eq('property_id', savedPropertyId);
+          if (fetchErr) throw fetchErr;
+
+          const existing = existingRows || [];
+          const desiredIds = new Set(cleanedLinks.map((r) => r.ownerId));
+          const desiredByDbId = new Map(
+            cleanedLinks.filter((r) => r.existingDbId).map((r) => [r.existingDbId, r])
+          );
+
+          const rowsToDelete = existing.filter((r) => !desiredIds.has(r.owner_id));
+          const rowsToInsert = cleanedLinks.filter((r) => !r.existingDbId);
+          const rowsToUpdate = existing
+            .filter((r) => desiredByDbId.has(r.id))
+            .map((dbRow) => ({ dbRow, desired: desiredByDbId.get(dbRow.id)! }));
+
+          // 1a. Clear is_primary on every row we're keeping, so the
+          //     partial unique index has no current "primary" row when
+          //     we later set the new primary.
+          if (existing.length > 0) {
+            const { error: clearErr } = await supabase
+              .from('property_owners')
+              .update({ is_primary: false })
+              .eq('property_id', savedPropertyId);
+            if (clearErr) throw clearErr;
+          }
+
+          // 1b. Delete removed rows.
+          if (rowsToDelete.length > 0) {
+            const { error: delErr } = await supabase
+              .from('property_owners')
+              .delete()
+              .in('id', rowsToDelete.map((r) => r.id));
+            if (delErr) throw delErr;
+          }
+
+          // 1c. Insert brand-new rows with is_primary=false.
+          if (rowsToInsert.length > 0) {
+            const insertPayload = rowsToInsert.map((r) => ({
+              property_id: savedPropertyId,
+              owner_id: r.ownerId,
+              ownership_pct: r.pctNum,
+              is_primary: false,
+            }));
+            const { error: insErr } = await supabase
+              .from('property_owners')
+              .insert(insertPayload);
+            if (insErr) throw insErr;
+          }
+
+          // 1d. Update kept rows (pct only — primary set in 1e below).
+          for (const { dbRow, desired } of rowsToUpdate) {
+            const { error: upErr } = await supabase
+              .from('property_owners')
+              .update({ ownership_pct: desired.pctNum })
+              .eq('id', dbRow.id);
+            if (upErr) throw upErr;
+          }
+
+          // 1e. Promote exactly one row to primary, if the user picked one.
+          if (primaryOwnerId) {
+            const { error: pErr } = await supabase
+              .from('property_owners')
+              .update({ is_primary: true })
+              .eq('property_id', savedPropertyId)
+              .eq('owner_id', primaryOwnerId);
+            if (pErr) throw pErr;
+          }
+
+          // 2. Mirror primary owner back to partner_properties.owner_id
+          //    for any reader that still hits the legacy column.
+          const { error: backErr } = await supabase
+            .from('partner_properties')
+            .update({ owner_id: primaryOwnerId, updated_at: new Date().toISOString() })
+            .eq('id', savedPropertyId);
+          if (backErr) throw backErr;
+
+          // 3. Refresh the local snapshot from the DB so the dirty
+          //    check stops complaining and the radio buttons reflect
+          //    real DB state.
+          const { data: refreshed } = await supabase
+            .from('property_owners')
+            .select('id, owner_id, ownership_pct, is_primary')
+            .eq('property_id', savedPropertyId);
+          if (refreshed) {
+            const rows = refreshed.map((r) => ({
+              existingDbId: r.id,
+              ownerId: r.owner_id,
+              pct: r.ownership_pct == null ? '' : String(r.ownership_pct),
+              isPrimary: !!r.is_primary,
+            }));
+            if (rows.length === 0) rows.push({ ownerId: '', pct: '', isPrimary: true });
+            setOwnerLinks(rows);
+            setInitialOwnerLinks(rows);
+          }
+        } catch (linkErr) {
+          // Property header saved but owner sync failed. Surface the
+          // error clearly so the user knows owners didn't persist.
+          toast.error('Property saved but owners failed to update: ' + (linkErr?.message || linkErr));
+          // Don't bail — keep going so the dirty baseline refreshes.
+        }
+      }
+
       // Refresh the dirty baseline so the user can keep editing without
       // false-positive "unsaved changes" prompts.
       initialFormRef.current = form;

@@ -39,7 +39,17 @@ interface HomeOwner {
 interface PropertyLite {
   id: string;
   property_name: string;
+  /** Legacy single-owner FK. Kept in sync (= the current primary
+   *  owner's id, or null) for back-compat with code that hasn't
+   *  migrated to property_owners yet. */
   owner_id: string | null;
+}
+
+interface PropertyOwnerLink {
+  id: string;
+  property_id: string;
+  owner_id: string;
+  is_primary: boolean;
 }
 
 const EMPTY_FORM = { name: '', email: '', phone: '', company: '', vat_number: '', payment_notes: '', notes: '' };
@@ -51,6 +61,11 @@ export default function HomeOwnersPage() {
 
   const [owners, setOwners] = useState<HomeOwner[]>([]);
   const [properties, setProperties] = useState<PropertyLite[]>([]);
+  /** All property→owner links across the partner. Drives the
+   *  portfolio map and the picker's "also owned by" hint. Falls
+   *  back to deriving from partner_properties.owner_id if the
+   *  join table query fails (e.g. migration not yet applied). */
+  const [propertyOwners, setPropertyOwners] = useState<PropertyOwnerLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
@@ -77,19 +92,57 @@ export default function HomeOwnersPage() {
     ]);
     if (oRes.data) setOwners(oRes.data as HomeOwner[]);
     if (pRes.data) setProperties(pRes.data as PropertyLite[]);
+    // Load all property→owner links scoped to this partner's
+    // properties. The !inner join keeps other partners' links from
+    // leaking. Falls back to deriving from owner_id below if the
+    // join table isn't reachable.
+    const linksRes = await supabase
+      .from('property_owners')
+      .select('id, property_id, owner_id, is_primary, partner_properties!inner(partner_id)')
+      .eq('partner_properties.partner_id', CT_RENTALS_PARTNER_ID);
+    if (linksRes.error) {
+      // Fallback: synthesise links from partner_properties.owner_id.
+      const synth: PropertyOwnerLink[] = (pRes.data || [])
+        .filter((p: any) => p.owner_id)
+        .map((p: any) => ({ id: `legacy-${p.id}`, property_id: p.id, owner_id: p.owner_id, is_primary: true }));
+      setPropertyOwners(synth);
+    } else {
+      setPropertyOwners((linksRes.data || []) as PropertyOwnerLink[]);
+    }
     setLoading(false);
   }
   useEffect(() => { if (supabase) load(); }, [supabase]);
 
-  // owner_id → [PropertyLite]
+  // owner_id → [PropertyLite]. Derived from property_owners so a
+  // property with multiple linked owners appears in each owner's
+  // portfolio.
   const portfolioByOwner = useMemo(() => {
     const map: Record<string, PropertyLite[]> = {};
-    for (const p of properties) {
-      if (!p.owner_id) continue;
-      (map[p.owner_id] ||= []).push(p);
+    const byId: Record<string, PropertyLite> = {};
+    for (const p of properties) byId[p.id] = p;
+    for (const link of propertyOwners) {
+      const p = byId[link.property_id];
+      if (!p) continue;
+      (map[link.owner_id] ||= []).push(p);
     }
     return map;
-  }, [properties]);
+  }, [properties, propertyOwners]);
+
+  // property_id → [HomeOwner] for the picker's "also owned by" hint.
+  // Sorted with the primary first so the rendered list reads naturally.
+  const ownersByProperty = useMemo(() => {
+    const map: Record<string, HomeOwner[]> = {};
+    const ownerById: Record<string, HomeOwner> = {};
+    for (const o of owners) ownerById[o.id] = o;
+    // Group then sort each group primary-first.
+    const grouped: Record<string, PropertyOwnerLink[]> = {};
+    for (const link of propertyOwners) (grouped[link.property_id] ||= []).push(link);
+    for (const [propId, links] of Object.entries(grouped)) {
+      links.sort((a, b) => Number(b.is_primary) - Number(a.is_primary));
+      map[propId] = links.map(l => ownerById[l.owner_id]).filter(Boolean);
+    }
+    return map;
+  }, [owners, propertyOwners]);
 
   const companies = useMemo(() => {
     const set = new Set<string>();
@@ -145,6 +198,47 @@ export default function HomeOwnersPage() {
     setMode('edit');
   }
 
+  /** Write partner_properties.owner_id so legacy readers (still on the
+   *  single-FK column) see the right primary. nextOwnerId === null
+   *  means the property no longer has any owner. */
+  async function syncLegacyOwnerId(propertyId: string, nextOwnerId: string | null) {
+    await supabase
+      .from('partner_properties')
+      .update({ owner_id: nextOwnerId, updated_at: new Date().toISOString() })
+      .eq('id', propertyId);
+  }
+
+  /** Detach `ownerId` from a single property: delete the link, promote
+   *  another surviving owner to primary if needed, sync the legacy
+   *  owner_id column. Used by save() drops and by the delete flow. */
+  async function detachOwnerFromProperty(propertyId: string, ownerId: string) {
+    const wasPrimary = propertyOwners.some(
+      l => l.property_id === propertyId && l.owner_id === ownerId && l.is_primary,
+    );
+    await supabase
+      .from('property_owners')
+      .delete()
+      .eq('property_id', propertyId)
+      .eq('owner_id', ownerId);
+    if (!wasPrimary) return;
+    const survivors = await supabase
+      .from('property_owners')
+      .select('id, owner_id, created_at')
+      .eq('property_id', propertyId)
+      .order('created_at', { ascending: true })
+      .limit(1);
+    const nextPrimary = survivors.data?.[0];
+    if (nextPrimary) {
+      await supabase
+        .from('property_owners')
+        .update({ is_primary: true })
+        .eq('id', nextPrimary.id);
+      await syncLegacyOwnerId(propertyId, nextPrimary.owner_id);
+    } else {
+      await syncLegacyOwnerId(propertyId, null);
+    }
+  }
+
   async function save() {
     if (!form.name.trim()) { toast.error('Name is required'); return; }
     setSaving(true);
@@ -170,27 +264,58 @@ export default function HomeOwnersPage() {
         ownerId = data.id;
       }
 
-      // Property assignment diff — only touch rows whose ownership changed.
-      // Add  = id selected now, was NOT linked before  → set owner_id = ownerId
-      // Drop = id NOT selected now, WAS linked before → set owner_id = null
+      // Property assignment diff — only touch links whose membership
+      // changed. Add  = id selected now, was NOT linked before; Drop
+      // = id NOT selected now, WAS linked before.
       const originalIds = new Set((portfolioByOwner[editing.id] || []).map(p => p.id));
       const toAdd: string[] = [];
       const toDrop: string[] = [];
       for (const id of selectedPropertyIds) if (!originalIds.has(id)) toAdd.push(id);
       for (const id of originalIds) if (!selectedPropertyIds.has(id)) toDrop.push(id);
-      if (toAdd.length > 0) {
+
+      for (const propId of toAdd) {
+        // Add a link. Mark primary only if the property currently has
+        // no other owners. Surfaces as the contact for that property.
+        const existing = propertyOwners.filter(l => l.property_id === propId);
+        const isPrimary = existing.length === 0;
         const { error } = await supabase
-          .from('partner_properties')
-          .update({ owner_id: ownerId, updated_at: new Date().toISOString() })
-          .in('id', toAdd);
+          .from('property_owners')
+          .insert({ property_id: propId, owner_id: ownerId, is_primary: isPrimary });
         if (error) throw error;
+        if (isPrimary) await syncLegacyOwnerId(propId, ownerId);
       }
-      if (toDrop.length > 0) {
-        const { error } = await supabase
-          .from('partner_properties')
-          .update({ owner_id: null, updated_at: new Date().toISOString() })
-          .in('id', toDrop);
-        if (error) throw error;
+
+      for (const propId of toDrop) {
+        // Remove this owner's link to the property. If they were the
+        // primary, promote any remaining owner (oldest first) to
+        // primary so the property still has a contact.
+        const wasPrimary = propertyOwners.some(
+          l => l.property_id === propId && l.owner_id === ownerId && l.is_primary,
+        );
+        const delRes = await supabase
+          .from('property_owners')
+          .delete()
+          .eq('property_id', propId)
+          .eq('owner_id', ownerId);
+        if (delRes.error) throw delRes.error;
+        if (wasPrimary) {
+          const survivors = await supabase
+            .from('property_owners')
+            .select('id, owner_id, created_at')
+            .eq('property_id', propId)
+            .order('created_at', { ascending: true })
+            .limit(1);
+          const nextPrimary = survivors.data?.[0];
+          if (nextPrimary) {
+            await supabase
+              .from('property_owners')
+              .update({ is_primary: true })
+              .eq('id', nextPrimary.id);
+            await syncLegacyOwnerId(propId, nextPrimary.owner_id);
+          } else {
+            await syncLegacyOwnerId(propId, null);
+          }
+        }
       }
 
       toast.success(editing.id ? 'Owner updated' : 'Owner added');
@@ -207,12 +332,17 @@ export default function HomeOwnersPage() {
    *  opening the modal. Confirms before destroying. */
   async function deleteOwner(o: HomeOwner, e: React.MouseEvent) {
     e.stopPropagation();
-    const linked = portfolioByOwner[o.id]?.length || 0;
+    const linkedProps = portfolioByOwner[o.id] || [];
+    const linked = linkedProps.length;
     const msg = linked > 0
       ? `Delete ${o.name}? ${linked} propert${linked === 1 ? 'y' : 'ies'} will be unlinked (the properties themselves stay).`
       : `Delete ${o.name}?`;
     if (!confirm(msg)) return;
     try {
+      // Detach from every linked property first — property_owners.owner_id
+      // is ON DELETE RESTRICT, so the home_owners row can only go once
+      // every link is gone. Promotes a new primary where needed.
+      for (const p of linkedProps) await detachOwnerFromProperty(p.id, o.id);
       const { error } = await supabase.from('home_owners').delete().eq('id', o.id);
       if (error) throw error;
       toast.success('Owner deleted');
@@ -224,13 +354,15 @@ export default function HomeOwnersPage() {
 
   async function remove() {
     if (!editing?.id) return;
-    const linked = portfolioByOwner[editing.id]?.length || 0;
+    const linkedProps = portfolioByOwner[editing.id] || [];
+    const linked = linkedProps.length;
     const msg = linked > 0
       ? `Delete ${editing.name}? ${linked} propert${linked === 1 ? 'y' : 'ies'} will be unlinked (the properties themselves stay).`
       : `Delete ${editing.name}?`;
     if (!confirm(msg)) return;
     setSaving(true);
     try {
+      for (const p of linkedProps) await detachOwnerFromProperty(p.id, editing.id);
       const { error } = await supabase.from('home_owners').delete().eq('id', editing.id);
       if (error) throw error;
       toast.success('Owner deleted');
@@ -364,7 +496,7 @@ export default function HomeOwnersPage() {
               <fieldset disabled={mode === 'view'} style={{ border: 0, padding: 0, margin: 0 }}>
                 <PropertyPicker
                   allProperties={properties}
-                  owners={owners}
+                  ownersByProperty={ownersByProperty}
                   editingOwnerId={editing.id}
                   selectedIds={selectedPropertyIds}
                   onChange={setSelectedPropertyIds}
@@ -457,10 +589,10 @@ function OwnersTable({
 // open so the user can add several in a row without re-clicking.
 
 function PropertyPicker({
-  allProperties, owners, editingOwnerId, selectedIds, onChange, search, setSearch, open, setOpen,
+  allProperties, ownersByProperty, editingOwnerId, selectedIds, onChange, search, setSearch, open, setOpen,
 }: {
   allProperties: PropertyLite[];
-  owners: HomeOwner[];
+  ownersByProperty: Record<string, HomeOwner[]>;
   editingOwnerId: string;
   selectedIds: Set<string>;
   onChange: (next: Set<string>) => void;
@@ -547,8 +679,10 @@ function PropertyPicker({
             </div>
           ) : (
             avail.map(p => {
-              const otherOwnerId = p.owner_id && p.owner_id !== editingOwnerId ? p.owner_id : null;
-              const otherOwner = otherOwnerId ? owners.find(o => o.id === otherOwnerId) : null;
+              // Many-to-many: a property can have multiple owners.
+              // Show the others as a hint so the user knows they're
+              // adding a co-owner, not replacing anyone.
+              const coOwners = (ownersByProperty[p.id] || []).filter(o => o.id !== editingOwnerId);
               return (
                 <button
                   key={p.id}
@@ -562,8 +696,10 @@ function PropertyPicker({
                   }}
                 >
                   <span>{p.property_name}</span>
-                  {otherOwner && (
-                    <span className="property-picker-warn">currently {otherOwner.name}</span>
+                  {coOwners.length > 0 && (
+                    <span className="property-picker-warn">
+                      also owned by {coOwners.map(o => titleCase(o.name)).join(', ')}
+                    </span>
                   )}
                 </button>
               );
