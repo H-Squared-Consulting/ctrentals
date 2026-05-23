@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import DateInput from '../components/DateInput';
+import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 
 function titleCase(s: string | null | undefined): string {
@@ -249,7 +250,7 @@ export default function BookingModal({
       {propertyName && <span>· {titleCase(propertyName)}</span>}
       {propertySlug && <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{propertySlug}</span>}
       {form.check_in && form.check_out && (
-        <span>· {form.check_in} to {form.check_out}</span>
+        <span>· {form.check_in} to {form.check_out}<NightCount checkIn={form.check_in} checkOut={form.check_out} /></span>
       )}
     </>
   );

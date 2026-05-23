@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import DetailModal from '../components/DetailModal';
 import BrochureShareMenu from '../components/BrochureShareMenu';
+import NightCount from '../components/NightCount';
 import { useDirty } from '../lib/dirtyState';
 import GallerySectionsEditor, { deriveFlatColumns } from '../components/GallerySectionsEditor';
 import { useToast } from '../components/ToastProvider';
@@ -1688,7 +1689,7 @@ function PropertyProposalRow({ proposal: pr, stage, onOpen, onSend, onMarkBooked
         </div>
         <div className="editor-list-sub">
           {pr.check_in && pr.check_out
-            ? <>{new Date(pr.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })} → {new Date(pr.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+            ? <>{new Date(pr.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })} → {new Date(pr.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}<NightCount checkIn={pr.check_in} checkOut={pr.check_out} /></>
             : <span style={{ color: 'var(--text-light)' }}>No dates set</span>}
           {pr.guest_price != null && (
             <span style={{ marginLeft: '10px', color: 'var(--text)' }}>
