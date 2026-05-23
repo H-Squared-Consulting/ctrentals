@@ -68,4 +68,10 @@ DROP POLICY IF EXISTS property_owners_delete ON property_owners;
 CREATE POLICY property_owners_delete ON property_owners
   FOR DELETE TO authenticated USING (true);
 
+-- 4. Table-level GRANTs. RLS gates row visibility but PostgreSQL still
+--    requires the role to hold the table-level privilege before any
+--    policy is even consulted. Without these the admin portal hits
+--    "permission denied for table property_owners" on every write.
+GRANT SELECT, INSERT, UPDATE, DELETE ON property_owners TO authenticated;
+
 COMMIT;
