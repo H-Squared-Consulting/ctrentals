@@ -17,6 +17,7 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import EmptyState from '../components/EmptyState';
+import NightCount from '../components/NightCount';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 
 function titleCase(s: string | null | undefined): string {
@@ -324,6 +325,7 @@ export default function GuestsPage() {
                       <span style={{ fontWeight: 600 }}>{titleCase(b.partner_properties?.property_name) || '—'}</span>
                       <span style={{ color: 'var(--text-secondary)' }}>
                         {new Date(b.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })} to {new Date(b.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        <NightCount checkIn={b.check_in} checkOut={b.check_out} />
                         <span style={{ marginLeft: 8, fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{b.status}</span>
                       </span>
                     </li>

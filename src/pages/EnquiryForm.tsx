@@ -15,6 +15,7 @@ import { useLayout } from '../contexts/LayoutContext';
 import ActionModal from '../components/ActionModal';
 import DateInput from '../components/DateInput';
 import NewProposalLauncher from '../components/NewProposalLauncher';
+import NightCount from '../components/NightCount';
 import { useToast } from '../components/ToastProvider';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { CT_RENTALS_PARTNER_ID } from './constants';
@@ -100,7 +101,7 @@ export function EnquiryForm() {
           title="Enquiry saved"
           subtitle={
             <>
-              <strong>{savedEnquiry.client_name}</strong> · {savedEnquiry.check_in} to {savedEnquiry.check_out}
+              <strong>{savedEnquiry.client_name}</strong> · {savedEnquiry.check_in} to {savedEnquiry.check_out}<NightCount checkIn={savedEnquiry.check_in} checkOut={savedEnquiry.check_out} />
               {savedEnquiry.guests_total ? ` · ${savedEnquiry.guests_total} guests` : ''}
             </>
           }

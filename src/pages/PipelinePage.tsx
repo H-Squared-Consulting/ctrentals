@@ -26,8 +26,10 @@ import DataTable, { StatusBadge } from '../components/DataTable';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import type { DataRow } from '../components/DataTable';
 import NewProposalLauncher from '../components/NewProposalLauncher';
+import NightCount from '../components/NightCount';
 import ProposalDetailModal from '../components/ProposalDetailModal';
 import SendProposalDialog from '../components/SendProposalDialog';
+import { nightsBetween } from '../lib/nights';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged, onPipelineChanged } from '../lib/pipelineEvents';
@@ -174,11 +176,6 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
-function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
-  if (!checkIn || !checkOut) return null;
-  const ms = new Date(checkOut).getTime() - new Date(checkIn).getTime();
-  return ms > 0 ? Math.round(ms / (1000 * 60 * 60 * 24)) : null;
-}
 
 function fmtRelative(iso: string): string {
   const days = daysSince(iso);
@@ -1049,7 +1046,7 @@ function DealCard({
 
       <div className="ops-board-card-meta">
         {deal.check_in && deal.check_out
-          ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}</span>
+          ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
           : <span style={{ fontStyle: 'italic' }}>No dates</span>}
         {extraProposals > 0 && <span>· +{extraProposals} more</span>}
         <span style={{ flex: 1 }} />
@@ -1347,7 +1344,7 @@ function DealDetailModal({
       <span>Stage: <strong style={{ color: 'var(--text)' }}>{stageLabel}</strong></span>
       {deal.type === 'standalone' && <span>· standalone proposal</span>}
       {deal.check_in && deal.check_out && (
-        <span>· {fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}</span>
+        <span>· {fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
       )}
     </>
   );

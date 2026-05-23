@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import DetailModal, { DetailModalSection } from './DetailModal';
+import NightCount from './NightCount';
 import { useToast } from './ToastProvider';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
@@ -205,7 +206,7 @@ export default function ProposalDetailModal({
       </span>
       {propertyName && <span>· {propertyName}</span>}
       {proposal.check_in && proposal.check_out && (
-        <span>· {fmtDate(proposal.check_in)} to {fmtDate(proposal.check_out)}</span>
+        <span>· {fmtDate(proposal.check_in)} to {fmtDate(proposal.check_out)}<NightCount checkIn={proposal.check_in} checkOut={proposal.check_out} /></span>
       )}
       {proposal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
     </>
