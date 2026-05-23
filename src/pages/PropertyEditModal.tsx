@@ -111,6 +111,27 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Multi-owner editor state. Each row links one home_owner to this
+  // property with optional ownership_pct and a single is_primary flag
+  // across the rows. `existingDbId` is set on rows that came from the
+  // DB so handleSave can diff add/update/remove without re-reading.
+  // For brand-new properties (no id) we seed an empty starter row so
+  // the user has somewhere to pick straight away.
+  //
+  // LOCAL PATCH (uncommitted): hoisted above the isDirty useMemo so the
+  // useMemo's deps array can reference ownerLinks without hitting a
+  // temporal-dead-zone ReferenceError. Original PR #21 declared these
+  // further down; the merge with main left isDirty referencing them
+  // before declaration. Gary should re-order this on his branch.
+  const [ownerLinks, setOwnerLinks] = useState(() => {
+    if (property.id && property.owner_id) {
+      return [{ ownerId: property.owner_id, pct: '', isPrimary: true }];
+    }
+    return [{ ownerId: '', pct: '', isPrimary: true }];
+  });
+  const [initialOwnerLinks, setInitialOwnerLinks] = useState(ownerLinks);
+  const [ownerLinksLoaded, setOwnerLinksLoaded] = useState(false);
+
   // Snapshot the form the first time it renders so the dirty check has a
   // stable baseline. Updated again after each successful Save.
   useEffect(() => {
@@ -150,21 +171,6 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     if (data) setOwners(data);
   }
   useEffect(() => { loadOwners(); }, [supabase, partnerId]);
-
-  // Multi-owner editor state. Each row links one home_owner to this
-  // property with optional ownership_pct and a single is_primary flag
-  // across the rows. `existingDbId` is set on rows that came from the
-  // DB so handleSave can diff add/update/remove without re-reading.
-  // For brand-new properties (no id) we seed an empty starter row so
-  // the user has somewhere to pick straight away.
-  const [ownerLinks, setOwnerLinks] = useState(() => {
-    if (property.id && property.owner_id) {
-      return [{ ownerId: property.owner_id, pct: '', isPrimary: true }];
-    }
-    return [{ ownerId: '', pct: '', isPrimary: true }];
-  });
-  const [initialOwnerLinks, setInitialOwnerLinks] = useState(ownerLinks);
-  const [ownerLinksLoaded, setOwnerLinksLoaded] = useState(false);
 
   // Load the canonical multi-owner rows from property_owners. Falls
   // back to the seed row built from partner_properties.owner_id if
@@ -630,16 +636,21 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           if (fetchErr) throw fetchErr;
 
           const existing = existingRows || [];
-          const desiredIds = new Set(cleanedLinks.map((r) => r.ownerId));
-          const desiredByDbId = new Map(
-            cleanedLinks.filter((r) => r.existingDbId).map((r) => [r.existingDbId, r])
-          );
+          // Key the diff off (property_id, owner_id), not the local
+          // existingDbId. The latter can be missing on rows that were
+          // seeded from partner_properties.owner_id at mount (e.g. when
+          // the initial property_owners SELECT was blocked by GRANT and
+          // the fallback path ran). Owner_id is the actual unique key
+          // the DB enforces, so reconciling against it avoids spurious
+          // duplicate-key violations.
+          const existingByOwnerId = new Map(existing.map((r) => [r.owner_id, r]));
+          const desiredOwnerIds = new Set(cleanedLinks.map((r) => r.ownerId));
 
-          const rowsToDelete = existing.filter((r) => !desiredIds.has(r.owner_id));
-          const rowsToInsert = cleanedLinks.filter((r) => !r.existingDbId);
-          const rowsToUpdate = existing
-            .filter((r) => desiredByDbId.has(r.id))
-            .map((dbRow) => ({ dbRow, desired: desiredByDbId.get(dbRow.id)! }));
+          const rowsToDelete = existing.filter((r) => !desiredOwnerIds.has(r.owner_id));
+          const rowsToInsert = cleanedLinks.filter((r) => !existingByOwnerId.has(r.ownerId));
+          const rowsToUpdate = cleanedLinks
+            .filter((r) => existingByOwnerId.has(r.ownerId))
+            .map((desired) => ({ dbRow: existingByOwnerId.get(desired.ownerId)!, desired }));
 
           // 1a. Clear is_primary on every row we're keeping, so the
           //     partial unique index has no current "primary" row when
@@ -920,7 +931,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           </div>
           <div className="form-group">
             <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>Owner</span>
+              <span>Owners</span>
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -930,19 +941,112 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                 {showOwnerCreate ? '× Cancel' : '+ New owner'}
               </button>
             </label>
-            <select
-              className="form-input"
-              value={form.owner_id}
-              onChange={(e) => setForm({ ...form, owner_id: e.target.value })}
-              disabled={showOwnerCreate}
-            >
-              <option value="">— No owner linked —</option>
-              {owners.map(o => (
-                <option key={o.id} value={o.id}>
-                  {o.name}{o.company ? ` (${o.company})` : ''}
-                </option>
-              ))}
-            </select>
+
+            {/* Multi-owner rows. Each row links one home_owner to this
+                property with an optional ownership %. Exactly one row is
+                Primary — that owner's name/email surfaces as the property's
+                headline contact across the app and is mirrored back to
+                partner_properties.owner_id on save for legacy readers. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+              {ownerLinks.map((row, idx) => {
+                // Hide owners already picked in OTHER rows so the same
+                // person can't be added twice. Save-time validation also
+                // rejects duplicates; this is just UX belt-and-braces.
+                const takenElsewhere = new Set(
+                  ownerLinks.filter((_, i) => i !== idx).map((r) => r.ownerId).filter(Boolean)
+                );
+                const availableOwners = owners.filter((o) => !takenElsewhere.has(o.id));
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 110px auto auto',
+                      gap: 'var(--s-2)',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <select
+                      className="form-input"
+                      value={row.ownerId}
+                      disabled={showOwnerCreate}
+                      onChange={(e) => setOwnerLinks((rows) => {
+                        const next = rows.slice();
+                        next[idx] = { ...next[idx], ownerId: e.target.value };
+                        return next;
+                      })}
+                    >
+                      <option value="">— Select owner —</option>
+                      {availableOwners.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.company ? ` (${o.company})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="% share"
+                      value={row.pct}
+                      disabled={showOwnerCreate}
+                      onChange={(e) => setOwnerLinks((rows) => {
+                        const next = rows.slice();
+                        next[idx] = { ...next[idx], pct: e.target.value };
+                        return next;
+                      })}
+                    />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-1)', fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      <input
+                        type="radio"
+                        name="owner-primary"
+                        checked={!!row.isPrimary}
+                        disabled={showOwnerCreate || !row.ownerId}
+                        onChange={() => setOwnerLinks((rows) => rows.map((r, i) => ({ ...r, isPrimary: i === idx })))}
+                      />
+                      Primary
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.875rem', padding: '2px 8px', lineHeight: 1 }}
+                      aria-label="Remove owner"
+                      disabled={showOwnerCreate}
+                      onClick={() => setOwnerLinks((rows) => {
+                        if (rows.length === 1) {
+                          // Always keep one (possibly empty) row visible
+                          // so the picker doesn't disappear entirely.
+                          return [{ ownerId: '', pct: '', isPrimary: true }];
+                        }
+                        const next = rows.filter((_, i) => i !== idx);
+                        // If the removed row was primary, promote the
+                        // first remaining row so the UI always has one.
+                        if (!next.some((r) => r.isPrimary)) next[0] = { ...next[0], isPrimary: true };
+                        return next;
+                      })}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ fontSize: '0.75rem' }}
+                  disabled={showOwnerCreate}
+                  onClick={() => setOwnerLinks((rows) => [
+                    ...rows,
+                    { ownerId: '', pct: '', isPrimary: rows.length === 0 },
+                  ])}
+                >
+                  + Add another owner
+                </button>
+              </div>
+            </div>
 
             {showOwnerCreate && (
               <div style={{ marginTop: 'var(--s-3)', padding: 'var(--s-3)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
