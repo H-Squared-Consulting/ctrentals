@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DataTable, { StatusBadge } from '../components/DataTable';
@@ -219,6 +219,7 @@ export default function PipelinePage() {
   // Search can be pre-filled from URL — Home links land users here with
   // ?search=<client name> so the deal they care about pops out of the list.
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const [search, setSearch] = useState(searchParams.get('search') || '');
   const [closedCollapsed, setClosedCollapsed] = useState(true);
 
@@ -233,7 +234,10 @@ export default function PipelinePage() {
   /** The single-draft proposal selected for the quick Send dialog. */
   const [sendingProposal, setSendingProposal] = useState<ProposalRow | null>(null);
 
-  useEffect(() => { setPageTitle('Pipeline'); }, [setPageTitle]);
+  useEffect(() => {
+    const title = location.pathname.endsWith('/proposals') ? 'Proposals' : 'Enquiries';
+    setPageTitle(title);
+  }, [setPageTitle, location.pathname]);
 
   // Honour Home's deep-link: ?stage=<key> flashes a highlight on that column
   // so the user lands on the one they came to act on. We scroll it into

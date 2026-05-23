@@ -173,6 +173,20 @@ body {
 .sidebar-child:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.04); }
 .sidebar-child.is-active { color: #fff; font-weight: 600; background: rgba(255,255,255,0.06); }
 
+.sidebar-link.is-soon { opacity: 0.5; }
+.sidebar-link.is-soon:hover { opacity: 0.75; background: rgba(255,255,255,0.04); }
+.sidebar-soon-tag {
+  padding: 1px 6px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.85);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
 .sidebar-footer {
   padding: 12px 16px 18px;
   border-top: 1px solid rgba(255,255,255,0.06);

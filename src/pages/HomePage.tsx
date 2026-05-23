@@ -259,8 +259,8 @@ export default function HomePage() {
         <button className="btn btn-outline" onClick={() => setBrochurePickerOpen(true)}>
           ✉ Send Brochure
         </button>
-        <Link to="/operations/pipeline" className="btn btn-ghost">
-          Open Pipeline →
+        <Link to="/operations/enquiries" className="btn btn-ghost">
+          Open Operations →
         </Link>
       </div>
 

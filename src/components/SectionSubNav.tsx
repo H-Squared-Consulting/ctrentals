@@ -18,7 +18,6 @@ const SECTIONS: Record<Section, { to: string; label: string }[]> = {
   crm: [
     { to: '/crm/guests', label: 'Guests' },
     { to: '/crm/home-owners', label: 'Home Owners' },
-    { to: '/crm/agents', label: 'Agents' },
   ],
   finance: [
     { to: '/finance/contracts', label: 'Contracts' },
