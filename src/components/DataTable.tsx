@@ -31,14 +31,6 @@ export interface Filter {
   matchFn?: (row: DataRow, filterValue: string) => boolean;
 }
 
-export interface SummaryCard {
-  value: string | number;
-  label: string;
-  color?: string;
-  trend?: string;
-  tooltip?: string;
-}
-
 interface PrimaryAction {
   label: string;
   onClick: () => void;
@@ -84,7 +76,6 @@ interface DataTableProps<R = any> {
   idKey?: string;
   resultsBarContent?: ReactNode;
   pageSize?: number;
-  summaryCards?: SummaryCard[];
   description?: string;
   rowClassName?: (row: R) => string;
   renderSubRow?: (row: R) => ReactNode;
@@ -110,7 +101,6 @@ function DataTable({
   idKey = 'id',
   resultsBarContent,
   pageSize = 0,
-  summaryCards = [],
   description = '',
   rowClassName,
   renderSubRow,
@@ -246,8 +236,6 @@ function DataTable({
   return (
     <>
     <div className="card">
-      {summaryCards.length > 0 && <SummaryCardsHeader cards={summaryCards} />}
-
       {description && <div className="datatable-description">{description}</div>}
 
       {/* Toolbar — only render when there's actually something inside it.
@@ -468,25 +456,6 @@ function getNestedValue(obj: DataRow, path: string): unknown {
     }
     return undefined;
   }, obj);
-}
-
-function SummaryCardsHeader({ cards }: { cards: SummaryCard[] }) {
-  const displayCards = cards.slice(0, 4);
-  return (
-    <div className="summary-cards">
-      {displayCards.map((card, index) => (
-        <div key={index} className={`summary-card summary-card--${card.color || 'primary'}`}>
-          <div className="summary-card__value">{card.value}</div>
-          {card.trend && (
-            <div className={`summary-card__trend ${card.trend.startsWith('+') ? 'summary-card__trend--up' : card.trend.startsWith('-') ? 'summary-card__trend--down' : ''}`}>
-              {card.trend}
-            </div>
-          )}
-          <div className="summary-card__label">{card.label}</div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 interface StatusBadgeProps {
