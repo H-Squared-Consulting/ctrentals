@@ -49,7 +49,7 @@ async function compressImageFile(file) {
   }
 }
 
-export default function GallerySectionsEditor({ propertyId, sections, onChange, supabase }) {
+export default function GallerySectionsEditor({ propertyId, sections, onChange, supabase, viewOnly = false }) {
   const toast = useToast();
   // Local state mirrors the canonical sections array. Every mutation
   // produces a new array and bubbles up via onChange so the parent's
@@ -318,8 +318,10 @@ export default function GallerySectionsEditor({ propertyId, sections, onChange, 
               key={section.id}
               data-section-id={section.id}
               className={`gse-section ${isDropTarget ? 'is-droptarget' : ''}`}
-              onDragOver={(e) => onDragOverSection(section.id, e)}
-              onDrop={onDropSection}
+              // Drop targets only active when editing. View mode shows the
+              // photos but doesn't accept incoming drags.
+              onDragOver={viewOnly ? undefined : (e) => onDragOverSection(section.id, e)}
+              onDrop={viewOnly ? undefined : onDropSection}
             >
               <div className="gse-section-header">
                 <button
@@ -374,6 +376,7 @@ export default function GallerySectionsEditor({ propertyId, sections, onChange, 
                         <PhotoTile
                           key={photo.id}
                           photo={photo}
+                          viewOnly={viewOnly}
                           isDragging={drag && drag.photoId === photo.id}
                           editingCaption={editingCaption === photo.id}
                           captionDraft={captionDraft}
@@ -391,12 +394,17 @@ export default function GallerySectionsEditor({ propertyId, sections, onChange, 
                       ))}
                     </div>
                   )}
+                  {/* Upload affordance is for adding photos — has no role
+                      in view mode, hide the whole zone rather than disabling
+                      it visually. */}
+                  {!viewOnly && (
                   <UploadZone
                     sectionId={section.id}
                     isUploading={uploadingTo === section.id}
                     counter={uploadCounter}
                     onFiles={(files) => handleFiles(section.id, files)}
                   />
+                  )}
                 </>
               )}
             </div>
@@ -408,7 +416,7 @@ export default function GallerySectionsEditor({ propertyId, sections, onChange, 
 }
 
 function PhotoTile({
-  photo, isDragging, editingCaption, captionDraft,
+  photo, viewOnly, isDragging, editingCaption, captionDraft,
   onCaptionDraft, onEditCaption, onCommitCaption, onCancelCaption,
   onSetHero, onToggleVisible, onDelete,
   onDragStart, onDragEnd, onDragOver,
@@ -416,10 +424,13 @@ function PhotoTile({
   return (
     <div
       className={`gse-photo ${photo.is_hero ? 'is-hero' : ''} ${!photo.is_visible ? 'is-hidden' : ''} ${isDragging ? 'is-dragging' : ''}`}
-      draggable={!editingCaption}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
+      // View mode: tiles are non-draggable. Per-photo control buttons
+      // (star / eye / pencil / bin) are already disabled by the
+      // <fieldset disabled> wrapper in PropertyEditModal.
+      draggable={!editingCaption && !viewOnly}
+      onDragStart={viewOnly ? undefined : onDragStart}
+      onDragEnd={viewOnly ? undefined : onDragEnd}
+      onDragOver={viewOnly ? undefined : onDragOver}
     >
       <img src={photo.url} alt="" loading="lazy" draggable={false} />
       <div className="gse-photo-overlay">

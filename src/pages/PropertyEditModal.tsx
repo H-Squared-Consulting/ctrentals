@@ -875,6 +875,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             sections={form.gallery_sections}
             onChange={(next) => setForm(prev => ({ ...prev, gallery_sections: next }))}
             supabase={supabase}
+            viewOnly={viewOnly}
           />
           </fieldset>
           )}
