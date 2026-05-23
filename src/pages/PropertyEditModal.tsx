@@ -316,8 +316,6 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     { id: 'brochure', label: 'Brochure' },
     { id: 'pricing', label: 'Pricing' },
     { id: 'proposals', label: 'Proposals' },
-    { id: 'documents', label: 'Documents' },
-    { id: 'activity', label: 'Activity' },
   ];
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -1214,20 +1212,6 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               onCancel={(p) => setProposalOutcome(p.id, 'cancelled')}
             />
           )}
-          </>)}
-
-          {activeTab === 'documents' && (<>
-          <SectionHeading>Documents</SectionHeading>
-          <div className="editor-tab-empty">
-            <strong>Coming soon.</strong> Owner agreements, insurance, leases and any file stored against the property will live here.
-          </div>
-          </>)}
-
-          {activeTab === 'activity' && (<>
-          <SectionHeading>Activity</SectionHeading>
-          <div className="editor-tab-empty">
-            <strong>Coming soon.</strong> A chronological log of enquiries, proposals, bookings, status changes and notes for this property.
-          </div>
           </>)}
 
         </fieldset>
