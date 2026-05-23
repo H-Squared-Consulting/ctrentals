@@ -117,6 +117,10 @@ END
 WHERE status IN ('expired','archived','cancelled');
 
 -- 3b. Convert proposal status values to the new five.
+-- Drop the old CHECK constraint first so the new values don't get
+-- rejected on a clean database. The new constraint is re-added in 3c.
+ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
+
 -- Mapping logic:
 --   'draft'      → 'drafting'
 --   'sent'       → 'sent'
@@ -147,6 +151,10 @@ ALTER TABLE proposals
 -- ============================================================
 -- 4. BOOKINGS: rename statuses to match agreed model
 -- ============================================================
+-- Drop the old CHECK constraint first so the new values don't get
+-- rejected on a clean database. The new constraint is re-added below.
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+
 -- Mapping logic:
 --   'tentative'   → 'confirmed' (no separate tentative state in the new model)
 --   'confirmed'   → 'confirmed'
