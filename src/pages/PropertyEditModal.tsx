@@ -19,7 +19,6 @@ import PricingModal from './PricingModal';
 import BookingModal from './BookingModal';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
-import { useDirty } from '../lib/dirtyState';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user, initialMode = 'edit' }) {
   const toast = useToast();
