@@ -118,6 +118,18 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Lock body scroll while the property editor is open. DetailModal +
+  // ActionModal don't lock scroll themselves; the smaller modals usually
+  // fit on screen so it isn't noticed, but the property editor is tall
+  // and the page behind it scrolling along is disorienting. The cleanup
+  // restores whatever overflow the body had before, which fires on
+  // close, unmount, and route navigation.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   // Cheap deep compare via JSON. Form is shallow and primitive-heavy, so
   // serialisation is fine; if we ever add a Map/Set we'll need a real diff.
   const isDirty = useMemo(() => {
