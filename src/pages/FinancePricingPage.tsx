@@ -26,6 +26,7 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { CTR_DEFAULT } from '../lib/pricingEngine';
+import { useDirty } from '../lib/dirtyState';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -116,6 +117,10 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
   const [pending, setPending] = useState<Map<string, number | null>>(new Map());
   const [saving, setSaving] = useState(false);
   const isDirty = pending.size > 0;
+
+  // Tell the silent auto-update reloader to defer a refresh while there
+  // are unsaved baseline edits on this page.
+  useDirty(isDirty);
 
   useEffect(() => { if (!embedded) setPageTitle('Pricing'); }, [setPageTitle, embedded]);
 
