@@ -25,6 +25,27 @@
 -- fresh. Hayley will review in the admin portal afterwards.
 -- ============================================================
 
+-- ============================================================
+-- IMPORTANT — RUN-ORDER NOTE FOR JORDON
+-- ============================================================
+-- This script and PR #21 (property_owners join table for joint
+-- ownership) are intentionally independent. Cleanest order:
+--
+--   1. Run this backfill first. It only inserts rows and sets
+--      the legacy partner_properties.owner_id column.
+--   2. Merge PR #21 second. Its migration creates the
+--      property_owners join table and backfills it from
+--      partner_properties.owner_id (which this script will
+--      have just populated), so the join table lands complete.
+--
+-- If the order ends up reversed (PR #21 merges first, this
+-- backfill runs second), the "Safety" block in Section 3 below
+-- detects the property_owners table at runtime and writes the
+-- same link rows itself. ON CONFLICT DO NOTHING keeps it safe
+-- to run twice. So either order works, no manual cleanup
+-- needed from you.
+-- ============================================================
+
 BEGIN;
 
 -- ── 1. INSERT OWNERS ───────────────────────────────────────
@@ -126,7 +147,31 @@ UPDATE partner_properties SET owner_id = (SELECT id FROM home_owners WHERE email
 UPDATE partner_properties SET owner_id = (SELECT id FROM home_owners WHERE email = 'anna@bosct.co.za' AND partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0') WHERE slug = 'CTR0058' AND partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0';
 
 
--- ── 3. INSERT BOOKINGS (with guests created inline) ────────
+-- ── 3. SAFETY: mirror links into property_owners if it exists ──
+-- Forward-compat with PR #21 in case it has already merged.
+-- If property_owners does not exist yet, this block does
+-- nothing and PR #21's own backfill will pick up our rows
+-- when its migration runs. If it does exist, we write one
+-- is_primary=true row per linked property. ON CONFLICT keeps
+-- it safe to run more than once.
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'property_owners'
+  ) THEN
+    INSERT INTO property_owners (property_id, owner_id, is_primary)
+    SELECT pp.id, pp.owner_id, true
+      FROM partner_properties pp
+     WHERE pp.partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0'
+       AND pp.owner_id IS NOT NULL
+    ON CONFLICT (property_id, owner_id) DO NOTHING;
+  END IF;
+END$$;
+
+
+-- ── 4. INSERT BOOKINGS (with guests created inline) ────────
 -- Each block is one self-contained CTE: insert the guest,
 -- capture its id via RETURNING, then insert the booking joined
 -- to that guest and to the property by slug.
@@ -346,10 +391,11 @@ SELECT '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0', p.id, g.id, 'Celeste - Bridget', 
 FROM g, partner_properties p WHERE p.slug = 'CTR0007' AND p.partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0';
 
 
--- ── 4. VERIFICATION ────────────────────────────────────────
+-- ── 5. VERIFICATION ────────────────────────────────────────
 -- Expected:
 --   home_owners                  = 49
 --   properties with owner linked = 38   (35 by email + Picardie by name + Sharon's 2 Buitenzorgs counted in the 35 — net 36 properties)
+--   property_owners (if exists)  = same as above
 --   guests                       = 41
 --   bookings                     = 41
 
@@ -369,6 +415,24 @@ SELECT 'guests inserted' AS check_name, count(*) AS row_count
 SELECT 'bookings inserted' AS check_name, count(*) AS row_count
   FROM bookings
  WHERE partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0';
+
+-- property_owners count if PR #21 has merged. Will silently
+-- show zero rows (not error) if the table doesn't exist yet.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'property_owners'
+  ) THEN
+    RAISE NOTICE 'property_owners row count: %', (
+      SELECT count(*) FROM property_owners po
+        JOIN partner_properties pp ON pp.id = po.property_id
+       WHERE pp.partner_id = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0'
+    );
+  ELSE
+    RAISE NOTICE 'property_owners table does not exist yet (PR #21 not merged) — fine, skipping.';
+  END IF;
+END$$;
 
 -- Every property and its linked owner (or NULL).
 SELECT p.slug, p.property_name, o.name AS owner_name, o.email AS owner_email
@@ -393,7 +457,7 @@ SELECT g.id, g.name, g.created_at
    AND b.id IS NULL;
 
 
--- ── 5. NEEDS MANUAL HANDLING IN ADMIN PORTAL ───────────────
+-- ── 6. NEEDS MANUAL HANDLING IN ADMIN PORTAL ───────────────
 -- These owners are inserted but NOT auto-linked to a property,
 -- and the bookings below were NOT inserted because the property
 -- could not be resolved. Hayley to handle in the admin portal.
@@ -427,7 +491,7 @@ SELECT g.id, g.name, g.created_at
 --     Rainer                  -- 15 Jan - 10 Feb Skydance (no slug)
 
 
--- ── 6. FINISH ──────────────────────────────────────────────
+-- ── 7. FINISH ──────────────────────────────────────────────
 -- DRY RUN by default. To save the data, change the line below
 -- from ROLLBACK to COMMIT and run the file again.
 
