@@ -616,9 +616,14 @@ export default function PipelinePage() {
   }
 
   async function updateEnquiryStatus(enquiryId: string, status: string) {
+    // Keep deal_status in lockstep with the legacy outcome flag so the
+    // kanban column matches whichever path was taken (button or dropdown).
+    const dealStatus = status === 'booked'    ? 'won'
+                     : status === 'cancelled' ? 'lost'
+                     :                          'new';
     await supabase
       .from('enquiries')
-      .update({ status, updated_at: new Date().toISOString() })
+      .update({ status, deal_status: dealStatus, updated_at: new Date().toISOString() })
       .eq('id', enquiryId);
     if (status === 'booked') {
       const deal = deals.find(d => d.enquiry?.id === enquiryId);
@@ -626,6 +631,18 @@ export default function PipelinePage() {
     }
     // Close the modal so the user sees the card slide to its new column,
     // the action feels definitive that way. They can reopen if they need to.
+    setOpenDeal(null);
+    notifyPipelineChanged();
+  }
+
+  /** Manual stage move from the modal dropdown. Writes only deal_status,
+   *  leaves the legacy enquiry.status alone (won/lost still flow through
+   *  updateEnquiryStatus because Mark Booked also creates a booking row). */
+  async function updateDealStage(enquiryId: string, dealStatus: string) {
+    await supabase
+      .from('enquiries')
+      .update({ deal_status: dealStatus, updated_at: new Date().toISOString() })
+      .eq('id', enquiryId);
     setOpenDeal(null);
     notifyPipelineChanged();
   }
@@ -751,6 +768,7 @@ export default function PipelinePage() {
           onQuote={() => startQuote(openDeal.deal)}
           onUpdateStatus={updateEnquiryStatus}
           onUpdateProposalOutcome={updateProposalOutcome}
+          onSetStage={updateDealStage}
           onOpenProposal={setOpenProposal}
         />
       )}
@@ -1219,7 +1237,7 @@ function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean
 // ─── Deal detail modal ──────────────────────────────────────────────────
 
 function DealDetailModal({
-  deal, initialMode = 'view', onClose, onQuote, onUpdateStatus, onUpdateProposalOutcome, onOpenProposal,
+  deal, initialMode = 'view', onClose, onQuote, onUpdateStatus, onUpdateProposalOutcome, onSetStage, onOpenProposal,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
@@ -1227,6 +1245,7 @@ function DealDetailModal({
   onQuote: () => void;
   onUpdateStatus: (enquiryId: string, status: string) => void;
   onUpdateProposalOutcome: (proposalId: string, outcome: 'booked' | 'cancelled' | 'draft') => void;
+  onSetStage: (enquiryId: string, dealStatus: string) => void;
   onOpenProposal: (p: ProposalRow) => void;
 }) {
   const { supabase } = useAuth();
@@ -1348,6 +1367,25 @@ function DealDetailModal({
       <button className="btn btn-primary" onClick={onQuote}>
         📝 {deal.proposals.length === 0 ? 'Create Proposal' : 'Add another proposal'}
       </button>
+      {!isClosed && e && (
+        // Manual stage move for the in-between columns the auto-move can't
+        // reliably reach (Drafting/Ready/Sent/Stalled/Interested). Won/Lost
+        // stay on their dedicated buttons because Mark Booked also creates
+        // a booking row, that's more than a status change.
+        <select
+          className="list-filter-select"
+          value=""
+          onChange={(ev) => { if (ev.target.value) onSetStage(e.id, ev.target.value); }}
+          title="Move this deal to a different column"
+        >
+          <option value="" disabled>Set stage…</option>
+          <option value="drafting">Drafting</option>
+          <option value="ready">Ready</option>
+          <option value="sent">Sent</option>
+          <option value="stalled">Stalled</option>
+          <option value="interested">Interested</option>
+        </select>
+      )}
       {!isClosed && (
         <>
           <button
