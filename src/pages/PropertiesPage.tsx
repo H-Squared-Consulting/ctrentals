@@ -266,11 +266,16 @@ export default function PropertiesPage() {
       render: (row: DataRow) => (row as Property).sleeps ?? '-',
     },
     {
-      key: 'price_from', label: 'Price From', align: 'right' as const, sortable: true, hideOnMobile: true,
+      // Reads the same baselines source as the card view (dailyRateById),
+      // so the table no longer shows the legacy partner_properties.price_from
+      // that wasn't being updated when daily rates changed in the Pricing
+      // page or the editor.
+      key: 'daily_rate', label: 'Daily Rate', align: 'right' as const, sortable: true, hideOnMobile: true,
       render: (row: DataRow) => {
         const p = row as Property;
-        if (!p.price_from) return <span className="text-light">-</span>;
-        return `${p.price_currency || 'ZAR'} ${Number(p.price_from).toLocaleString()}`;
+        const daily = dailyRateById[p.id];
+        if (!daily) return <span className="text-light">-</span>;
+        return `${p.price_currency || 'ZAR'} ${Number(daily).toLocaleString('en-ZA', { maximumFractionDigits: 0 })} / night`;
       },
     },
     {
@@ -557,7 +562,10 @@ export default function PropertiesPage() {
       {viewMode === 'table' && (
         <DataTable
           columns={columns}
-          data={filteredProperties}
+          // Inject daily_rate from the baselines map so DataTable's built-in
+          // column sort can compare on the same value the render uses; the
+          // existing nulls-last behaviour in DataTable handles missing rates.
+          data={filteredProperties.map(p => ({ ...p, daily_rate: dailyRateById[p.id] ?? null }))}
           loading={false}
           searchable={false}
           defaultSort={{ key: 'bedrooms', direction: 'desc' }}
