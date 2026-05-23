@@ -16,6 +16,7 @@
 
 import { useEffect, type ReactNode } from 'react';
 import { useDirty } from '../lib/dirtyState';
+import { useBodyScrollLock } from '../lib/useBodyScrollLock';
 
 export type DetailModalMode = 'view' | 'edit';
 
@@ -87,6 +88,10 @@ export default function DetailModal({
   children,
   onClose,
 }: DetailModalProps) {
+  // Stop the page underneath scrolling while the modal is open.
+  // Centralised here so every DetailModal consumer gets it for free.
+  useBodyScrollLock();
+
   // Flag this modal as dirty in the global registry whenever it has
   // unsaved edits, so the silent auto-update reloader defers a refresh.
   useDirty(mode === 'edit' && !!isDirty);

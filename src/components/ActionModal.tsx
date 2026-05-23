@@ -13,6 +13,7 @@
  */
 
 import { useEffect, type ReactNode } from 'react';
+import { useBodyScrollLock } from '../lib/useBodyScrollLock';
 
 interface ActionModalProps {
   title: string;
@@ -50,6 +51,10 @@ export default function ActionModal({
   hideFooter = false,
   onClose,
 }: ActionModalProps) {
+  // Stop the page underneath scrolling while the modal is open.
+  // Centralised here so every ActionModal consumer gets it for free.
+  useBodyScrollLock();
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
