@@ -14,26 +14,81 @@
  *   State A — channel not chosen. Three big tap targets.
  *   State B — channel chosen. Benchmark + Negotiate panels.
  *
- * Reuses pricingEngine math and emits the same PricingSnapshot shape as
- * PricingWidget so CreateProposalModal doesn't change. Edit-mode (snapshot
- * hydration) is NOT yet handled — PricingModal still routes edit through
- * the older PricingWidget for now.
+ * Handles both create-mode (no initialSnapshot) and edit-mode (snapshot
+ * passed via initialSnapshot prop, hydrated into state). Replaces the
+ * older PricingWidget for every pricing entry point in the app.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculatePricing, CTR_DEFAULT, fmtRand } from '../lib/pricingEngine';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
-import type { Baseline, SeasonTag, Agent, ChannelProfile, PricingBreakdown } from '../types/pricing';
-import type { ScenarioType, PricingSnapshot, SnapshotAgent } from './PricingWidget';
+import type { Baseline, SeasonTag, Agent, ChannelProfile, PricingBreakdown, PricingProposal } from '../types/pricing';
 
 /** Generic-agent commission default when no specific agent is picked. */
 const GENERIC_AGENT_PCT = 15;
+
+// ─── Pricing types ──────────────────────────────────────────────────────
+// Live here (was in PricingWidget before its retirement) because this
+// component is now the canonical pricing surface. CreateProposalModal,
+// PricingModal etc. all import these from here.
+
+export type ScenarioType = 'direct' | 'agent' | 'platform';
+export type SolveMode = 'guest' | 'base';
+
+export interface SnapshotAgent {
+  id: string;
+  pct: number;
+  name: string;
+  email: string | null;
+  company: string | null;
+}
+
+export interface PricingSnapshot {
+  propertyId: string;
+  scenarioType: ScenarioType;
+  agentId: string | null;
+  agents: SnapshotAgent[];
+  agentContact: { name: string; email: string | null; company: string | null } | null;
+  channelId: string | null;
+  baseline: number;
+  seasonTag: string | null;
+  seasonMultiplier: number;
+  ctrPct: number;
+  agentPct: number;
+  platformFeePct: number;
+  platformFixedFee: number;
+  reducedBaseline: number | null;
+  reducedCtrPct: number | null;
+  reducedAgentPct: number | null;
+  totalMarginPct: number;
+  breakdown: PricingBreakdown;
+}
+
+/** Plain-text breakdown for Share Calc (WhatsApp / email). Exposed so
+ *  hosts that handle a "share calc" action produce the same text shape. */
+export function snapshotToText(snap: PricingSnapshot, propertyName: string): string {
+  const b = snap.breakdown;
+  const lines = [
+    `${propertyName} — Pricing`,
+    `Scenario: ${snap.scenarioType}`,
+    snap.seasonTag ? `Season: ${snap.seasonTag} (×${snap.seasonMultiplier})` : null,
+    `Base: ${fmtRand(snap.baseline * snap.seasonMultiplier)} / night`,
+    `Owner nets: ${fmtRand(b.ownerNet)}`,
+    `CTR earns: ${fmtRand(b.ctrTake)} (${b.effectiveCtrMarginPct.toFixed(1)}%)`,
+    snap.scenarioType === 'agent' && b.agentTake > 0 ? `Agent earns: ${fmtRand(b.agentTake)} (${snap.agentPct}%)` : null,
+    snap.scenarioType === 'platform' && b.platformFees > 0 ? `Platform fee: ${fmtRand(b.platformFees)} (${snap.platformFeePct}%)` : null,
+    `Guest pays: ${fmtRand(b.clientPriceExclVat)} / night`,
+  ];
+  return lines.filter(Boolean).join('\n');
+}
 
 interface Props {
   property: { id: string; property_name: string };
   supabase: any;
   initialScenario?: ScenarioType;
   nights?: number;
+  /** Edit-mode: existing pricing_proposal whose state hydrates the form. */
+  initialSnapshot?: PricingProposal | null;
   onCreateProposal?: (snapshot: PricingSnapshot) => void;
   actionLabel?: string;
   saving?: boolean;
@@ -145,6 +200,7 @@ export default function PricingDashboard({
   supabase,
   initialScenario,
   nights: _nights, // reserved for total-stay display in a future iteration
+  initialSnapshot,
   onCreateProposal,
   actionLabel = 'Create proposal from this',
   saving = false,
@@ -157,20 +213,48 @@ export default function PricingDashboard({
   const [channels, setChannels] = useState<ChannelProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [scenario, setScenario] = useState<ScenarioType | null>(initialScenario ?? null);
+  // Edit-mode hydration: when initialSnapshot is provided we seed the
+  // state machine from it so the user lands directly in State B with
+  // the saved channel / season / agent / margins reflected. State A
+  // (the channel picker) is skipped because the snapshot already
+  // tells us which channel was used.
+  const hydrate = initialSnapshot ?? null;
+  const [scenario, setScenario] = useState<ScenarioType | null>(
+    (hydrate?.scenario_type as ScenarioType) ?? initialScenario ?? null,
+  );
   /** Season selection is either the sentinel 'normal' (base rate, ×1) or a
    *  season_tags row ID. Using the ID (not the name) means per-property
    *  season tags can't be silently shadowed by a business-wide tag with the
-   *  same name — each row is uniquely selectable. */
+   *  same name — each row is uniquely selectable. Snapshots store the
+   *  human-readable season name (so they stay meaningful if the tag is
+   *  later renamed or deleted), so edit-mode hydration is deferred to a
+   *  useEffect below that runs once seasonTags has loaded. */
   const [selectedSeason, setSelectedSeason] = useState<string>('normal');
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(
+    (hydrate?.agents && hydrate.agents.length > 0 && hydrate.agents[0]?.id)
+      || hydrate?.agent_id
+      || '',
+  );
+  const [selectedChannelId, setSelectedChannelId] = useState<string>(hydrate?.channel_profile_id || '');
 
-  /** Primary negotiation lever — what the guest has said they'll pay. */
-  const [targetGuest, setTargetGuest] = useState('');
-  /** Secondary levers — shave margins to protect owner net at the target. */
-  const [overrideCtr, setOverrideCtr] = useState('');
-  const [overrideAgent, setOverrideAgent] = useState('');
+  /** Primary negotiation lever — what the guest has said they'll pay.
+   *  Pre-filled in edit-mode from the saved client_price_excl_vat so
+   *  the user sees what was agreed and can adjust from there. */
+  const [targetGuest, setTargetGuest] = useState(
+    hydrate?.client_price_excl_vat != null ? String(Math.round(Number(hydrate.client_price_excl_vat))) : '',
+  );
+  /** Secondary levers — shave margins to protect owner net at the target.
+   *  In edit-mode, pre-fill from the reduced fields if they were used. */
+  const [overrideCtr, setOverrideCtr] = useState(
+    hydrate?.reduced_commission_pct != null && hydrate?.agents
+      ? String(Math.max(0, Number(hydrate.reduced_commission_pct) - hydrate.agents.reduce((s: number, a: { pct: number }) => s + Number(a.pct || 0), 0)))
+      : '',
+  );
+  const [overrideAgent, setOverrideAgent] = useState(
+    hydrate?.agents && hydrate.agents.length === 1 && hydrate.agents[0]?.pct != null
+      ? String(hydrate.agents[0].pct)
+      : '',
+  );
 
   useEffect(() => {
     if (!supabase || !property?.id) return;
@@ -223,12 +307,23 @@ export default function PricingDashboard({
     [selectedSeasonTag],
   );
 
-  // NOTE: edit-mode hydration of `selectedSeason` from a saved snapshot's
-  // season name will land alongside PR #22 (which adds the initialSnapshot
-  // prop). When that merges, add a useEffect here that resolves the
-  // snapshot's season_tag (a name like "Peak") to the matching tag.id,
-  // preferring property-scoped over business-wide when both exist with the
-  // same name.
+  // Edit-mode hydration for selectedSeason. Snapshots store the season
+  // name (e.g. "Peak"), but the dropdown values are row IDs. Once
+  // seasonTags has loaded, resolve the snapshot's season_tag to the
+  // matching tag.id — preferring a property-scoped tag over a business-
+  // wide one when both share the name. Ref-guarded so a later refetch
+  // of seasonTags doesn't overwrite the user's subsequent picks.
+  const seasonHydratedRef = useRef(false);
+  useEffect(() => {
+    if (seasonHydratedRef.current) return;
+    if (!hydrate?.season_tag || seasonTags.length === 0) return;
+    const matches = seasonTags.filter(s => s.name === hydrate.season_tag);
+    if (matches.length === 0) { seasonHydratedRef.current = true; return; }
+    const preferred = matches.find(s => s.property_id) ?? matches[0];
+    setSelectedSeason(preferred.id);
+    seasonHydratedRef.current = true;
+  }, [seasonTags, hydrate]);
+
   const activeChannel = useMemo(
     () => channels.find(c => c.id === selectedChannelId) || null,
     [channels, selectedChannelId],

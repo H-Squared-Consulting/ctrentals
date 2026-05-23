@@ -18,7 +18,7 @@ import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
-import type { PricingSnapshot } from './PricingWidget';
+import type { PricingSnapshot } from './PricingDashboard';
 
 interface GuestRow {
   id: string;

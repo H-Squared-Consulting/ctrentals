@@ -84,7 +84,7 @@ import ActionModal from '../components/ActionModal';
 <ActionModal
   title="Send proposal"
   subtitle={`To ${guestName}`}
-  width={520}                // default 520; 560 for the PricingDashboard; 720 for 2-column forms; 900 for the legacy PricingWidget edit-mode
+  width={520}                // default 520; 560 for the PricingDashboard; 720 for 2-column forms
   summary={<>...</>}         // optional context panel at top of body
   primaryAction={<button className="btn btn-primary" onClick={submit}>Send</button>}
   secondaryActions={<button className="btn btn-ghost" onClick={() => setStep('back')}>← Back</button>}
