@@ -15,6 +15,7 @@
  */
 
 import { useEffect, type ReactNode } from 'react';
+import { useDirty } from '../lib/dirtyState';
 
 export type DetailModalMode = 'view' | 'edit';
 
@@ -86,6 +87,10 @@ export default function DetailModal({
   children,
   onClose,
 }: DetailModalProps) {
+  // Flag this modal as dirty in the global registry whenever it has
+  // unsaved edits, so the silent auto-update reloader defers a refresh.
+  useDirty(mode === 'edit' && !!isDirty);
+
   // Escape key closes the modal (subject to dirty-check).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

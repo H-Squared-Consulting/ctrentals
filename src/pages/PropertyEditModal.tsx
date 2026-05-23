@@ -15,6 +15,7 @@ import SendProposalDialog from '../components/SendProposalDialog';
 import PricingModal from './PricingModal';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
+import { useDirty } from '../lib/dirtyState';
 
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user, initialMode = 'edit' }) {
   const toast = useToast();
@@ -155,6 +156,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       return false;
     }
   }, [form]);
+
+  // Tell the silent auto-update reloader to defer a refresh while the
+  // property editor has unsaved changes.
+  useDirty(isDirty);
 
   /** Routes every close path through here so a dirty form pops the confirm
    *  dialog instead of slipping out without saving. Clean forms close

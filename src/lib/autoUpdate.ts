@@ -29,6 +29,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { hasAnyDirty } from './dirtyState';
+
 const VERSION_URL = '/version.json';
 const CHECK_INTERVAL_MS = 2 * 60 * 1000;   // 2 minutes
 const SAFE_RETRY_INTERVAL_MS = 10 * 1000;  // poll for safety every 10s once update is pending
@@ -104,11 +106,17 @@ export function installAutoUpdate(): void {
       if (active.isContentEditable) return false;
     }
 
-    // (c) No `beforeunload` listener vetoes the reload. Dispatching a
-    // synthetic event lets us probe without actually triggering the
-    // browser's "Leave site?" dialog: any handler that called
-    // preventDefault() / set returnValue flips defaultPrevented to true,
-    // which we read as "user has dirty state, defer".
+    // (c) No component has registered itself as dirty via useDirty().
+    // This is the explicit, opt-in signal — preferred over the
+    // beforeunload probe below because it survives any change to how
+    // forms handle navigation guards.
+    if (hasAnyDirty()) return false;
+
+    // (d) Fallback: no `beforeunload` listener vetoes the reload.
+    // Dispatching a synthetic event lets us probe without triggering
+    // the browser's "Leave site?" dialog. Catches dirty surfaces that
+    // haven't been migrated to useDirty() yet, and any third-party
+    // code that registers its own beforeunload guard.
     try {
       const probe = new Event('beforeunload', { cancelable: true });
       window.dispatchEvent(probe);
