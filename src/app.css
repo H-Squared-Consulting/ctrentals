@@ -303,6 +303,14 @@ body {
   color: var(--error);
 }
 .btn-outline-danger:hover { background: var(--error-bg); color: #991B1B; border-color: #991B1B; }
+/* WhatsApp brand colour. Used on the Send-via-WhatsApp action so the
+ * channel is visually recognisable. Brand hex is canonical, not editable. */
+.btn-outline-whatsapp {
+  background: transparent;
+  border: 1px solid #25D366;
+  color: #25D366;
+}
+.btn-outline-whatsapp:hover { background: #E7F8EE; color: #128C7E; border-color: #128C7E; }
 
 /* ===== Toolbar Actions (inside DataTable header) ===== */
 .toolbar-actions-group { display: flex; align-items: center; gap: 6px; }
