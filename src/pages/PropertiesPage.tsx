@@ -76,7 +76,6 @@ export default function PropertiesPage() {
   const [editorMode, setEditorMode] = useState<'view' | 'edit'>('edit');
   /** Per-row "busy" flag while a publish toggle is in flight. Keeps the
    *  button disabled so a stray double-click can't fire two updates. */
-  const [togglingId, setTogglingId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pricingProperty, setPricingProperty] = useState<any | null>(null);
 
@@ -121,36 +120,6 @@ export default function PropertiesPage() {
     if (supabase) loadProperties();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
-
-  /** Flip is_published with a confirm. Archived properties are left alone
-   *  — they're in a different bucket and need Unarchive from the editor
-   *  before they can be published again. */
-  async function toggleActive(property: Property, e: React.MouseEvent) {
-    e.stopPropagation();
-    if (property.is_archived) return;
-    const next = !property.is_published;
-    const verb = next ? 'activate' : 'deactivate';
-    if (!confirm(`${verb[0].toUpperCase() + verb.slice(1)} ${property.property_name}? ${next ? 'It will appear on the public site again.' : 'It will be hidden from the public site.'}`)) {
-      return;
-    }
-    setTogglingId(property.id);
-    try {
-      const { error } = await supabase
-        .from('partner_properties')
-        .update({ is_published: next, updated_at: new Date().toISOString() })
-        .eq('id', property.id);
-      if (error) throw error;
-      // Optimistic local update so the badge + button flip without a refetch flicker.
-      setProperties(prev => prev.map(p =>
-        p.id === property.id ? ({ ...p, is_published: next } as Property) : p
-      ));
-      toast.success(`${property.property_name} ${next ? 'activated' : 'deactivated'}`);
-    } catch (err: any) {
-      toast.error('Failed: ' + (err?.message || err));
-    } finally {
-      setTogglingId(null);
-    }
-  }
 
   const inactiveCount = useMemo(
     () => properties.filter(p => !p.is_archived && !p.is_published).length,
@@ -517,13 +486,6 @@ export default function PropertiesPage() {
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: '0.75rem' }}
-                    onClick={(e) => { e.stopPropagation(); setEditorMode('edit'); setEditingProperty(property); }}
-                  >
-                    ✏️ Edit
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: '0.75rem' }}
                     onClick={(e) => { e.stopPropagation(); setPricingProperty(property); }}
                   >
                     💰 Pricing
@@ -533,22 +495,9 @@ export default function PropertiesPage() {
                       className="btn btn-ghost"
                       style={{ fontSize: '0.75rem' }}
                       onClick={(e) => { e.stopPropagation(); setSharingProperty(property); }}
-                      title="Share brochure — pick branded or agent variant"
+                      title="Brochure — pick branded or agent variant to share"
                     >
-                      🔗 Share
-                    </button>
-                  )}
-                  {!property.is_archived && (
-                    <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.75rem', marginLeft: 'auto', color: property.is_published ? 'var(--text-light)' : '#065F46' }}
-                      onClick={(e) => toggleActive(property, e)}
-                      disabled={togglingId === property.id}
-                      title={property.is_published ? 'Deactivate — hides from the public site' : 'Activate — show on the public site'}
-                    >
-                      {togglingId === property.id
-                        ? '…'
-                        : property.is_published ? '⏸ Deactivate' : '▶ Activate'}
+                      🔗 Brochure
                     </button>
                   )}
                 </div>
@@ -576,13 +525,6 @@ export default function PropertiesPage() {
               <div style={{ display: 'flex', gap: '4px' }}>
                 <span
                   className="action-icon"
-                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditorMode('edit'); setEditingProperty(r); }}
-                  title="Edit property"
-                >
-                  ✏️
-                </span>
-                <span
-                  className="action-icon"
                   onClick={(e: React.MouseEvent) => { e.stopPropagation(); setPricingProperty(r); }}
                   title="Pricing"
                 >
@@ -592,7 +534,7 @@ export default function PropertiesPage() {
                   <span
                     className="action-icon"
                     onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSharingProperty(r); }}
-                    title="Share brochure"
+                    title="Brochure"
                   >
                     🔗
                   </span>
