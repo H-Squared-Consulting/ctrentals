@@ -2,9 +2,9 @@
  * AgentPropertyPicker -- modal for picking which CT Rentals properties
  * one or more agents can sell through their portal.
  *
- * Multi-select against the active portfolio. Save persists to the
- * mock admin store (localStorage). When backend lands, the persist
- * call swaps for an upsert against the agent_properties join table.
+ * Multi-select against the active portfolio. Save writes via
+ * agentPortalAdmin.setPropertyIdsForAgent (DELETE-then-INSERT on the
+ * agent_properties join table).
  *
  * Single-agent mode: pass agentIds=[id]. Bulk mode (e.g. "assign to
  * all Cape Concierge agents"): pass agentIds=[id1, id2, ...]. In bulk
@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import ActionModal from './ActionModal';
-import { setPropertyIdsForAgent } from '../lib/mockAdminStore';
+import { setPropertyIdsForAgent } from '../lib/agentPortalAdmin';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 
 interface PropertyLite {
@@ -39,18 +39,21 @@ export default function AgentPropertyPicker({
   subtitle,
   initialPropertyIds = [],
   onClose,
+  onSaved,
 }: {
   agentIds: string[];
   title: string;
   subtitle?: string;
   initialPropertyIds?: string[];
   onClose: () => void;
+  onSaved?: () => void | Promise<void>;
 }) {
   const { supabase } = useAuth();
   const toast = useToast();
 
   const [properties, setProperties] = useState<PropertyLite[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(initialPropertyIds));
   const [search, setSearch] = useState('');
 
@@ -99,15 +102,23 @@ export default function AgentPropertyPicker({
     setSelected(new Set());
   }
 
-  function save() {
-    const ids = Array.from(selected);
-    for (const agentId of agentIds) {
-      setPropertyIdsForAgent(agentId, ids);
+  async function save() {
+    setSaving(true);
+    try {
+      const ids = Array.from(selected);
+      for (const agentId of agentIds) {
+        await setPropertyIdsForAgent(supabase, agentId, ids);
+      }
+      const agentNoun = agentIds.length === 1 ? 'agent' : `${agentIds.length} agents`;
+      const propNoun = ids.length === 1 ? '1 property' : `${ids.length} properties`;
+      toast.success(`${propNoun} assigned to ${agentNoun}`);
+      if (onSaved) await onSaved();
+      onClose();
+    } catch (err: any) {
+      toast.error('Failed to save: ' + (err?.message || err));
+    } finally {
+      setSaving(false);
     }
-    const agentNoun = agentIds.length === 1 ? 'agent' : `${agentIds.length} agents`;
-    const propNoun = ids.length === 1 ? '1 property' : `${ids.length} properties`;
-    toast.success(`${propNoun} assigned to ${agentNoun}`);
-    onClose();
   }
 
   return (
@@ -115,7 +126,11 @@ export default function AgentPropertyPicker({
       title={title}
       subtitle={subtitle}
       width={620}
-      primaryAction={<button className="btn btn-primary" onClick={save} disabled={loading}>Save</button>}
+      primaryAction={
+        <button className="btn btn-primary" onClick={save} disabled={loading || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      }
       onClose={onClose}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)', marginBottom: 'var(--s-3)' }}>

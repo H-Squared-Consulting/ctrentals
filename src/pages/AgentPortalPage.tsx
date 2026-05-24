@@ -22,15 +22,15 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  getAgentByToken,
-  getAgentProperties,
-  getAgentEnquiries,
+  getPortalBundle,
+  submitAgentEnquiry,
   statusLabel,
   type AgentInfo,
   type AgentProperty,
   type AgentEnquiry,
   type AgentEnquiryStatus,
 } from '../lib/agentPortal';
+import AgentPortalEnquireModal from '../components/AgentPortalEnquireModal';
 
 type Tab = 'properties' | 'enquiries' | 'about';
 
@@ -48,26 +48,33 @@ export default function AgentPortalPage() {
   const [loading, setLoading] = useState(true);
   const [tokenError, setTokenError] = useState(false);
   const [tab, setTab] = useState<Tab>('properties');
+  const [enquiringFor, setEnquiringFor] = useState<AgentProperty | null>(null);
+
+  async function reload() {
+    const bundle = await getPortalBundle(token);
+    if (!bundle) {
+      setTokenError(true);
+      return;
+    }
+    setAgent(bundle.agent);
+    setProperties(bundle.properties);
+    setEnquiries(bundle.enquiries);
+  }
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
-      const a = await getAgentByToken(token);
+      const bundle = await getPortalBundle(token);
       if (cancelled) return;
-      if (!a) {
+      if (!bundle) {
         setTokenError(true);
         setLoading(false);
         return;
       }
-      const [props, enqs] = await Promise.all([
-        getAgentProperties(token),
-        getAgentEnquiries(token),
-      ]);
-      if (cancelled) return;
-      setAgent(a);
-      setProperties(props);
-      setEnquiries(enqs);
+      setAgent(bundle.agent);
+      setProperties(bundle.properties);
+      setEnquiries(bundle.enquiries);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -101,9 +108,27 @@ export default function AgentPortalPage() {
         {agent.agencyName && <span style={{ color: 'var(--text-secondary)' }}> · {titleCase(agent.agencyName)}</span>}
       </div>
 
-      {tab === 'properties' && <PropertiesTab properties={properties} />}
+      {tab === 'properties' && (
+        <PropertiesTab
+          properties={properties}
+          onEnquire={(p) => setEnquiringFor(p)}
+        />
+      )}
       {tab === 'enquiries' && <EnquiriesTab enquiries={enquiries} />}
       {tab === 'about' && <AboutTab />}
+
+      {enquiringFor && (
+        <AgentPortalEnquireModal
+          token={token}
+          property={enquiringFor}
+          onClose={() => setEnquiringFor(null)}
+          onSubmitted={async () => {
+            setEnquiringFor(null);
+            await reload();
+            setTab('enquiries');
+          }}
+        />
+      )}
      </div>
     </div>
   );
@@ -232,7 +257,7 @@ function ContactCard({ name, role, whatsappE164, whatsappDisplay, email }: {
 
 // ── Properties tab ──────────────────────────────────────────────────
 
-function PropertiesTab({ properties }: { properties: AgentProperty[] }) {
+function PropertiesTab({ properties, onEnquire }: { properties: AgentProperty[]; onEnquire: (p: AgentProperty) => void }) {
   if (properties.length === 0) {
     return (
       <div className="card" style={emptyStateStyle}>
@@ -242,12 +267,12 @@ function PropertiesTab({ properties }: { properties: AgentProperty[] }) {
   }
   return (
     <div className="property-grid">
-      {properties.map(p => <PropertyCard key={p.id} property={p} />)}
+      {properties.map(p => <PropertyCard key={p.id} property={p} onEnquire={onEnquire} />)}
     </div>
   );
 }
 
-function PropertyCard({ property }: { property: AgentProperty }) {
+function PropertyCard({ property, onEnquire }: { property: AgentProperty; onEnquire: (p: AgentProperty) => void }) {
   return (
     <article className="property-card" style={{ cursor: 'default' }}>
       <div className="property-card__image">
@@ -297,7 +322,7 @@ function PropertyCard({ property }: { property: AgentProperty }) {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => alert(`Enquire flow coming next session for ${titleCase(property.name)}`)}
+          onClick={() => onEnquire(property)}
         >
           + Enquire
         </button>

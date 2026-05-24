@@ -10,14 +10,14 @@
  */
 
 import { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import ActionModal from './ActionModal';
 import {
   getPortalUrl,
-  getTokenForAgent,
   regenerateToken,
   revokePortal,
-} from '../lib/mockAdminStore';
+} from '../lib/agentPortalAdmin';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -44,22 +44,26 @@ interface AgentLite {
 
 export default function AgentPortalShareMenu({
   agent,
+  initialToken,
   onClose,
 }: {
   agent: AgentLite;
+  initialToken: string;
   onClose: () => void;
 }) {
+  const { supabase } = useAuth();
   const toast = useToast();
   const firstName = titleCase((agent.name || '').split(' ')[0]);
 
   // Track the live token locally so the Reset action can refresh the
   // URL inside the open modal without remounting it.
-  const [currentToken, setCurrentToken] = useState(() => getTokenForAgent(agent.id) || '');
+  const [currentToken, setCurrentToken] = useState(initialToken);
   const url = getPortalUrl(currentToken);
 
   const [message, setMessage] = useState(defaultMessage(firstName, url));
   const [subject, setSubject] = useState(defaultSubject());
   const [copied, setCopied] = useState(false);
+  const [working, setWorking] = useState(false);
 
   async function copy() {
     try { await navigator.clipboard.writeText(url); }
@@ -69,34 +73,47 @@ export default function AgentPortalShareMenu({
     setTimeout(() => setCopied(false), 2000);
   }
 
-  function resetLink() {
+  async function resetLink() {
     const ok = confirm(
       `This will stop the current link from working for ${titleCase(agent.name)}.\n\n` +
       `Their next visit to the old link will show "Link not valid". You'll need to send them the new link below via WhatsApp or Email.\n\n` +
       `Continue?`
     );
     if (!ok) return;
-    const newToken = regenerateToken(agent.id);
-    setCurrentToken(newToken);
-    // Refresh the default message with the new URL. If Hayley had
-    // already edited it, only the canonical link-only template gets
-    // updated; we don't overwrite her custom text -- only re-apply
-    // the default when it still looks like the default.
-    const newUrl = getPortalUrl(newToken);
-    setMessage(prev => prev.includes(url) ? prev.replace(url, newUrl) : defaultMessage(firstName, newUrl));
-    toast.success('New link ready. Send it via WhatsApp or Email below.');
+    setWorking(true);
+    try {
+      const newToken = await regenerateToken(supabase, agent.id);
+      setCurrentToken(newToken);
+      const newUrl = getPortalUrl(newToken);
+      // Refresh the message body to use the new URL. If Hayley had
+      // edited the previous message, we swap just the old URL for
+      // the new one inside her text rather than overwriting wholesale.
+      setMessage(prev => prev.includes(url) ? prev.replace(url, newUrl) : defaultMessage(firstName, newUrl));
+      toast.success('New link ready. Send it via WhatsApp or Email below.');
+    } catch (err: any) {
+      toast.error('Failed to reset link: ' + (err?.message || err));
+    } finally {
+      setWorking(false);
+    }
   }
 
-  function stopAccess() {
+  async function stopAccess() {
     const ok = confirm(
       `This will turn off ${titleCase(agent.name)}'s portal access.\n\n` +
       `They will not be able to use any link until you turn it back on from the Agents page.\n\n` +
       `Continue?`
     );
     if (!ok) return;
-    revokePortal(agent.id);
-    toast.success(`Portal access stopped for ${titleCase(agent.name)}`);
-    onClose();
+    setWorking(true);
+    try {
+      await revokePortal(supabase, agent.id);
+      toast.success(`Portal access stopped for ${titleCase(agent.name)}`);
+      onClose();
+    } catch (err: any) {
+      toast.error('Failed to stop access: ' + (err?.message || err));
+    } finally {
+      setWorking(false);
+    }
   }
 
   const waHref = `https://wa.me/?text=${encodeURIComponent(message)}`;
@@ -208,6 +225,7 @@ export default function AgentPortalShareMenu({
             className="btn btn-outline"
             style={{ flex: 1, fontSize: '0.8125rem' }}
             onClick={resetLink}
+            disabled={working}
             title="Stop the current link and create a new one"
           >
             🔄 Reset link
@@ -217,6 +235,7 @@ export default function AgentPortalShareMenu({
             className="btn btn-outline-danger"
             style={{ flex: 1, fontSize: '0.8125rem' }}
             onClick={stopAccess}
+            disabled={working}
             title="Turn off this agent's portal access"
           >
             🚫 Stop access

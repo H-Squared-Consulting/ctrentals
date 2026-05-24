@@ -23,11 +23,9 @@ import AgentPropertyPicker from '../components/AgentPropertyPicker';
 import AgentPortalShareMenu from '../components/AgentPortalShareMenu';
 import {
   enablePortal,
+  getPropertyCountsByAgent,
   getPropertyIdsForAgent,
-  getTokenForAgent,
-  isPortalEnabled,
-  useAgentPortalMockState,
-} from '../lib/mockAdminStore';
+} from '../lib/agentPortalAdmin';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -42,6 +40,10 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const { setPageTitle } = useLayout();
 
   const [agents, setAgents] = useState<Agent[]>([]);
+  // Per-agent portal state computed once after each load. propertyCount
+  // comes from agent_properties; hasToken / activeToken come from the
+  // agents row itself.
+  const [portalState, setPortalState] = useState<Record<string, { hasToken: boolean; activeToken: string | null; propertyCount: number }>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -56,8 +58,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [initialForm, setInitialForm] = useState(EMPTY_FORM);
 
-  // Agent-portal mock state (Phase 1 -- localStorage-backed). Two
-  // companion modals: pick which properties the agent(s) can sell,
+  // Two companion modals: pick which properties the agent(s) can sell,
   // and share the portal URL with a single agent.
   const [pickerConfig, setPickerConfig] = useState<{
     agentIds: string[];
@@ -65,18 +66,19 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
     subtitle?: string;
     initialPropertyIds: string[];
   } | null>(null);
-  const [shareAgent, setShareAgent] = useState<Agent | null>(null);
+  const [shareAgent, setShareAgent] = useState<{ agent: Agent; token: string } | null>(null);
 
   // View mode: 'grouped' stacks one card per company with a bulk
   // assign button; 'list' shows the existing flat table.
   const [viewMode, setViewMode] = useState<'grouped' | 'list'>('grouped');
 
-  function openPickerForAgent(a: Agent) {
+  async function openPickerForAgent(a: Agent) {
+    const initial = await getPropertyIdsForAgent(supabase, a.id).catch(() => []);
     setPickerConfig({
       agentIds: [a.id],
       title: `Properties for ${titleCase(a.name)}`,
       subtitle: 'Pick which houses this agent can see in their portal',
-      initialPropertyIds: getPropertyIdsForAgent(a.id),
+      initialPropertyIds: initial,
     });
   }
 
@@ -89,11 +91,20 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
     });
   }
 
-  function openShareFor(a: Agent) {
+  async function openShareFor(a: Agent) {
     // Enabling the portal if it's currently off mints a token and
     // immediately opens the share menu so the next click is "send".
-    if (!isPortalEnabled(a.id)) enablePortal(a.id);
-    setShareAgent(a);
+    const existing = portalState[a.id]?.activeToken;
+    let token = existing || '';
+    if (!token) {
+      try {
+        token = await enablePortal(supabase, a.id);
+      } catch (err: any) {
+        toast.error('Failed to enable portal: ' + (err?.message || err));
+        return;
+      }
+    }
+    setShareAgent({ agent: a, token });
   }
 
   useEffect(() => { if (!embedded) setPageTitle('Agents'); }, [setPageTitle, embedded]);
@@ -101,9 +112,28 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   async function loadAgents() {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('agents').select('*').order('company').order('name');
+      // SELECT * so the page keeps rendering even if the agent-portal
+      // migration hasn't been applied yet (the url_token columns don't
+      // exist pre-migration). Post-migration the extra columns are
+      // simply included in the response.
+      const { data, error } = await supabase
+        .from('agents')
+        .select('*')
+        .order('company').order('name');
       if (error) throw error;
-      setAgents(data || []);
+      const all = (data || []) as Agent[];
+      setAgents(all);
+      const counts = await getPropertyCountsByAgent(supabase, all.map((a: any) => a.id)).catch(() => ({}));
+      const next: Record<string, { hasToken: boolean; activeToken: string | null; propertyCount: number }> = {};
+      for (const a of all as any[]) {
+        const hasToken = !!a.url_token && !a.url_token_revoked_at;
+        next[a.id] = {
+          hasToken,
+          activeToken: hasToken ? a.url_token : null,
+          propertyCount: counts[a.id] || 0,
+        };
+      }
+      setPortalState(next);
     } catch (err: any) {
       console.error('Error loading agents:', err);
     } finally {
@@ -291,6 +321,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       {viewMode === 'list' ? (
         <AgentsTable
           agents={filtered}
+          portalState={portalState}
           onView={openView}
           onEdit={openEditRow}
           onOpenPicker={openPickerForAgent}
@@ -304,6 +335,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       ) : (
         <AgentsGrouped
           agents={filtered}
+          portalState={portalState}
           onView={openView}
           onEdit={openEditRow}
           onOpenPicker={openPickerForAgent}
@@ -402,14 +434,16 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
           title={pickerConfig.title}
           subtitle={pickerConfig.subtitle}
           initialPropertyIds={pickerConfig.initialPropertyIds}
+          onSaved={loadAgents}
           onClose={() => setPickerConfig(null)}
         />
       )}
 
-      {shareAgent && getTokenForAgent(shareAgent.id) && (
+      {shareAgent && (
         <AgentPortalShareMenu
-          agent={shareAgent}
-          onClose={() => setShareAgent(null)}
+          agent={shareAgent.agent}
+          initialToken={shareAgent.token}
+          onClose={() => { setShareAgent(null); loadAgents(); }}
         />
       )}
     </div>
@@ -418,10 +452,13 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
 
 // ─── Grouped view (one card per company) ──────────────────────────────
 
+type PortalStateMap = Record<string, { hasToken: boolean; activeToken: string | null; propertyCount: number }>;
+
 function AgentsGrouped({
-  agents, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign, emptyMessage,
+  agents, portalState, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign, emptyMessage,
 }: {
   agents: Agent[];
+  portalState: PortalStateMap;
   onView: (a: Agent) => void;
   onEdit: (a: Agent) => void;
   onOpenPicker: (a: Agent) => void;
@@ -429,8 +466,6 @@ function AgentsGrouped({
   onBulkAssign: (company: string, agentsInGroup: Agent[]) => void;
   emptyMessage: string;
 }) {
-  useAgentPortalMockState();
-
   const groups = useMemo(() => {
     const map = new Map<string, Agent[]>();
     for (const a of agents) {
@@ -459,6 +494,7 @@ function AgentsGrouped({
           key={company}
           company={company}
           agents={list}
+          portalState={portalState}
           onView={onView}
           onEdit={onEdit}
           onOpenPicker={onOpenPicker}
@@ -471,10 +507,11 @@ function AgentsGrouped({
 }
 
 function GroupCard({
-  company, agents, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign,
+  company, agents, portalState, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign,
 }: {
   company: string;
   agents: Agent[];
+  portalState: PortalStateMap;
   onView: (a: Agent) => void;
   onEdit: (a: Agent) => void;
   onOpenPicker: (a: Agent) => void;
@@ -507,6 +544,7 @@ function GroupCard({
           <AgentGroupRow
             key={a.id}
             agent={a}
+            portalState={portalState}
             onView={onView}
             onEdit={onEdit}
             onOpenPicker={onOpenPicker}
@@ -519,17 +557,19 @@ function GroupCard({
 }
 
 function AgentGroupRow({
-  agent, onView, onEdit, onOpenPicker, onOpenShare,
+  agent, portalState, onView, onEdit, onOpenPicker, onOpenShare,
 }: {
   agent: Agent;
+  portalState: PortalStateMap;
   onView: (a: Agent) => void;
   onEdit: (a: Agent) => void;
   onOpenPicker: (a: Agent) => void;
   onOpenShare: (a: Agent) => void;
 }) {
   const isActive = agent.is_active !== false;
-  const propertyCount = getPropertyIdsForAgent(agent.id).length;
-  const portalEnabled = isPortalEnabled(agent.id);
+  const st = portalState[agent.id] || { hasToken: false, activeToken: null, propertyCount: 0 };
+  const propertyCount = st.propertyCount;
+  const portalEnabled = st.hasToken;
 
   return (
     <div
@@ -626,21 +666,19 @@ interface AgentRow extends DataRow {
 }
 
 function AgentsTable({
-  agents, onView, onEdit, onOpenPicker, onOpenShare, emptyMessage,
+  agents, portalState, onView, onEdit, onOpenPicker, onOpenShare, emptyMessage,
 }: {
   agents: Agent[];
+  portalState: PortalStateMap;
   onView: (a: Agent) => void;
   onEdit: (a: Agent) => void;
   onOpenPicker: (a: Agent) => void;
   onOpenShare: (a: Agent) => void;
   emptyMessage: string;
 }) {
-  // Subscribe so the Properties / Portal cells refresh whenever the
-  // mock admin store changes (in this tab or another).
-  useAgentPortalMockState();
-
   const rows: AgentRow[] = agents.map(a => {
     const isActive = a.is_active !== false;
+    const st = portalState[a.id] || { hasToken: false, activeToken: null, propertyCount: 0 };
     return {
       id: a.id,
       name: titleCase(a.name),
@@ -649,8 +687,8 @@ function AgentsTable({
       commission: Number(a.default_commission_pct) || 0,
       status: isActive ? 'Active' : 'Inactive',
       is_active: isActive,
-      property_count: getPropertyIdsForAgent(a.id).length,
-      portal_enabled: isPortalEnabled(a.id),
+      property_count: st.propertyCount,
+      portal_enabled: st.hasToken,
       agent: a,
     };
   });
