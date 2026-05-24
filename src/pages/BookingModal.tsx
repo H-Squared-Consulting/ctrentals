@@ -99,6 +99,10 @@ export default function BookingModal({
     extras: booking.extras || '',
     notes: booking.notes || '',
     status: booking.status || 'confirmed',
+    // 'booking' (real reservation) or 'block' (owner stay, maintenance,
+    // hold). Picked at creation time; a block has no guest, no payment
+    // and no platform — just property + dates + a short reason label.
+    kind: (booking as any).kind || 'booking',
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [booking.id]);
 
@@ -140,34 +144,43 @@ export default function BookingModal({
   }
 
   async function save() {
-    if (!form.guest_name.trim()) { toast.error('Guest name is required'); return; }
+    const isBlock = form.kind === 'block';
     if (!form.property_id) { toast.error('Please select a property'); return; }
     if (!form.check_in || !form.check_out) { toast.error('Check-in and check-out dates are required'); return; }
     if (form.check_out <= form.check_in) { toast.error('Check-out must be after check-in'); return; }
+    if (!isBlock && !form.guest_name.trim()) { toast.error('Guest name is required'); return; }
+    if (isBlock && !form.guest_name.trim()) { toast.error('A short reason is required (e.g. Owner stay, Maintenance)'); return; }
 
     setSaving(true);
     try {
+      // For blocks: strip guest / payment / platform fields. The reason
+      // label lives in guest_name (re-purposed) so the calendar bar still
+      // has something to render. Status stays 'confirmed' so the block
+      // shows on the calendar — the kind column drives the bar style.
       const payload: any = {
         partner_id: partnerId,
         property_id: form.property_id,
         enquiry_id: booking.enquiry_id || null,
-        guest_id: form.guest_id || null,
+        kind: form.kind,
+        guest_id: isBlock ? null : (form.guest_id || null),
         guest_name: form.guest_name.trim(),
-        guest_email: form.guest_email.trim() || null,
-        guest_phone: form.guest_phone.trim() || null,
-        guest_nationality: form.guest_nationality.trim() || null,
-        guests_total: Number(form.guests_total) || 1,
-        guests_adults: form.guests_adults !== '' ? Number(form.guests_adults) : null,
-        guests_children: form.guests_children !== '' ? Number(form.guests_children) : null,
+        guest_email: isBlock ? null : (form.guest_email.trim() || null),
+        guest_phone: isBlock ? null : (form.guest_phone.trim() || null),
+        guest_nationality: isBlock ? null : (form.guest_nationality.trim() || null),
+        // 1 for blocks too — the column is likely NOT NULL with default 1
+        // and the value is irrelevant for a block (no guests staying).
+        guests_total: isBlock ? 1 : (Number(form.guests_total) || 1),
+        guests_adults: isBlock ? null : (form.guests_adults !== '' ? Number(form.guests_adults) : null),
+        guests_children: isBlock ? null : (form.guests_children !== '' ? Number(form.guests_children) : null),
         check_in: form.check_in,
         check_out: form.check_out,
-        platform: form.platform || null,
+        platform: isBlock ? null : (form.platform || null),
         manager: form.manager.trim() || null,
-        total_amount: form.total_amount !== '' ? Number(form.total_amount) : null,
-        balance_due: form.balance_due !== '' ? Number(form.balance_due) : null,
+        total_amount: isBlock ? null : (form.total_amount !== '' ? Number(form.total_amount) : null),
+        balance_due: isBlock ? null : (form.balance_due !== '' ? Number(form.balance_due) : null),
         currency: form.currency || 'ZAR',
         house_contact: form.house_contact.trim() || null,
-        extras: form.extras.trim() || null,
+        extras: isBlock ? null : (form.extras.trim() || null),
         notes: form.notes.trim() || null,
         status: form.status,
         updated_at: new Date().toISOString(),
@@ -269,16 +282,9 @@ export default function BookingModal({
 
   const footerActions = isNew ? null : (
     <>
-      {onToggleBlocked && !isCancelled && (
-        <button
-          className={isBlocked ? 'btn btn-outline-success' : 'btn btn-outline'}
-          onClick={() => { onToggleBlocked(); onClose(); }}
-          disabled={saving}
-          title={isBlocked ? 'Restore this as a real booking' : 'Mark these dates as blocked (owner stay, maintenance, hold)'}
-        >
-          {isBlocked ? '↺ Mark as Booking' : '⊘ Mark as Block'}
-        </button>
-      )}
+      {/* Mark as Block / Mark as Booking toggle removed — kind is set at
+          creation time. To convert, delete this entry and create a new
+          one with the right type. */}
       {canCheckIn && (
         <button
           className="btn btn-outline-success"
@@ -356,6 +362,48 @@ export default function BookingModal({
         </div>
       )}
 
+      {/* Kind picker — what kind of entry is this? Booking (real guest)
+          or Block (owner stay / maintenance / hold)? Locked once saved
+          since converting between them isn't useful in practice; the
+          user just deletes and recreates. */}
+      <DetailModalSection heading="Type">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <label
+            className={`btn ${form.kind === 'booking' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ cursor: isNew && !fieldsDisabled ? 'pointer' : 'not-allowed', fontWeight: 500, opacity: !isNew || fieldsDisabled ? 0.6 : 1 }}
+          >
+            <input
+              type="radio"
+              name="booking_kind"
+              checked={form.kind === 'booking'}
+              onChange={() => setForm(f => ({ ...f, kind: 'booking' }))}
+              disabled={!isNew || fieldsDisabled}
+              style={{ display: 'none' }}
+            />
+            📅 Booking
+          </label>
+          <label
+            className={`btn ${form.kind === 'block' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ cursor: isNew && !fieldsDisabled ? 'pointer' : 'not-allowed', fontWeight: 500, opacity: !isNew || fieldsDisabled ? 0.6 : 1 }}
+          >
+            <input
+              type="radio"
+              name="booking_kind"
+              checked={form.kind === 'block'}
+              onChange={() => setForm(f => ({ ...f, kind: 'block' }))}
+              disabled={!isNew || fieldsDisabled}
+              style={{ display: 'none' }}
+            />
+            ⊘ Block (owner stay / maintenance)
+          </label>
+        </div>
+        {!isNew && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 6, fontStyle: 'italic' }}>
+            Type is set at creation. To convert, delete this and create a new one.
+          </div>
+        )}
+      </DetailModalSection>
+
       <DetailModalSection heading="Stay & property">
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
@@ -421,6 +469,26 @@ export default function BookingModal({
         </fieldset>
       </DetailModalSection>
 
+      {form.kind === 'block' && (
+        <DetailModalSection heading="Reason">
+          <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+            <div className="form-group">
+              <label className="form-label">Block reason *</label>
+              <input
+                className="form-input"
+                value={form.guest_name}
+                onChange={(e) => setForm(f => ({ ...f, guest_name: e.target.value }))}
+                placeholder="e.g. Owner stay, Maintenance, Hold"
+              />
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', marginTop: 4 }}>
+                Short label shown on the calendar bar so the team knows why these dates are held.
+              </div>
+            </div>
+          </fieldset>
+        </DetailModalSection>
+      )}
+
+      {form.kind === 'booking' && (
       <DetailModalSection heading="Guest">
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
@@ -510,7 +578,9 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+      )}
 
+      {form.kind === 'booking' && (
       <DetailModalSection heading="Financial">
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
@@ -552,6 +622,7 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+      )}
 
       <DetailModalSection heading="Admin">
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
