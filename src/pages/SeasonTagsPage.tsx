@@ -1,12 +1,14 @@
 /**
- * SeasonTagsPage -- Business-wide and per-property season tags.
+ * SeasonsPage (route still /settings/seasons) — the home for the 4-tier
+ * seasonal pricing model.
  *
- * Follows the standard list-page baseline:
- *   - Toolbar: filters -> search -> count -> + New Tag
- *   - Add via ActionModal
- *   - Status shown via .ops-status-pill semantic variants (--peak/--high/--mid/--low)
- *   - Two-section list (business-wide / per-property) kept; both use the
- *     same .data-table shell so they read as siblings.
+ * Each row is one season (Peak / High / Shoulder / Winter). Key + name are
+ * fixed; date ranges and multiplier are editable. Lock-by-default, unlock
+ * to edit, Save flushes all staged changes. Same affordance as Pricing.
+ *
+ * The Pricing page reads these multipliers + date ranges to auto-suggest
+ * per-property per-season rates; the pricing engine reads them to pick
+ * the right season for any check-in date.
  */
 
 /* eslint-disable */
@@ -16,350 +18,281 @@ import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../components/ToastProvider';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
-import ActionModal from '../components/ActionModal';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
-import DateInput from '../components/DateInput';
-import { SEASON_TAG_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
-import type { SeasonTag } from '../types/pricing';
+import { CT_RENTALS_PARTNER_ID } from './constants';
+import { useDirty } from '../lib/dirtyState';
 
-function titleCase(s: string | null | undefined): string {
-  if (!s) return '';
-  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
+const SEASON_ORDER = ['peak', 'high', 'shoulder', 'winter'] as const;
+type SeasonKey = typeof SEASON_ORDER[number];
+
+interface SeasonRow {
+  id: string;
+  partner_id: string;
+  key: SeasonKey;
+  name: string;
+  multiplier: number;
+  date_ranges: Array<{ start: string; end: string }>;
+  sort_order: number;
 }
 
-const SEASON_VARIANT: Record<string, string> = {
-  Peak: 'peak', High: 'high', Mid: 'mid', Low: 'low',
-};
+/** Convert "12-15" → "15 Dec" for tooltips and read-only display. */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtMmDd(mmdd: string): string {
+  if (!mmdd) return '';
+  const [mm, dd] = mmdd.split('-').map(s => parseInt(s, 10));
+  if (!mm || !dd) return mmdd;
+  return `${dd} ${MONTHS[mm - 1] || '?'}`;
+}
+function fmtDateRanges(ranges: Array<{ start: string; end: string }>): string {
+  return (ranges || []).map(r => `${fmtMmDd(r.start)} → ${fmtMmDd(r.end)}`).join(' · ');
+}
 
-const EMPTY_DRAFT = {
-  name: 'Peak',
-  start_date: '',
-  end_date: '',
-  multiplier: '1.5',
-  property_id: '',
-};
-
-export default function SeasonTagsPage({ embedded }: { embedded?: boolean } = {}) {
+export default function SeasonsPage({ embedded }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
 
-  const [tags, setTags] = useState<SeasonTag[]>([]);
-  const [properties, setProperties] = useState<{ id: string; property_name: string }[]>([]);
+  const [seasons, setSeasons] = useState<SeasonRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [unlocked, setUnlocked] = useState(false);
+  /** Staged edits keyed by season key → partial patch on the row. Save
+   *  flushes these to the seasons table; clear on Lock or after Save. */
+  const [pending, setPending] = useState<Map<SeasonKey, Partial<SeasonRow>>>(new Map());
   const [saving, setSaving] = useState(false);
+  const isDirty = pending.size > 0;
 
-  const [seasonFilter, setSeasonFilter] = useState('');
-  const [propertyFilter, setPropertyFilter] = useState<'' | 'business' | 'property'>('');
-  const [search, setSearch] = useState('');
+  useDirty(isDirty);
 
-  const [addOpen, setAddOpen] = useState(false);
-  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  useEffect(() => { if (!embedded) setPageTitle('Seasons'); }, [setPageTitle, embedded]);
 
-  useEffect(() => { if (!embedded) setPageTitle('Season Tags'); }, [setPageTitle, embedded]);
-
-  async function loadData() {
+  async function load() {
     setLoading(true);
-    try {
-      const [tagRes, propRes] = await Promise.all([
-        supabase.from('season_tags').select('*').order('start_date'),
-        supabase.from('partner_properties').select('id, property_name').eq('partner_id', CT_RENTALS_PARTNER_ID).order('property_name'),
-      ]);
-      if (tagRes.data) setTags(tagRes.data);
-      if (propRes.data) setProperties(propRes.data);
-    } catch (err) {
-      console.error('Error loading season tags:', err);
-    } finally {
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('id, partner_id, key, name, multiplier, date_ranges, sort_order')
+      .eq('partner_id', CT_RENTALS_PARTNER_ID)
+      .order('sort_order');
+    if (error) {
+      toast.error('Failed to load seasons: ' + error.message);
       setLoading(false);
+      return;
     }
+    setSeasons((data || []) as SeasonRow[]);
+    setLoading(false);
   }
-  useEffect(() => { if (supabase) loadData(); }, [supabase]);
+  useEffect(() => { if (supabase) load(); /* eslint-disable-next-line */ }, [supabase]);
 
-  const propertyNameById = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const p of properties) map[p.id] = p.property_name;
-    return map;
-  }, [properties]);
-
-  const filtered = useMemo(() => {
-    let result = tags;
-    if (seasonFilter) result = result.filter(t => t.name === seasonFilter);
-    if (propertyFilter === 'business') result = result.filter(t => !t.property_id);
-    if (propertyFilter === 'property') result = result.filter(t => !!t.property_id);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(t => {
-        const pname = t.property_id ? (propertyNameById[t.property_id] || '').toLowerCase() : '';
-        return (t.name || '').toLowerCase().includes(q) || pname.includes(q);
-      });
-    }
-    return result;
-  }, [tags, seasonFilter, propertyFilter, search, propertyNameById]);
-
-  const businessWideTags = filtered.filter(t => !t.property_id);
-  const propertyTags = filtered.filter(t => !!t.property_id);
-
-  function openAdd() {
-    setDraft(EMPTY_DRAFT);
-    setAddOpen(true);
+  function stage(key: SeasonKey, patch: Partial<SeasonRow>) {
+    setPending(prev => {
+      const next = new Map(prev);
+      const current = next.get(key) || {};
+      next.set(key, { ...current, ...patch });
+      return next;
+    });
+  }
+  function effective(s: SeasonRow): SeasonRow {
+    const patch = pending.get(s.key);
+    return patch ? { ...s, ...patch } : s;
   }
 
-  async function handleAdd() {
-    if (!draft.start_date || !draft.end_date) { toast.error('Start and end dates are required'); return; }
-    if (draft.end_date <= draft.start_date) { toast.error('End date must be after start date'); return; }
+  async function saveAll() {
+    if (!isDirty || saving) return;
     setSaving(true);
     try {
-      const payload = {
-        name: draft.name,
-        start_date: draft.start_date,
-        end_date: draft.end_date,
-        multiplier: parseFloat(draft.multiplier) || 1.0,
-        property_id: draft.property_id || null,
-      };
-      const { error } = await supabase.from('season_tags').insert(payload);
-      if (error) throw error;
-      toast.success('Season tag added');
-      setAddOpen(false);
-      await loadData();
+      for (const [key, patch] of pending.entries()) {
+        const target = seasons.find(s => s.key === key);
+        if (!target) continue;
+        const updates: any = { updated_at: new Date().toISOString() };
+        if (patch.multiplier !== undefined) updates.multiplier = patch.multiplier;
+        if (patch.date_ranges !== undefined) updates.date_ranges = patch.date_ranges;
+        const { error } = await supabase.from('seasons').update(updates).eq('id', target.id);
+        if (error) throw error;
+      }
+      toast.success(`Saved ${pending.size} season${pending.size === 1 ? '' : 's'}`);
+      setPending(new Map());
+      setUnlocked(false);
+      await load();
     } catch (err: any) {
-      toast.error('Failed to save: ' + (err?.message || err));
+      toast.error('Failed to save: ' + (err?.message || String(err)));
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(tag: SeasonTag, e: React.MouseEvent) {
-    e.stopPropagation();
-    if (!confirm(`Delete ${tag.name} season (${tag.start_date} to ${tag.end_date})?`)) return;
-    try {
-      const { error } = await supabase.from('season_tags').delete().eq('id', tag.id);
-      if (error) throw error;
-      await loadData();
-    } catch (err: any) {
-      toast.error('Failed to delete: ' + (err?.message || err));
+  function toggleLock() {
+    if (unlocked && isDirty) {
+      if (!confirm('You have unsaved changes. Discard them and lock?')) return;
+      setPending(new Map());
     }
+    setUnlocked(!unlocked);
   }
+
+  // Sort to canonical order regardless of DB sort_order so the UI is stable.
+  const orderedSeasons = useMemo(() => {
+    const byKey = new Map<SeasonKey, SeasonRow>();
+    for (const s of seasons) byKey.set(s.key, s);
+    return SEASON_ORDER.map(k => byKey.get(k)).filter(Boolean) as SeasonRow[];
+  }, [seasons]);
+
+  const rows = orderedSeasons.map(s => {
+    const eff = effective(s);
+    return {
+      id: s.id,
+      key: s.key,
+      name: eff.name,
+      multiplier: eff.multiplier,
+      date_ranges: eff.date_ranges,
+      raw: s,
+      effective: eff,
+    };
+  });
+
+  const columns = [
+    {
+      key: 'name', label: 'Season', sortable: false, width: '140px',
+      render: (row: DataRow) => {
+        const k = (row as any).key as SeasonKey;
+        return (
+          <span className={`ops-status-pill ops-status-pill--${k}`}>
+            <span className="ops-status-pill-dot" />
+            {(row as any).name}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'date_ranges', label: 'Active dates (MM-DD)', sortable: false,
+      render: (row: DataRow) => {
+        const r = row as any;
+        const ranges = r.date_ranges as Array<{ start: string; end: string }>;
+        if (!unlocked) {
+          return <span style={{ fontWeight: 600 }}>{fmtDateRanges(ranges) || '—'}</span>;
+        }
+        return (
+          <div className="seasons-ranges-editor">
+            {ranges.map((rng, i) => (
+              <div key={i} className="seasons-range-row">
+                <input
+                  type="text"
+                  className="form-input"
+                  value={rng.start}
+                  placeholder="MM-DD"
+                  onChange={(e) => {
+                    const next = ranges.slice();
+                    next[i] = { ...rng, start: e.target.value };
+                    stage(r.key, { date_ranges: next });
+                  }}
+                />
+                <span className="seasons-range-arrow">→</span>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={rng.end}
+                  placeholder="MM-DD"
+                  onChange={(e) => {
+                    const next = ranges.slice();
+                    next[i] = { ...rng, end: e.target.value };
+                    stage(r.key, { date_ranges: next });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="list-action-icon"
+                  title="Remove range"
+                  onClick={() => {
+                    const next = ranges.filter((_, idx) => idx !== i);
+                    stage(r.key, { date_ranges: next });
+                  }}
+                >✕</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => stage(r.key, { date_ranges: [...ranges, { start: '', end: '' }] })}
+            >+ Add range</button>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'multiplier', label: 'Multiplier', sortable: false, align: 'right' as const, width: '150px',
+      render: (row: DataRow) => {
+        const r = row as any;
+        if (!unlocked) {
+          return <span style={{ fontWeight: 600 }}>×{r.multiplier}</span>;
+        }
+        return (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-input"
+            value={r.multiplier}
+            onChange={(e) => stage(r.key, { multiplier: Number(e.target.value) })}
+            disabled={r.key === 'peak'}
+            title={r.key === 'peak' ? 'Peak is the anchor and always ×1.00' : 'Multiplier applied to Peak rate to derive this season'}
+            style={{ width: 90, textAlign: 'right' }}
+          />
+        );
+      },
+    },
+  ];
 
   if (loading) {
     return <div className="page-loader"><div className="spinner" /></div>;
   }
 
-  function tagRows(list: SeasonTag[]): Array<DataRow & { tag: SeasonTag }> {
-    return list.map(tag => ({
-      id: tag.id,
-      name: tag.name,
-      property: titleCase(propertyNameById[tag.property_id || '']),
-      start_date: tag.start_date,
-      end_date: tag.end_date,
-      multiplier: tag.multiplier,
-      tag,
-    }));
-  }
-
-  function tagColumns(includeProperty: boolean) {
-    return [
-      {
-        key: 'name', label: 'Season', sortable: true,
-        render: (row: DataRow) => {
-          const name = (row as any).name as string;
-          return (
-            <span className={`ops-status-pill ops-status-pill--${SEASON_VARIANT[name] || 'mid'}`}>
-              <span className="ops-status-pill-dot" />
-              {name}
-            </span>
-          );
-        },
-      },
-      ...(includeProperty ? [{
-        key: 'property', label: 'Property', sortable: true,
-        render: (row: DataRow) => (row as any).property || <span className="text-light">-</span>,
-      }] : []),
-      { key: 'start_date', label: 'Start date', sortable: true, render: (row: DataRow) => (row as any).start_date },
-      { key: 'end_date', label: 'End date', sortable: true, render: (row: DataRow) => (row as any).end_date },
-      {
-        key: 'multiplier', label: 'Multiplier', sortable: true, align: 'right' as const,
-        render: (row: DataRow) => <span style={{ fontWeight: 600 }}>{(row as any).multiplier}x</span>,
-      },
-      {
-        key: 'actions', label: '', align: 'right' as const, width: '70px',
-        render: (row: DataRow) => (
-          <div className="list-actions" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="list-action-icon"
-              title="Delete"
-              onClick={(e) => handleDelete((row as any).tag, e)}
-            >
-              ✕
-            </button>
-          </div>
-        ),
-      },
-    ];
-  }
-
   return (
     <div>
-      {/* Toolbar — baseline order: filters -> search -> count -> + New */}
+      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+        Four-tier seasonal pricing calendar. Each season has its date ranges (MM-DD format,
+        multiple allowed per season) and a multiplier applied to each property's Peak rate to
+        derive the auto-suggested rate. Edits made here ripple through every non-overridden
+        cell on the Pricing page and every quote across the app.
+      </p>
+
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="list-toolbar">
-          <div className="list-toolbar-left">
-            <select
-              className="list-filter-select"
-              value={seasonFilter}
-              onChange={(e) => setSeasonFilter(e.target.value)}
-              title="Filter by season"
-            >
-              <option value="">All seasons</option>
-              {SEASON_TAG_OPTIONS.map((o: any) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select
-              className="list-filter-select"
-              value={propertyFilter}
-              onChange={(e) => setPropertyFilter(e.target.value as any)}
-              title="Filter by scope"
-            >
-              <option value="">All scopes</option>
-              <option value="business">Business-wide</option>
-              <option value="property">Property-specific</option>
-            </select>
-            <div className="list-search">
-              <span className="list-search-icon">🔍</span>
-              <input
-                type="text"
-                placeholder="Search by season or property…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              {search && <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>}
-            </div>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {filtered.length} of {tags.length}
-            </span>
-          </div>
+          <div className="list-toolbar-left" />
           <div className="list-toolbar-right">
-            <button className="btn btn-primary" onClick={openAdd}>+ New Tag</button>
+            {isDirty && (
+              <span className="ops-status-pill ops-status-pill--ready">
+                <span className="ops-status-pill-dot" />
+                {pending.size} unsaved
+              </span>
+            )}
+            {unlocked && (
+              <button
+                className="btn btn-primary"
+                onClick={saveAll}
+                disabled={!isDirty || saving}
+              >
+                {saving ? 'Saving…' : '💾 Save'}
+              </button>
+            )}
+            <button
+              className={`btn ${unlocked ? 'btn-outline-success' : 'btn-ghost'}`}
+              onClick={toggleLock}
+              disabled={saving}
+              title={unlocked ? 'Lock the page (view-only)' : 'Unlock to edit seasons'}
+            >
+              {unlocked ? '🔓 Unlocked' : '🔒 Locked'}
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Business-wide */}
-      {(propertyFilter !== 'property') && (
-        <div className="card" style={{ marginBottom: 16, padding: 0 }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            <strong style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
-              Business-wide seasons
-            </strong>
-            <span style={{ marginLeft: 8, fontSize: '0.6875rem', color: 'var(--text-light)' }}>
-              {businessWideTags.length} {businessWideTags.length === 1 ? 'tag' : 'tags'}
-            </span>
-          </div>
-          {businessWideTags.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-              No business-wide season tags yet.
-            </div>
-          ) : (
-            <DataTable
-              columns={tagColumns(false)}
-              data={tagRows(businessWideTags)}
-              loading={false}
-              searchable={false}
-              resultsBarContent={null}
-              defaultSort={{ key: 'start_date', direction: 'asc' }}
-            />
-          )}
-        </div>
-      )}
-
-      {/* Per-property overrides */}
-      {(propertyFilter !== 'business') && propertyTags.length > 0 && (
-        <div className="card" style={{ padding: 0 }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            <strong style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
-              Property-specific overrides
-            </strong>
-            <span style={{ marginLeft: 8, fontSize: '0.6875rem', color: 'var(--text-light)' }}>
-              {propertyTags.length} {propertyTags.length === 1 ? 'tag' : 'tags'}
-            </span>
-          </div>
-          <DataTable
-            columns={tagColumns(true)}
-            data={tagRows(propertyTags)}
-            loading={false}
-            searchable={false}
-            resultsBarContent={null}
-            defaultSort={{ key: 'start_date', direction: 'asc' }}
-          />
-        </div>
-      )}
-
-      {addOpen && (
-        <ActionModal
-          title="New season tag"
-          subtitle="Pricing multiplier for a date range"
-          width={620}
-          primaryAction={
-            <button className="btn btn-primary" onClick={handleAdd} disabled={saving}>
-              {saving ? 'Saving…' : 'Save tag'}
-            </button>
-          }
-          onClose={() => setAddOpen(false)}
-        >
-          <div className="form-grid-2">
-            <div className="form-group">
-              <label className="form-label">Season</label>
-              <select
-                className="form-input"
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              >
-                {SEASON_TAG_OPTIONS.map((o: any) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Multiplier</label>
-              <input
-                type="number"
-                className="form-input"
-                value={draft.multiplier}
-                onChange={(e) => setDraft({ ...draft, multiplier: e.target.value })}
-                min={0.1}
-                step="0.05"
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Start date</label>
-              <DateInput
-                className="form-input"
-                value={draft.start_date}
-                onChange={(v) => setDraft({ ...draft, start_date: v })}
-                placeholder="e.g. 1 Dec 2026"
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">End date</label>
-              <DateInput
-                className="form-input"
-                value={draft.end_date}
-                onChange={(v) => setDraft({ ...draft, end_date: v })}
-                placeholder="e.g. 15 Jan 2027"
-              />
-            </div>
-          </div>
-          <div className="form-group" style={{ marginTop: 8 }}>
-            <label className="form-label">Property (leave blank for business-wide)</label>
-            <select
-              className="form-input"
-              value={draft.property_id}
-              onChange={(e) => setDraft({ ...draft, property_id: e.target.value })}
-            >
-              <option value="">All properties (business-wide)</option>
-              {properties.map(p => <option key={p.id} value={p.id}>{titleCase(p.property_name)}</option>)}
-            </select>
-          </div>
-        </ActionModal>
-      )}
+      <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+        <DataTable
+          columns={columns}
+          data={rows as any}
+          loading={false}
+          searchable={false}
+          resultsBarContent={null}
+        />
+      </div>
     </div>
   );
 }
