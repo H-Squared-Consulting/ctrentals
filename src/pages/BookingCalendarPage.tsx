@@ -104,24 +104,21 @@ export default function BookingCalendarPage() {
   const [searchCheckOut, setSearchCheckOut] = useState('');
   const [searchFlex, setSearchFlex] = useState<0 | 1 | 3 | 7>(0);
 
-  // Local-only Block state until Jordon ships the bookings.kind column.
-  // Keyed by booking id; survives reload, lives in this browser only.
-  const BLOCK_STORAGE_KEY = 'ctr.bookings.blocked.v1';
-  const [blockedIds, setBlockedIds] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(BLOCK_STORAGE_KEY);
-      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch { return new Set(); }
-  });
-  function persistBlocked(next: Set<string>) {
-    setBlockedIds(next);
-    try { localStorage.setItem(BLOCK_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch { /* noop */ }
+  // Block state lives on bookings.kind ('booking' | 'block'). The column
+  // is shared across users (was localStorage previously — issue #40).
+  // isBlocked reads from the row; toggleBlocked flips the column and
+  // refetches so the bar style updates immediately.
+  function isBlocked(id: string): boolean {
+    return bookings.find(b => b.id === id)?.kind === 'block';
   }
-  function isBlocked(id: string): boolean { return blockedIds.has(id); }
-  function toggleBlocked(id: string) {
-    const next = new Set(blockedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    persistBlocked(next);
+  async function toggleBlocked(id: string) {
+    const current = bookings.find(b => b.id === id);
+    const nextKind = current?.kind === 'block' ? 'booking' : 'block';
+    await supabase
+      .from('bookings')
+      .update({ kind: nextKind, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    await loadData();
   }
 
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
@@ -289,7 +286,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, statusFilter, searchQuery, blockedIds, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
+  }, [bookings, statusFilter, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
