@@ -309,9 +309,13 @@ function PropertyCard({ property, onEnquire }: { property: AgentProperty; onEnqu
       </div>
       <div className="property-card__footer" style={{ gap: 8 }}>
         {property.slug && (
+          // Agent variant (unbranded). Agents share these links straight
+          // to their clients, so the in-portal preview matches what their
+          // client will see. Mirrors the ?brand=agent fallback used by
+          // BrochureShareMenu when VITE_AGENT_DOMAIN isn't set.
           <a
             className="btn btn-ghost"
-            href={`/brochures/${encodeURIComponent(property.slug)}`}
+            href={`/brochures/${encodeURIComponent(property.slug)}?brand=agent`}
             target="_blank"
             rel="noopener noreferrer"
           >

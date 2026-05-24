@@ -73,6 +73,7 @@ CREATE POLICY agent_properties_delete ON agent_properties
 -- by deleting and re-inserting.
 
 GRANT SELECT, INSERT, DELETE ON agent_properties TO authenticated;
+GRANT SELECT, INSERT, DELETE ON agent_properties TO service_role;
 
 
 -- ── 3. Enquiry origin tracking ─────────────────────────────────────

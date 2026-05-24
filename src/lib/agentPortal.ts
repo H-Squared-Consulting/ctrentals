@@ -104,8 +104,11 @@ export async function getPortalBundle(token: string): Promise<PortalBundle | nul
 export interface SubmitEnquiryInput {
   token: string;
   propertyId: string;
-  guestName: string;
-  guestEmail: string;
+  // Guest details are optional — agents often enquire before they've
+  // disclosed the guest. Empty values land as NULL guest_* fields on
+  // the enquiry and can be filled in later from the Pipeline.
+  guestName?: string;
+  guestEmail?: string;
   guestPhone?: string;
   checkIn: string;          // YYYY-MM-DD
   checkOut: string;         // YYYY-MM-DD

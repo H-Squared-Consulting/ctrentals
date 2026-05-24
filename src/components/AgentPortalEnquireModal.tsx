@@ -1,14 +1,13 @@
 /**
  * AgentPortalEnquireModal -- public-facing enquiry submission modal.
  *
- * Triggered by the + Enquire button on each property card in the
- * agent portal. The property is pre-filled (locked) so the agent
- * cannot mis-tag the enquiry. On submit, calls the agent-portal-enquire
- * edge function with the token + payload; success lands in Hayley's
- * Pipeline tagged with the agent's ID and source='agent_portal'.
- *
- * Uses the shared <ActionModal> shell + form classes from the design
- * system. No new CSS prefixes introduced.
+ * Mirrors the manual agent-enquiry flow in src/pages/EnquiryForm.tsx:
+ * the agent is the recipient (their token authenticates the call), so
+ * the form only asks for the *stay* details up-front. Guest details
+ * live in an optional "Guest details (if known)" section because the
+ * agent often hasn't been given the guest yet — those fields land as
+ * NULL guest_* on the enquiry and can be filled in later from the
+ * Pipeline. The property is pre-filled / locked.
  */
 
 import { useState } from 'react';
@@ -47,6 +46,7 @@ export default function AgentPortalEnquireModal({
   const toast = useToast();
   const [form, setForm] = useState(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
+  const [guestSectionOpen, setGuestSectionOpen] = useState(false);
 
   function setField<K extends keyof typeof EMPTY_FORM>(key: K, value: string) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -55,8 +55,6 @@ export default function AgentPortalEnquireModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return;
-    if (!form.guestName.trim())  { toast.warning('Guest name is required'); return; }
-    if (!form.guestEmail.trim()) { toast.warning('Guest email is required'); return; }
     if (!form.checkIn || !form.checkOut) { toast.warning('Check-in and check-out dates are required'); return; }
     if (form.checkIn >= form.checkOut)   { toast.warning('Check-out must be after check-in'); return; }
 
@@ -98,39 +96,6 @@ export default function AgentPortalEnquireModal({
         }
         onClose={onClose}
       >
-        <div className="form-group" style={{ marginBottom: 'var(--s-3)' }}>
-          <label className="form-label">Guest name *</label>
-          <input
-            className="form-input"
-            value={form.guestName}
-            onChange={(e) => setField('guestName', e.target.value)}
-            placeholder="The guest's full name"
-            autoFocus
-          />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
-          <div className="form-group">
-            <label className="form-label">Guest email *</label>
-            <input
-              className="form-input"
-              type="email"
-              value={form.guestEmail}
-              onChange={(e) => setField('guestEmail', e.target.value)}
-              placeholder="guest@example.com"
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Guest phone</label>
-            <input
-              className="form-input"
-              value={form.guestPhone}
-              onChange={(e) => setField('guestPhone', e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
-        </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
           <div className="form-group">
             <label className="form-label">Check-in *</label>
@@ -182,6 +147,71 @@ export default function AgentPortalEnquireModal({
             onChange={(e) => setField('notes', e.target.value)}
             placeholder="Anything we should know — special occasions, dietary needs, accessibility, expected arrival time, etc."
           />
+        </div>
+
+        {/* Guest details — collapsible, fully optional. Mirrors the
+            "Guest details (if known)" sub-section on /enquiry/new for
+            agent enquiries. Leave blank if the guest hasn't been
+            disclosed yet; you can add them later from the Pipeline. */}
+        <div style={{
+          marginTop: 'var(--s-3)',
+          paddingTop: 'var(--s-3)',
+          borderTop: '1px solid var(--border-light)',
+        }}>
+          <div style={{
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+            color: 'var(--text)',
+            marginBottom: 4,
+          }}>
+            Guest details (if known)
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 'var(--s-2)' }}>
+            Optional — leave blank if you can't share the guest yet.
+          </div>
+          {guestSectionOpen ? (
+            <>
+              <div className="form-group" style={{ marginBottom: 'var(--s-3)' }}>
+                <label className="form-label">Guest name</label>
+                <input
+                  className="form-input"
+                  value={form.guestName}
+                  onChange={(e) => setField('guestName', e.target.value)}
+                  placeholder="e.g. Sarah Whitmore"
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
+                <div className="form-group">
+                  <label className="form-label">Guest email</label>
+                  <input
+                    className="form-input"
+                    type="email"
+                    value={form.guestEmail}
+                    onChange={(e) => setField('guestEmail', e.target.value)}
+                    placeholder="guest@example.com"
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Guest phone</label>
+                  <input
+                    className="form-input"
+                    value={form.guestPhone}
+                    onChange={(e) => setField('guestPhone', e.target.value)}
+                    placeholder="+27 …"
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.8125rem' }}
+              onClick={() => setGuestSectionOpen(true)}
+            >
+              + Add guest details
+            </button>
+          )}
         </div>
       </ActionModal>
     </form>

@@ -86,7 +86,6 @@ Deno.serve(async (req) => {
     return json(400, { ok: false, reason: 'invalid-token' });
   }
   if (!propertyId)             return json(400, { ok: false, reason: 'missing-property' });
-  if (!guestName)              return json(400, { ok: false, reason: 'missing-guest-name' });
   if (!isIsoDate(checkIn))     return json(400, { ok: false, reason: 'invalid-check-in' });
   if (!isIsoDate(checkOut))    return json(400, { ok: false, reason: 'invalid-check-out' });
   if (checkOut <= checkIn)     return json(400, { ok: false, reason: 'check-out-before-check-in' });
@@ -100,9 +99,15 @@ Deno.serve(async (req) => {
   });
 
   // 1. Validate the token + resolve the agent (must be active, not revoked).
+  //    We pull name/email/phone too because they become the enquiry's
+  //    client_* recipient fields (matches the manual /enquiry/new flow:
+  //    for agent enquiries the agent IS the recipient, not the guest).
+  //    The agents table is single-tenant (no partner_id column) — we
+  //    hard-code the CT Rentals partner ID below for the enquiry insert.
+  const PARTNER_ID = '3f12d140-8a4d-42a4-8d63-a97e7b2db4a0';
   const { data: agent, error: agentErr } = await admin
     .from('agents')
-    .select('id, partner_id, is_active, url_token_revoked_at')
+    .select('id, name, email, phone, is_active, url_token_revoked_at')
     .eq('url_token', token)
     .maybeSingle();
   if (agentErr) {
@@ -132,18 +137,38 @@ Deno.serve(async (req) => {
   // 3. Compute total guests if both adults+children given.
   const guestsTotal = (adults || 0) + (children || 0) || null;
 
-  // 4. Insert the enquiry. Fields match the existing /enquiry/new
-  //    insert so the Pipeline kanban renders this row without changes.
+  // 4. Mint a ref_code in the same ENQ-YYYYMMDD-NAM-XX format the
+  //    /enquiry/new UI uses, so manual + portal enquiries look alike
+  //    in the Pipeline. NAM is built from the agent's name (or 'AGT'
+  //    fallback) since they're the recipient on the record.
+  const refCode = (() => {
+    const d = new Date();
+    const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const clean = (agent.name || 'AGT').replace(/[^A-Za-z]/g, '').toUpperCase();
+    const namePart = (clean.slice(0, 3) || 'AGT').padEnd(3, 'X');
+    const tail = Math.floor(Math.random() * 0xff).toString(16).toUpperCase().padStart(2, '0');
+    return `ENQ-${day}-${namePart}-${tail}`;
+  })();
+
+  // 5. Insert the enquiry. Mirrors the manual agent-enquiry insert in
+  //    src/pages/EnquiryForm.tsx: client_* = the agent (the recipient
+  //    Hayley actually communicates with), guest_* = optional disclosure.
   const payload = {
-    partner_id: agent.partner_id,
+    partner_id: PARTNER_ID,
+    ref_code: refCode,
+    is_agent: true,
     agent_id: agent.id,
     property_id: propertyId,
-    client_name: guestName,
-    client_email: guestEmail || null,
-    client_phone: guestPhone || null,
+    client_name: agent.name || '',
+    client_email: agent.email || null,
+    client_phone: agent.phone || null,
+    guest_name: guestName || null,
+    guest_email: guestEmail || null,
+    guest_phone: guestPhone || null,
     check_in: checkIn,
     check_out: checkOut,
-    guests_total: guestsTotal,
+    bedrooms_needed: 1,
+    guests_total: guestsTotal || 1,
     guests_adults: adults,
     guests_children: children,
     notes: notes || null,
