@@ -248,9 +248,9 @@ export default function ProposalsPage() {
 
   return (
     <div>
-      {/* Toolbar — shared shape with Enquiries page. */}
+      {/* Toolbar — view modes + actions on top row, filters + search below. */}
       <div className="card" style={{ marginBottom: '16px' }}>
-        <div className="list-toolbar">
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
           <div className="list-toolbar-left">
             <div className="view-toggle">
               <button
@@ -268,6 +268,18 @@ export default function ProposalsPage() {
                 ☰ List
               </button>
             </div>
+          </div>
+          <div className="list-toolbar-right">
+            <button
+              className="btn btn-primary"
+              onClick={() => setLauncherOpen(true)}
+            >
+              + New Proposal
+            </button>
+          </div>
+        </div>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
             <select
               className="list-filter-select"
               value={statusFilter}
@@ -302,17 +314,11 @@ export default function ProposalsPage() {
                 <button className="list-search-clear" onClick={() => setSearch('')}>✕</button>
               )}
             </div>
+          </div>
+          <div className="list-toolbar-right">
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
               {filtered.length} of {proposals.length}
             </span>
-          </div>
-          <div className="list-toolbar-right">
-            <button
-              className="btn btn-primary"
-              onClick={() => setLauncherOpen(true)}
-            >
-              + New Proposal
-            </button>
           </div>
         </div>
       </div>

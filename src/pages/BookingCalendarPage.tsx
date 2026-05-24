@@ -28,6 +28,7 @@ interface Property {
   property_name: string;
   bedrooms: number | null;
   suburb: string | null;
+  is_published: boolean;
 }
 
 function titleCase(s: string | null | undefined): string {
@@ -60,14 +61,16 @@ function fmtShort(d: string | null): string {
 // nightsBetween used to live here. Consolidated into src/lib/nights.ts.
 // Call sites that previously expected `number` (not nullable) now use `?? 0`.
 
-// Zoom levels. Each defines the visible window in days and the pixel
-// width per day; total board width = days × cellWidth.
+// Continuous-scroll timeline: one fixed range (today ± months below),
+// zoom controls cell width only (px per day = density). Three tiers.
+const RANGE_PAST_DAYS = 365;     // 1 year back
+const RANGE_FUTURE_DAYS = 730;   // 2 years forward
+const RANGE_DAYS = RANGE_PAST_DAYS + RANGE_FUTURE_DAYS;
+
 const ZOOM_LEVELS = [
-  { key: 'year',    label: '12M', days: 365, cellWidth: 4 },
-  { key: 'half',    label: '6M',  days: 180, cellWidth: 8 },
-  { key: 'quarter', label: '3M',  days: 90,  cellWidth: 18 },
-  { key: 'month',   label: '1M',  days: 30,  cellWidth: 50 },
-  { key: 'week',    label: '1W',  days: 7,   cellWidth: 180 },
+  { key: 'overview', label: '⊞ Overview', cellWidth: 6  },
+  { key: 'standard', label: '▦ Standard', cellWidth: 14 },
+  { key: 'detail',   label: '☷ Detail',   cellWidth: 28 },
 ] as const;
 type ZoomKey = typeof ZOOM_LEVELS[number]['key'];
 
@@ -81,29 +84,45 @@ export default function BookingCalendarPage() {
   const [loading, setLoading] = useState(true);
 
   const [view, setView] = useState<'board' | 'list'>('board');
-  const [zoom, setZoom] = useState<ZoomKey>('quarter');
-  /** Date the timeline window starts at. User shifts this left/right via
-   *  prev/next buttons or jumps via the Today / date picker. */
-  /** Forward-looking default: today lands ~14% in from the left at every zoom.
-   *  Default zoom is 3M (90 days), so today appears ~12 days in. */
-  const [anchorDate, setAnchorDate] = useState<Date>(() => {
-    const t = startOfDay(new Date());
-    return addDays(t, -Math.floor(90 / 7));
-  });
+  const [zoom, setZoom] = useState<ZoomKey>('standard');
+  /** Token incremented when the user clicks Today; BookingsBoard watches it
+   *  and scrolls the viewport to today's offset. Avoids lifting the scroll
+   *  ref into this component. */
+  const [jumpToken, setJumpToken] = useState(0);
 
   // Filters + search
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterSuburb, setFilterSuburb] = useState('');
+  const [filterSuburb, setFilterSuburb] = useState<string[]>([]);
   const [filterBedrooms, setFilterBedrooms] = useState<number[]>([]);
-  // Status filter — more granular than the old live/cancelled/all so Hayley
-  // can focus the list on what's actually demanding action this week. Date-
-  // based (not status-column-based) so a booking sitting on 'confirmed' but
-  // whose dates say it's mid-stay correctly appears under In stay without
-  // someone having to manually flip the status column.
-  const [statusFilter, setStatusFilter] = useState<'active' | 'upcoming' | 'in_stay' | 'completed' | 'cancelled' | 'all'>('active');
-  /** Date-window narrowing for the list view. The board view has its own
-   *  ← Today → date nav so this filter is hidden there. */
-  const [dateWindow, setDateWindow] = useState<'next_7' | 'next_14' | 'next_30' | 'past' | 'all'>('next_30');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'booked' | 'blocked'>('all');
+  const [propertyStatusFilter, setPropertyStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
+  const [boardMode, setBoardMode] = useState<'occupancy' | 'availability'>('occupancy');
+
+  // "Find availability" — narrows property list to those free for an enquiry
+  // window. Flex extends the test window symmetrically on both sides.
+  const [searchCheckIn, setSearchCheckIn] = useState('');
+  const [searchCheckOut, setSearchCheckOut] = useState('');
+  const [searchFlex, setSearchFlex] = useState<0 | 1 | 3 | 7>(0);
+
+  // Local-only Block state until Jordon ships the bookings.kind column.
+  // Keyed by booking id; survives reload, lives in this browser only.
+  const BLOCK_STORAGE_KEY = 'ctr.bookings.blocked.v1';
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(BLOCK_STORAGE_KEY);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch { return new Set(); }
+  });
+  function persistBlocked(next: Set<string>) {
+    setBlockedIds(next);
+    try { localStorage.setItem(BLOCK_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch { /* noop */ }
+  }
+  function isBlocked(id: string): boolean { return blockedIds.has(id); }
+  function toggleBlocked(id: string) {
+    const next = new Set(blockedIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    persistBlocked(next);
+  }
 
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
 
@@ -138,7 +157,7 @@ export default function BookingCalendarPage() {
       const [propRes, bookRes] = await Promise.all([
         supabase
           .from('partner_properties')
-          .select('id, slug, property_name, bedrooms, suburb')
+          .select('id, slug, property_name, bedrooms, suburb, is_published')
           .eq('partner_id', CT_RENTALS_PARTNER_ID)
           .eq('is_archived', false)
           .order('slug'),
@@ -170,84 +189,46 @@ export default function BookingCalendarPage() {
 
   const filteredProperties = useMemo(() => {
     let result = properties;
+    if (propertyStatusFilter === 'active')   result = result.filter(p => p.is_published);
+    if (propertyStatusFilter === 'inactive') result = result.filter(p => !p.is_published);
     if (searchQuery.trim()) {
       const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       result = result.filter(p =>
         terms.every(t => [p.property_name, p.suburb, p.slug].filter(Boolean).join(' ').toLowerCase().includes(t))
       );
     }
-    if (filterSuburb) result = result.filter(p => p.suburb === filterSuburb);
+    if (filterSuburb.length > 0) result = result.filter(p => p.suburb != null && filterSuburb.includes(p.suburb));
     if (filterBedrooms.length > 0) result = result.filter(p => p.bedrooms != null && filterBedrooms.includes(p.bedrooms));
-    return result;
-  }, [properties, searchQuery, filterSuburb, filterBedrooms]);
-
-  // Status + date-window filters applied to the bookings list. Both work
-  // off today's date so "in stay" / "upcoming" / "next 7 days" stay honest
-  // without relying on someone manually flipping the status column.
-  const filteredBookings = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const daysFromToday = (n: number) => {
-      const d = new Date();
-      d.setDate(d.getDate() + n);
-      return d.toISOString().slice(0, 10);
-    };
-
-    let result = bookings;
-
-    // Status — date-aware for upcoming / in_stay / completed; pure status
-    // for cancelled. "active" is the operational default (upcoming OR in
-    // stay, not cancelled, not yet completed).
-    switch (statusFilter) {
-      case 'active':
-        result = result.filter(b =>
-          b.status !== 'cancelled' && b.check_out && b.check_out >= today,
-        );
-        break;
-      case 'upcoming':
-        result = result.filter(b =>
-          b.status !== 'cancelled' && b.check_in && b.check_in > today,
-        );
-        break;
-      case 'in_stay':
-        result = result.filter(b =>
-          b.status !== 'cancelled'
-          && b.check_in && b.check_in <= today
-          && b.check_out && b.check_out >= today,
-        );
-        break;
-      case 'completed':
-        result = result.filter(b =>
-          b.status !== 'cancelled' && b.check_out && b.check_out < today,
-        );
-        break;
-      case 'cancelled':
-        result = result.filter(b => b.status === 'cancelled');
-        break;
-      case 'all':
-        // no filter
-        break;
-    }
-
-    // Date window — narrows by check_in into a rolling window. Only the
-    // list view exposes this control; in board view the date navigation
-    // (← Today →) does the job so we skip it to avoid double-narrowing.
-    if (view === 'list' && dateWindow !== 'all') {
-      switch (dateWindow) {
-        case 'next_7':
-          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(7));
-          break;
-        case 'next_14':
-          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(14));
-          break;
-        case 'next_30':
-          result = result.filter(b => b.check_in && b.check_in >= today && b.check_in <= daysFromToday(30));
-          break;
-        case 'past':
-          result = result.filter(b => b.check_out && b.check_out < today);
-          break;
+    // Date range filter, mode-aware:
+    //   Occupancy   → show only properties booked/blocked in the window
+    //   Availability → show only properties free in the window
+    // Window extended by ±flex days on each side; cancelled bookings ignored.
+    if (searchCheckIn && searchCheckOut) {
+      const winStart = addDays(new Date(searchCheckIn), -searchFlex);
+      const winEnd = addDays(new Date(searchCheckOut), searchFlex);
+      if (winEnd > winStart) {
+        result = result.filter(p => {
+          const conflicts = bookings.some(b => {
+            if (b.property_id !== p.id) return false;
+            if (b.status === 'cancelled') return false;
+            const bStart = new Date(b.check_in);
+            const bEnd = new Date(b.check_out);
+            return bEnd > winStart && bStart < winEnd;
+          });
+          return boardMode === 'occupancy' ? conflicts : !conflicts;
+        });
       }
     }
+    return result;
+  }, [properties, searchQuery, filterSuburb, filterBedrooms, propertyStatusFilter, searchCheckIn, searchCheckOut, searchFlex, bookings, boardMode]);
 
+  // Cancelled bookings are dropped entirely (if it was cancelled it never
+  // happened — those dates are Available again). Remaining bookings are
+  // partitioned by the localStorage-backed Blocked flag into Booked vs Blocked.
+  const filteredBookings = useMemo(() => {
+    let result = bookings.filter(b => b.status !== 'cancelled');
+    if (statusFilter === 'booked')  result = result.filter(b => !isBlocked(b.id));
+    if (statusFilter === 'blocked') result = result.filter(b => isBlocked(b.id));
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(b =>
@@ -256,7 +237,8 @@ export default function BookingCalendarPage() {
       );
     }
     return result;
-  }, [bookings, statusFilter, dateWindow, view, searchQuery]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookings, statusFilter, searchQuery, blockedIds]);
 
   const propertyById = useMemo(() => {
     const m = new Map<string, Property>();
@@ -264,22 +246,23 @@ export default function BookingCalendarPage() {
     return m;
   }, [properties]);
 
-  // Zoom-derived measurements.
-  const zoomCfg = ZOOM_LEVELS.find(z => z.key === zoom) || ZOOM_LEVELS[2];
-  const visibleDays = zoomCfg.days;
+  // Continuous timeline: one fixed range, zoom controls density only.
+  // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
+  // scrolls freely across the whole span; Today scrolls the viewport.
+  const zoomCfg = ZOOM_LEVELS.find(z => z.key === zoom) || ZOOM_LEVELS[1];
   const cellWidth = zoomCfg.cellWidth;
-  const totalWidth = visibleDays * cellWidth;
-  const windowEnd = addDays(anchorDate, visibleDays);
+  const rangeStart = useMemo(() => addDays(startOfDay(new Date()), -RANGE_PAST_DAYS), []);
+  const rangeEnd = useMemo(() => addDays(rangeStart, RANGE_DAYS), [rangeStart]);
+  const totalWidth = RANGE_DAYS * cellWidth;
 
   /** Month-level ticks (top row of the axis). */
   const monthTicks = useMemo(() => {
     const ticks: Array<{ label: string; left: number; width: number }> = [];
-    const start = anchorDate;
-    let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-    while (cursor < windowEnd) {
-      const offsetDays = daysBetween(start, cursor);
+    let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+    while (cursor < rangeEnd) {
+      const offsetDays = daysBetween(rangeStart, cursor);
       const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-      const widthDays = daysBetween(cursor, monthEnd > windowEnd ? windowEnd : monthEnd);
+      const widthDays = daysBetween(cursor, monthEnd > rangeEnd ? rangeEnd : monthEnd);
       const widthPx = widthDays * cellWidth;
       if (widthPx >= 30) {
         ticks.push({ label: fmtMonth(cursor), left: offsetDays * cellWidth, width: widthPx });
@@ -287,7 +270,7 @@ export default function BookingCalendarPage() {
       cursor = monthEnd;
     }
     return ticks;
-  }, [anchorDate, windowEnd, cellWidth]);
+  }, [rangeStart, rangeEnd, cellWidth]);
 
   /** Bottom-row labels — clean dates, no day-of-week (weekends are shaded
    *  instead so the week rhythm is visible without label clutter).
@@ -297,25 +280,26 @@ export default function BookingCalendarPage() {
    *    1M   → day-of-month on every day
    *    1W   → "5 Jan" on every day
    */
+  /** Bottom-row labels. Density adapts to zoom tier so they stay readable:
+   *    overview → "5 Jan" every other Monday (~biweekly)
+   *    standard → "5 Jan" every Monday
+   *    detail   → day-of-month on every day
+   */
   const axisLabels = useMemo(() => {
     const labels: Array<{ text: string; left: number; key: string }> = [];
-    if (zoom === 'year') return labels;
     const monthAbbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    for (let d = 0; d < visibleDays; d++) {
-      const date = addDays(anchorDate, d);
-      const dayOfWeek = date.getDay();
-      const isMonday = dayOfWeek === 1;
+    for (let d = 0; d < RANGE_DAYS; d++) {
+      const date = addDays(rangeStart, d);
+      const isMonday = date.getDay() === 1;
       let text = '';
-      if (zoom === 'week') {
-        text = `${date.getDate()} ${monthAbbr[date.getMonth()]}`;
-      } else if (zoom === 'month') {
+      if (zoom === 'detail') {
         text = String(date.getDate());
-      } else if (zoom === 'quarter') {
+      } else if (zoom === 'standard') {
         if (isMonday) text = `${date.getDate()} ${monthAbbr[date.getMonth()]}`;
-      } else if (zoom === 'half') {
+      } else if (zoom === 'overview') {
         if (isMonday) {
-          const weeksSinceAnchor = Math.floor(d / 7);
-          if (weeksSinceAnchor % 2 === 0) {
+          const weeksSinceStart = Math.floor(d / 7);
+          if (weeksSinceStart % 2 === 0) {
             text = `${date.getDate()} ${monthAbbr[date.getMonth()]}`;
           }
         }
@@ -323,24 +307,22 @@ export default function BookingCalendarPage() {
       if (text) labels.push({ text, left: d * cellWidth, key: `l${d}` });
     }
     return labels;
-  }, [anchorDate, visibleDays, cellWidth, zoom]);
+  }, [rangeStart, cellWidth, zoom]);
 
   /** Weekend shaded blocks (Saturday + Sunday pairs) so the week rhythm is
    *  visible at a glance. Rendered in both the axis and every track. */
   const weekendBlocks = useMemo(() => {
     const blocks: Array<{ left: number; width: number; key: string }> = [];
-    for (let d = 0; d < visibleDays; d++) {
-      const date = addDays(anchorDate, d);
+    for (let d = 0; d < RANGE_DAYS; d++) {
+      const date = addDays(rangeStart, d);
       if (date.getDay() === 6) {
-        // Saturday — the block covers Saturday + Sunday.
         blocks.push({ left: d * cellWidth, width: cellWidth * 2, key: `we${d}` });
       } else if (d === 0 && date.getDay() === 0) {
-        // First day is a Sunday — shade just that single day.
         blocks.push({ left: 0, width: cellWidth, key: 'we0' });
       }
     }
     return blocks;
-  }, [anchorDate, visibleDays, cellWidth]);
+  }, [rangeStart, cellWidth]);
 
   /** Vertical grid lines for the track. Three weights:
    *    month   → solid 2px (always shown)
@@ -349,41 +331,38 @@ export default function BookingCalendarPage() {
    */
   const gridLines = useMemo(() => {
     const lines: Array<{ left: number; kind: 'month' | 'week' | 'day'; key: string }> = [];
-    for (let d = 1; d < visibleDays; d++) {
-      const date = addDays(anchorDate, d);
+    for (let d = 1; d < RANGE_DAYS; d++) {
+      const date = addDays(rangeStart, d);
       const isFirstOfMonth = date.getDate() === 1;
       const isMonday = date.getDay() === 1;
       if (isFirstOfMonth) {
         lines.push({ left: d * cellWidth, kind: 'month', key: `g${d}` });
-      } else if (isMonday && zoom !== 'year') {
+      } else if (isMonday && zoom !== 'overview') {
         lines.push({ left: d * cellWidth, kind: 'week', key: `g${d}` });
-      } else if ((zoom === 'week' || zoom === 'month')) {
+      } else if (zoom === 'detail') {
         lines.push({ left: d * cellWidth, kind: 'day', key: `g${d}` });
       }
     }
     return lines;
-  }, [anchorDate, visibleDays, cellWidth, zoom]);
+  }, [rangeStart, cellWidth, zoom]);
 
   const todayLeft = useMemo(() => {
     const today = startOfDay(new Date());
-    const offset = daysBetween(anchorDate, today);
-    return offset >= 0 && offset <= visibleDays ? offset * cellWidth : null;
-  }, [anchorDate, visibleDays, cellWidth]);
+    const offset = daysBetween(rangeStart, today);
+    return offset >= 0 && offset <= RANGE_DAYS ? offset * cellWidth : null;
+  }, [rangeStart, cellWidth]);
 
   function jumpToday() {
-    setAnchorDate(addDays(startOfDay(new Date()), -Math.floor(visibleDays / 7)));
-  }
-  function shiftWindow(direction: -1 | 1) {
-    setAnchorDate(addDays(anchorDate, Math.floor(visibleDays / 2) * direction));
+    setJumpToken(t => t + 1);
   }
 
-  /** Bookings for one property within the visible window. */
+  /** Bookings for one property within the timeline range. */
   function visibleBookingsFor(propertyId: string): Booking[] {
     return filteredBookings.filter(b => {
       if (b.property_id !== propertyId) return false;
       const bStart = new Date(b.check_in);
       const bEnd = new Date(b.check_out);
-      return bEnd > anchorDate && bStart < windowEnd;
+      return bEnd > rangeStart && bStart < rangeEnd;
     });
   }
 
@@ -391,8 +370,8 @@ export default function BookingCalendarPage() {
   function barPosition(b: Booking): { left: number; width: number } | null {
     const bStart = new Date(b.check_in);
     const bEnd = new Date(b.check_out);
-    const startOffset = Math.max(0, daysBetween(anchorDate, bStart));
-    const endOffset = Math.min(visibleDays, daysBetween(anchorDate, bEnd));
+    const startOffset = Math.max(0, daysBetween(rangeStart, bStart));
+    const endOffset = Math.min(RANGE_DAYS, daysBetween(rangeStart, bEnd));
     const widthDays = endOffset - startOffset;
     if (widthDays <= 0) return null;
     return { left: startOffset * cellWidth, width: widthDays * cellWidth - 2 };
@@ -408,9 +387,9 @@ export default function BookingCalendarPage() {
 
   return (
     <div>
-      {/* Toolbar — baseline order plus zoom + date nav for the board */}
+      {/* Toolbar split: view + actions on top, filters + search on the bottom. */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="list-toolbar">
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
           <div className="list-toolbar-left">
             <div className="view-toggle">
               <button
@@ -428,64 +407,24 @@ export default function BookingCalendarPage() {
                 ☰ List
               </button>
             </div>
-            <select
-              className="list-filter-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              title="Filter by status"
-            >
-              <option value="active">Active (upcoming + in stay)</option>
-              <option value="upcoming">Upcoming</option>
-              <option value="in_stay">In stay</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-              <option value="all">All</option>
-            </select>
-            {view === 'list' && (
-              <select
-                className="list-filter-select"
-                value={dateWindow}
-                onChange={(e) => setDateWindow(e.target.value as typeof dateWindow)}
-                title="Narrow by check-in date window"
-              >
-                <option value="next_7">Next 7 days</option>
-                <option value="next_14">Next 14 days</option>
-                <option value="next_30">Next 30 days</option>
-                <option value="past">Past</option>
-                <option value="all">Any date</option>
-              </select>
+            {view === 'board' && (
+              <div className="view-toggle" title="What the bars show">
+                <button
+                  className={`view-toggle-btn ${boardMode === 'occupancy' ? 'active' : ''}`}
+                  onClick={() => setBoardMode('occupancy')}
+                  title="Show booked and blocked dates"
+                >
+                  ▣ Occupancy
+                </button>
+                <button
+                  className={`view-toggle-btn ${boardMode === 'availability' ? 'active' : ''}`}
+                  onClick={() => setBoardMode('availability')}
+                  title="Show only dates available to book"
+                >
+                  ☐ Availability
+                </button>
+              </div>
             )}
-            <select
-              className="list-filter-select"
-              value={filterSuburb}
-              onChange={(e) => setFilterSuburb(e.target.value)}
-              title="Filter by suburb"
-            >
-              <option value="">All suburbs</option>
-              {suburbs.map(s => <option key={s} value={s}>{titleCase(s)}</option>)}
-            </select>
-            <MultiPicker
-              label="Beds"
-              options={bedroomOptions}
-              selected={filterBedrooms}
-              onChange={(next) => setFilterBedrooms(next.map(Number))}
-              format={(v) => `${v} bed`}
-            />
-            <div className="list-search">
-              <span className="list-search-icon">🔍</span>
-              <input
-                type="text"
-                placeholder="Search by guest, property, suburb…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>}
-            </div>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {view === 'board'
-                ? <>{filteredProperties.length} of {properties.length} properties</>
-                : <>{filteredBookings.length} of {bookings.length} bookings</>}
-            </span>
           </div>
           <div className="list-toolbar-right">
             {view === 'board' && (
@@ -502,14 +441,104 @@ export default function BookingCalendarPage() {
                     </button>
                   ))}
                 </div>
-                <button className="btn btn-ghost" onClick={() => shiftWindow(-1)} title="Earlier">←</button>
-                <button className="btn btn-ghost" onClick={jumpToday}>Today</button>
-                <button className="btn btn-ghost" onClick={() => shiftWindow(1)} title="Later">→</button>
+                <button className="btn btn-ghost" onClick={jumpToday} title="Scroll to today">Today</button>
               </>
             )}
             <button className="btn btn-primary" onClick={openNewBooking}>
               + New Booking
             </button>
+          </div>
+        </div>
+        <div className="list-toolbar">
+          <div className="list-toolbar-left">
+            <select
+              className="list-filter-select"
+              value={propertyStatusFilter}
+              onChange={(e) => setPropertyStatusFilter(e.target.value as 'active' | 'inactive' | 'all')}
+              title="Filter by property status"
+            >
+              <option value="active">Active properties</option>
+              <option value="inactive">Inactive properties</option>
+              <option value="all">All properties</option>
+            </select>
+            <select
+              className="list-filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'booked' | 'blocked')}
+              title="Filter by booking type"
+            >
+              <option value="all">All</option>
+              <option value="booked">Booked only</option>
+              <option value="blocked">Blocked only</option>
+            </select>
+            <MultiPicker
+              label="Suburbs"
+              options={suburbs}
+              selected={filterSuburb}
+              onChange={(next) => setFilterSuburb(next.map(String))}
+              format={(v) => titleCase(String(v))}
+            />
+            <MultiPicker
+              label="Beds"
+              options={bedroomOptions}
+              selected={filterBedrooms}
+              onChange={(next) => setFilterBedrooms(next.map(Number))}
+              format={(v) => `${v} bed`}
+            />
+            <div className="bookings-availability-find" title="Show properties free for these dates">
+              <span className="bookings-availability-find-label">Date range</span>
+              <input
+                type="date"
+                className="bookings-availability-date-input"
+                value={searchCheckIn}
+                onChange={(e) => setSearchCheckIn(e.target.value)}
+                title="Check in"
+              />
+              <span className="bookings-availability-find-arrow">→</span>
+              <input
+                type="date"
+                className="bookings-availability-date-input"
+                value={searchCheckOut}
+                min={searchCheckIn || undefined}
+                onChange={(e) => setSearchCheckOut(e.target.value)}
+                title="Check out"
+              />
+              <select
+                className="list-filter-select"
+                value={searchFlex}
+                onChange={(e) => setSearchFlex(Number(e.target.value) as 0 | 1 | 3 | 7)}
+                title="Date flexibility"
+              >
+                <option value={0}>Exact</option>
+                <option value={1}>±1 day</option>
+                <option value={3}>±3 days</option>
+                <option value={7}>±7 days</option>
+              </select>
+              {(searchCheckIn || searchCheckOut) && (
+                <button
+                  className="list-search-clear"
+                  onClick={() => { setSearchCheckIn(''); setSearchCheckOut(''); setSearchFlex(0); }}
+                  title="Clear date search"
+                >✕</button>
+              )}
+            </div>
+            <div className="list-search">
+              <span className="list-search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search by guest, property, suburb…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && <button className="list-search-clear" onClick={() => setSearchQuery('')}>✕</button>}
+            </div>
+          </div>
+          <div className="list-toolbar-right">
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+              {view === 'board'
+                ? <>{filteredProperties.length} of {properties.length} properties</>
+                : <>{filteredBookings.length} of {bookings.length} bookings</>}
+            </span>
           </div>
         </div>
       </div>
@@ -526,6 +555,11 @@ export default function BookingCalendarPage() {
           todayLeft={todayLeft}
           visibleBookingsFor={visibleBookingsFor}
           barPosition={barPosition}
+          isBlocked={isBlocked}
+          boardMode={boardMode}
+          rangeStart={rangeStart}
+          todayLeftPx={todayLeft}
+          jumpToken={jumpToken}
           onBarClick={(b) => setEditingBooking(b)}
           onPropertyClick={(p) => {
             setEditingBooking({ property_id: p.id });
@@ -557,6 +591,8 @@ export default function BookingCalendarPage() {
           supabase={supabase}
           user={user}
           partnerId={CT_RENTALS_PARTNER_ID}
+          isBlocked={editingBooking.id ? isBlocked(editingBooking.id) : false}
+          onToggleBlocked={editingBooking.id ? () => toggleBlocked(editingBooking.id) : undefined}
         />
       )}
     </div>
@@ -566,7 +602,7 @@ export default function BookingCalendarPage() {
 // ─── Board view ────────────────────────────────────────────────────────
 
 function BookingsBoard({
-  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, onBarClick, onPropertyClick,
+  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, isBlocked, boardMode, rangeStart, todayLeftPx, jumpToken, onBarClick, onPropertyClick,
 }: {
   properties: Property[];
   totalWidth: number;
@@ -578,6 +614,11 @@ function BookingsBoard({
   todayLeft: number | null;
   visibleBookingsFor: (id: string) => Booking[];
   barPosition: (b: Booking) => { left: number; width: number } | null;
+  isBlocked: (id: string) => boolean;
+  boardMode: 'occupancy' | 'availability';
+  rangeStart: Date;
+  todayLeftPx: number | null;
+  jumpToken: number;
   onBarClick: (b: Booking) => void;
   onPropertyClick: (p: Property) => void;
 }) {
@@ -601,14 +642,24 @@ function BookingsBoard({
     }
   }
 
+  // Scroll viewport to today on mount, zoom change, and any Today click.
+  // Today lands ~12% in from the left so the user can see a few past days
+  // for context plus a wide future-looking window.
+  useEffect(() => {
+    if (rightRef.current && todayLeftPx != null) {
+      const offset = rightRef.current.clientWidth * 0.12;
+      rightRef.current.scrollLeft = Math.max(0, todayLeftPx - offset);
+    }
+  }, [todayLeftPx, jumpToken, cellWidth]);
+
   return (
     <div className="bookings-board" style={{ ['--cell-width' as any]: `${cellWidth}px` }}>
       <div className="bookings-board-fixed" ref={leftRef}>
         <div className="bookings-board-corner">Property</div>
-        {properties.map(prop => (
+        {properties.map((prop, idx) => (
           <div
             key={prop.id}
-            className="bookings-board-property"
+            className={`bookings-board-property${idx % 2 === 1 ? ' bookings-board-property--alt' : ''}`}
             onClick={() => onPropertyClick(prop)}
             title={`${prop.slug || ''} · ${titleCase(prop.property_name)}${prop.bedrooms ? ` · ${prop.bedrooms} bed` : ''}${prop.suburb ? ` · ${titleCase(prop.suburb)}` : ''}`}
           >
@@ -651,25 +702,72 @@ function BookingsBoard({
             ))}
           </div>
           {/* Track rows — just the bars; the backdrop spans these vertically */}
-          {properties.map(prop => (
-            <div key={prop.id} className="bookings-board-track">
-              {visibleBookingsFor(prop.id).map(b => {
+          {properties.map((prop, idx) => {
+            // For Availability mode, compute gap segments between bookings
+            // within the visible window. Cancelled bookings are already
+            // filtered out upstream so they free their dates as expected.
+            const winStart = rangeStart;
+            const winEnd = addDays(rangeStart, RANGE_DAYS);
+            const sorted = visibleBookingsFor(prop.id)
+              .map(b => ({ b, start: new Date(b.check_in), end: new Date(b.check_out) }))
+              .sort((a, z) => a.start.getTime() - z.start.getTime());
+            const gaps: Array<{ left: number; width: number; nights: number; from: Date; to: Date }> = [];
+            let cursor = winStart;
+            for (const { start, end } of sorted) {
+              const segEnd = start > winEnd ? winEnd : start;
+              if (segEnd > cursor) {
+                const nights = daysBetween(cursor, segEnd);
+                if (nights >= 1) {
+                  gaps.push({
+                    left: daysBetween(winStart, cursor) * cellWidth,
+                    width: nights * cellWidth,
+                    nights, from: cursor, to: segEnd,
+                  });
+                }
+              }
+              if (end > cursor) cursor = end > winEnd ? winEnd : end;
+              if (cursor >= winEnd) break;
+            }
+            if (cursor < winEnd) {
+              const nights = daysBetween(cursor, winEnd);
+              if (nights >= 1) {
+                gaps.push({
+                  left: daysBetween(winStart, cursor) * cellWidth,
+                  width: nights * cellWidth,
+                  nights, from: cursor, to: winEnd,
+                });
+              }
+            }
+            return (
+            <div key={prop.id} className={`bookings-board-track${idx % 2 === 1 ? ' bookings-board-track--alt' : ''}`}>
+              {boardMode === 'occupancy' && visibleBookingsFor(prop.id).map(b => {
                 const pos = barPosition(b);
                 if (!pos) return null;
                 return (
                   <div
                     key={b.id}
-                    className={`booking-bar booking-bar--${b.status}`}
+                    className={`booking-bar booking-bar--${isBlocked(b.id) ? 'blocked' : 'booked'}`}
                     style={{ left: pos.left, width: pos.width }}
                     onClick={(e) => { e.stopPropagation(); onBarClick(b); }}
-                    title={`${b.guest_name || 'Guest'} · ${fmtFull(b.check_in)} to ${fmtFull(b.check_out)}`}
+                    title={`${isBlocked(b.id) ? 'Block' : (b.guest_name || 'Guest')} · ${fmtFull(b.check_in)} to ${fmtFull(b.check_out)}`}
                   >
-                    {pos.width > 60 ? titleCase(b.guest_name) || 'Booking' : ''}
+                    {pos.width > 60 ? (isBlocked(b.id) ? 'Block' : (titleCase(b.guest_name) || 'Booking')) : ''}
                   </div>
                 );
               })}
+              {boardMode === 'availability' && gaps.map((g, i) => (
+                <div
+                  key={`gap-${prop.id}-${i}`}
+                  className="availability-bar"
+                  style={{ left: g.left, width: g.width }}
+                  title={`${g.nights} night${g.nights === 1 ? '' : 's'} available · ${fmtFull(g.from)} → ${fmtFull(g.to)}`}
+                >
+                  {g.width > 90 ? `${g.nights} nights free` : g.width > 40 ? `${g.nights}n` : ''}
+                </div>
+              ))}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
