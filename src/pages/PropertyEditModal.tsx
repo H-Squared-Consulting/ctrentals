@@ -27,14 +27,23 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   const isNew = !property.id;
 
   // Viewed-person state — populated when a user clicks a person's
-  // name in view mode. Rendered as a lightweight modal on top of the
-  // property editor so the user can read contact details without
-  // leaving their property context.
+  // name in the People list. Renders as a lightweight modal layered
+  // over the property editor so the user can look at — and, when the
+  // parent editor is itself in edit mode, modify — that CRM record
+  // without leaving their property context.
   const [viewingPerson, setViewingPerson] = useState<any | null>(null);
   const [viewingPersonLoading, setViewingPersonLoading] = useState(false);
+  const [personMode, setPersonMode] = useState<'view' | 'edit'>('view');
+  const [personDraft, setPersonDraft] = useState<any | null>(null);
+  const [personSaving, setPersonSaving] = useState(false);
   async function openPersonDetail(ownerId: string) {
     if (!ownerId) return;
     setViewingPerson({ id: ownerId });
+    // If the parent property editor is in edit mode, drop straight
+    // into the person edit form — they've already declared intent to
+    // make changes. View mode opens read-only with an Edit pill.
+    setPersonMode(mode === 'edit' ? 'edit' : 'view');
+    setPersonDraft(null);
     setViewingPersonLoading(true);
     const { data } = await supabase
       .from('home_owners')
@@ -42,7 +51,37 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
       .eq('id', ownerId)
       .maybeSingle();
     setViewingPersonLoading(false);
-    if (data) setViewingPerson(data);
+    if (data) { setViewingPerson(data); setPersonDraft(data); }
+  }
+  async function savePersonDetail() {
+    if (!personDraft?.id || personSaving) return;
+    setPersonSaving(true);
+    try {
+      const payload = {
+        name: (personDraft.name || '').trim(),
+        email: personDraft.email?.trim() || null,
+        phone: personDraft.phone?.trim() || null,
+        company: personDraft.company?.trim() || null,
+        vat_number: personDraft.vat_number?.trim() || null,
+        payment_notes: personDraft.payment_notes?.trim() || null,
+        notes: personDraft.notes?.trim() || null,
+        role: personDraft.role || 'owner',
+        updated_at: new Date().toISOString(),
+      };
+      if (!payload.name) { toast.error('Name is required'); return; }
+      const { error } = await supabase.from('home_owners').update(payload).eq('id', personDraft.id);
+      if (error) throw error;
+      // Refresh the property editor's owners list so the renamed /
+      // re-roled person displays correctly in the People rows below.
+      await loadOwners();
+      setViewingPerson({ ...personDraft, ...payload });
+      setPersonMode('view');
+      toast.success('Person updated');
+    } catch (err: any) {
+      toast.error('Failed to save: ' + (err?.message || err));
+    } finally {
+      setPersonSaving(false);
+    }
   }
 
   // Two operating modes:
@@ -1502,17 +1541,74 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         const ROLE_LABELS: Record<string, string> = {
           owner: 'Owner', manager: 'House manager', domestic: 'Domestic', gardener: 'Gardener', other: 'Other',
         };
+        const ROLE_OPTIONS = [
+          { value: 'owner',    label: 'Owner' },
+          { value: 'manager',  label: 'House manager' },
+          { value: 'domestic', label: 'Domestic' },
+          { value: 'gardener', label: 'Gardener' },
+          { value: 'other',    label: 'Other' },
+        ];
         const p = viewingPerson;
+        const draft = personDraft || p;
+        const editing = personMode === 'edit';
+        const isDirty = editing && JSON.stringify(draft) !== JSON.stringify(p);
         const roleLabel = ROLE_LABELS[p.role || 'owner'] || 'Owner';
+        const setField = (k: string, v: any) => setPersonDraft({ ...draft, [k]: v });
         return (
           <DetailModal
             title={p.name || 'Person'}
             subtitle={p.company ? <>{p.company} · {roleLabel}</> : roleLabel}
-            mode="view"
+            // Always editable. The parent property editor's mode just
+            // decides the *initial* personMode (set in openPersonDetail):
+            // view → person modal opens read-only with an Edit pill;
+            // edit → person modal opens straight into the edit form.
+            mode={personMode}
+            onModeChange={setPersonMode}
+            canEdit
+            isDirty={isDirty}
+            onSave={savePersonDetail}
+            onCancel={() => { setPersonDraft(p); setPersonMode('view'); }}
             onClose={() => setViewingPerson(null)}
           >
             {viewingPersonLoading ? (
               <div style={{ padding: 'var(--s-4)', color: 'var(--text-secondary)' }}>Loading…</div>
+            ) : editing ? (
+              <DetailModalSection heading="Contact details">
+                <div className="form-group">
+                  <label className="form-label">Name *</label>
+                  <input className="form-input" value={draft.name || ''} onChange={(e) => setField('name', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Role</label>
+                  <select className="form-input" value={draft.role || 'owner'} onChange={(e) => setField('role', e.target.value)} disabled={personSaving}>
+                    {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <input className="form-input" type="email" value={draft.email || ''} onChange={(e) => setField('email', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Phone</label>
+                  <input className="form-input" value={draft.phone || ''} onChange={(e) => setField('phone', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Company</label>
+                  <input className="form-input" value={draft.company || ''} onChange={(e) => setField('company', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">VAT No.</label>
+                  <input className="form-input" value={draft.vat_number || ''} onChange={(e) => setField('vat_number', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Payment notes</label>
+                  <textarea className="form-input" rows={2} value={draft.payment_notes || ''} onChange={(e) => setField('payment_notes', e.target.value)} disabled={personSaving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notes</label>
+                  <textarea className="form-input" rows={2} value={draft.notes || ''} onChange={(e) => setField('notes', e.target.value)} disabled={personSaving} />
+                </div>
+              </DetailModalSection>
             ) : (
               <DetailModalSection heading="Contact details">
                 <PersonField label="Email" value={p.email} />
@@ -1644,14 +1740,34 @@ function LinkRow({ label, hint, url, disabled }: { label: string; hint?: string;
 }
 
 /** Labelled set of external listing platforms. Order = render order in the
- *  editor. Keys match the keys stored in partner_properties.listing_urls. */
-const LISTING_PLATFORMS: Array<{ key: string; label: string }> = [
-  { key: 'airbnb',      label: 'Airbnb' },
-  { key: 'booking_com', label: 'Booking.com' },
-  { key: 'vrbo',        label: 'VRBO' },
-  { key: 'direct',      label: 'Direct' },
-  { key: 'other',       label: 'Other' },
+ *  editor. Keys match the keys stored in partner_properties.listing_urls.
+ *  icon is a short visual cue used in the view-mode minimalistic row;
+ *  edit mode falls back to the full labelled URL form. */
+const LISTING_PLATFORMS: Array<{ key: string; label: string; icon: string; hostMatch?: RegExp }> = [
+  { key: 'airbnb',      label: 'Airbnb',      icon: 'A',  hostMatch: /(^|\.)airbnb\./i },
+  { key: 'booking_com', label: 'Booking.com', icon: 'B',  hostMatch: /(^|\.)booking\./i },
+  { key: 'vrbo',        label: 'VRBO',        icon: 'V',  hostMatch: /(^|\.)(vrbo|homeaway)\./i },
+  { key: 'direct',      label: 'Direct',      icon: '🏠' },
+  { key: 'other',       label: 'Other',       icon: '🔗' },
 ];
+
+/** Returns a label like "Airbnb" when `url` looks like it belongs to a
+ *  different platform than `expectedKey`. Used to warn the user inline
+ *  if they paste e.g. an airbnb.co.za URL into the Booking.com slot.
+ *  Returns null when the URL is empty, unparseable, or matches the
+ *  expected platform (including 'direct' / 'other' which accept any
+ *  domain). Prevents the kind of data-mixup that put 50 Airbnb links
+ *  under booking_com in production. */
+function detectListingMismatch(url: string, expectedKey: string): string | null {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return null;
+  let host = '';
+  try { host = new URL(trimmed).hostname; } catch { return null; }
+  for (const p of LISTING_PLATFORMS) {
+    if (p.hostMatch && p.hostMatch.test(host) && p.key !== expectedKey) return p.label;
+  }
+  return null;
+}
 
 function PropertyLinksSection({
   property, form, isNew, viewOnly, onPublishChange, onListingUrlChange, onShare,
@@ -1711,22 +1827,110 @@ function PropertyLinksSection({
 
       <div className="form-group" style={{ marginTop: '14px', marginBottom: 0 }}>
         <label className="form-label">External listing URLs</label>
-        <div className="property-listing-urls">
-          {LISTING_PLATFORMS.map(({ key, label }) => (
-            <div key={key} className="property-listing-url-row">
-              <span className="property-listing-url-label">{label}</span>
-              <ExternalUrlInput
-                value={(form.listing_urls && form.listing_urls[key]) || ''}
-                disabled={viewOnly}
-                onChange={(v) => onListingUrlChange(key, v)}
-              />
+        {viewOnly ? (
+          // Compact icon row: one platform per pill. Wired URLs open
+          // in a new tab; unwired ones toast "no link connected" so
+          // the user knows the slot exists but is empty. The full edit
+          // form (per-platform URL inputs) is reserved for edit mode.
+          <ListingIconRow listingUrls={form.listing_urls || {}} />
+        ) : (
+          <>
+            <div className="property-listing-urls">
+              {LISTING_PLATFORMS.map(({ key, label }) => {
+                const value = (form.listing_urls && form.listing_urls[key]) || '';
+                const mismatch = detectListingMismatch(value, key);
+                return (
+                  <div key={key} className="property-listing-url-row">
+                    <span className="property-listing-url-label">{label}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <ExternalUrlInput
+                        value={value}
+                        disabled={viewOnly}
+                        onChange={(v) => onListingUrlChange(key, v)}
+                      />
+                      {mismatch && (
+                        <div style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--warning, #b45309)',
+                          marginTop: 4,
+                          display: 'flex', alignItems: 'center', gap: 6,
+                        }}>
+                          ⚠ This looks like a {mismatch} URL — move it to the {mismatch} row instead.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+            <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+              Where this property is listed externally. Leave blank for platforms you don't use.
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Guidebook — operational (hostful.ly / similar) digital guide.
+          Lives in listing_urls.guidebook for storage simplicity but
+          rendered as its own field, not in the External listing icon
+          row, because it's a back-of-house link, not a sales channel. */}
+      <div className="form-group" style={{ marginTop: '14px', marginBottom: 0 }}>
+        <label className="form-label">📖 Guidebook URL</label>
+        <ExternalUrlInput
+          value={(form.listing_urls && form.listing_urls.guidebook) || ''}
+          disabled={viewOnly}
+          onChange={(v) => onListingUrlChange('guidebook', v)}
+        />
         <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
-          Where this property is listed externally. Leave blank for platforms you don't use.
+          Digital guidebook link (e.g. hostful.ly). Surfaces as the 📖 Guidebook button on this property's card.
         </div>
       </div>
+    </div>
+  );
+}
+
+function ListingIconRow({ listingUrls }: { listingUrls: Record<string, string> }) {
+  const toast = useToast();
+  function open(key: string, label: string) {
+    const raw = (listingUrls[key] || '').trim();
+    if (!/^https?:\/\//i.test(raw)) {
+      toast.info(`No ${label} link connected`);
+      return;
+    }
+    window.open(raw, '_blank', 'noopener,noreferrer');
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+      {LISTING_PLATFORMS.map(({ key, label, icon }) => {
+        const raw = (listingUrls[key] || '').trim();
+        const wired = /^https?:\/\//i.test(raw);
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => open(key, label)}
+            title={wired ? `Open ${label}` : `${label} — no link connected`}
+            aria-label={wired ? `Open ${label}` : `${label} (no link)`}
+            style={{
+              width: 36, height: 36, borderRadius: '50%',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              border: '1px solid var(--border)',
+              background: wired ? 'var(--color-primary)' : 'var(--bg)',
+              color: wired ? 'white' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              opacity: wired ? 1 : 0.55,
+              transition: 'transform 80ms ease',
+            }}
+            onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
+            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          >
+            {icon}
+          </button>
+        );
+      })}
     </div>
   );
 }

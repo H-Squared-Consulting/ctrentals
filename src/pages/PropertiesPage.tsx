@@ -29,6 +29,10 @@ interface Property extends DataRow {
   amenity_tags: string[] | null;
   is_published: boolean;
   is_archived: boolean;
+  // Operational link bag — same JSONB column the External listing URLs
+  // editor writes to. `guidebook` is reserved for the hostful.ly /
+  // similar back-of-house digital guide for the property.
+  listing_urls: Record<string, string> | null;
 }
 
 type ViewMode = 'cards' | 'table';
@@ -489,6 +493,20 @@ export default function PropertiesPage() {
                   })()}
                 </div>
                 <div className="property-card__footer">
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const url = property.listing_urls?.guidebook?.trim();
+                      if (!url) { toast.info('No guidebook linked yet'); return; }
+                      const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+                      window.open(href, '_blank', 'noopener,noreferrer');
+                    }}
+                    title="Open digital guidebook"
+                  >
+                    📖 Guidebook
+                  </button>
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: '0.75rem' }}
