@@ -21,6 +21,10 @@ export interface Booking {
   extras: string | null;
   notes: string | null;
   status: BookingStatus;
+  /** Distinguishes real bookings from manual Blocks placed by the team
+   *  to hold dates off the calendar. Added in the 2026-05-24 migration;
+   *  defaults to 'booking' so legacy rows keep their meaning. */
+  kind: 'booking' | 'block';
   created_at: string;
   updated_at: string;
   created_by: string | null;
