@@ -30,58 +30,24 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
-  { to: '/dashboard', label: 'Home', icon: '🏠' },
-  { to: '/properties', label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
-  {
-    to: '/operations',
-    label: 'Operations',
-    icon: '📋',
-    aliases: ['/enquiry', '/operations/pipeline'],
-    children: [
-      { to: '/operations/enquiries', label: 'Enquiries' },
-      { to: '/operations/proposals', label: 'Proposals' },
-      { to: '/operations/bookings', label: 'Bookings' },
-    ],
-  },
-  {
-    to: '/crm',
-    label: 'CRM',
-    icon: '👥',
-    children: [
-      { to: '/crm/guests', label: 'Guests' },
-      { to: '/crm/home-owners', label: 'Home Owners' },
-    ],
-  },
-  {
-    to: '/finance',
-    label: 'Finance',
-    icon: '💰',
-    comingSoon: true,
-    children: [
-      { to: '/finance/contracts', label: 'Contracts' },
-      { to: '/finance/invoices', label: 'Invoices' },
-    ],
-  },
-  {
-    to: '/reports',
-    label: 'Reports',
-    icon: '📊',
-    comingSoon: true,
-    children: [
-      { to: '/reports/sales', label: 'Sales' },
-      { to: '/reports/business-profit', label: 'Business Profit' },
-      { to: '/reports/properties', label: 'Properties' },
-    ],
-  },
+  { to: '/dashboard',              label: 'Home',       icon: '🏠' },
+  { to: '/operations/enquiries',   label: 'Enquiries',  icon: '📩', aliases: ['/enquiry', '/operations/pipeline'] },
+  { to: '/operations/proposals',   label: 'Proposals',  icon: '📄' },
+  { to: '/operations/bookings',    label: 'Bookings',   icon: '📅' },
+  { to: '/properties',             label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
+  { to: '/crm/people',             label: 'People',     icon: '👥', aliases: ['/crm/home-owners'] },
+  { to: '/crm/guests',             label: 'Guests',     icon: '🛏' },
+  { to: '/finance',                label: 'Finance',    icon: '💰', comingSoon: true },
+  { to: '/reports',                label: 'Reports',    icon: '📊', comingSoon: true },
   {
     to: '/settings',
     label: 'Settings',
     icon: '⚙️',
     children: [
-      { to: '/settings/pricing', label: 'Pricing' },
-      { to: '/settings/seasons', label: 'Seasons' },
+      { to: '/settings/pricing',   label: 'Pricing' },
+      { to: '/settings/seasons',   label: 'Seasons' },
       { to: '/settings/platforms', label: 'Platforms' },
-      { to: '/settings/agents', label: 'Agents' },
+      { to: '/settings/agents',    label: 'Agents' },
     ],
   },
 ];
@@ -127,10 +93,11 @@ export default function Sidebar() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                className={`sidebar-link ${isActive ? 'is-active' : ''}`}
+                className={`sidebar-link ${isActive ? 'is-active' : ''} ${item.comingSoon ? 'is-soon' : ''}`}
               >
                 <span className="sidebar-link-icon" aria-hidden>{item.icon}</span>
                 <span className="sidebar-link-label">{item.label}</span>
+                {item.comingSoon && <span className="sidebar-soon-tag">Soon</span>}
               </NavLink>
             );
           }

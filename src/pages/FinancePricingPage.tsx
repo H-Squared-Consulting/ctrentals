@@ -39,6 +39,7 @@ interface Property {
   property_name: string;
   is_archived: boolean;
   is_published: boolean;
+  pricing_mode: 'system' | 'fixed';
 }
 
 interface BaselineRow {
@@ -62,6 +63,56 @@ interface Platform {
 const YEAR_OPTIONS = [2026, 2027];
 
 const seasonLabel = (y: number) => `${y}/${y + 1}`;
+
+// ─── 4-tier seasonal pricing model ──────────────────────────────────────
+// Ordered keys + labels for the UI tab strip. Dates and multipliers are
+// LIVE from the seasons table; SEASON_ORDER is just for stable display.
+const SEASON_ORDER = [
+  { key: 'peak',     label: 'Peak' },
+  { key: 'high',     label: 'High' },
+  { key: 'shoulder', label: 'Shoulder' },
+  { key: 'winter',   label: 'Winter' },
+] as const;
+type SeasonKey = typeof SEASON_ORDER[number]['key'];
+
+interface SeasonRow {
+  id: string;
+  partner_id: string;
+  key: SeasonKey;
+  name: string;
+  multiplier: number;
+  date_ranges: Array<{ start: string; end: string }>;
+  sort_order: number;
+}
+interface OverrideRow {
+  property_id: string;
+  year: number;
+  season_id: string;
+  override_rate: number;
+}
+interface FixedRateRow {
+  property_id: string;
+  year: number;
+  season_id: string;
+  guest_rate: number | null;
+  owner_rate: number | null;
+}
+interface FixedSlot { guest?: number | null; owner?: number | null; }
+
+function cellKey(propertyId: string, year: number, season: SeasonKey) {
+  return `${propertyId}:${year}:${season}`;
+}
+
+/** Pretty-print a season's date_ranges JSONB for tooltips and the banner.
+ *  "12-15 → 01-15" becomes "15 Dec → 15 Jan". Multiple ranges joined with " · ". */
+function fmtDateRanges(ranges: Array<{ start: string; end: string }>): string {
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function fmt(mmdd: string): string {
+    const [mm, dd] = mmdd.split('-').map(s => parseInt(s, 10));
+    return `${dd} ${MONTHS[mm - 1] || '?'}`;
+  }
+  return (ranges || []).map(r => `${fmt(r.start)} → ${fmt(r.end)}`).join(' · ');
+}
 
 // ─── Terminology (matches src/lib/pricingEngine.ts) ────────────────────
 //   Base rate     — what the owner receives per night.
@@ -108,6 +159,7 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
   const [loading, setLoading] = useState(true);
 
   const [year, setYear] = useState<number>(YEAR_OPTIONS[0]);
+  const [season, setSeason] = useState<SeasonKey>('peak');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
 
@@ -115,21 +167,50 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
   /** Pending edits keyed by `${propertyId}:${year}` → new daily rate.
    *  `null` means "clear this baseline"; a number means "set to value". */
   const [pending, setPending] = useState<Map<string, number | null>>(new Map());
+  // DB-loaded state for the seasons system. `overridesByKey` and
+  // `fixedRatesByKey` are indexed by `${propertyId}:${year}:${seasonKey}` for
+  // O(1) lookup during render. pricing_mode lives on partner_properties so
+  // it's available via `properties`.
+  const [seasons, setSeasons] = useState<SeasonRow[]>([]);
+  const [overridesByKey, setOverridesByKey] = useState<Map<string, OverrideRow>>(new Map());
+  const [fixedRatesByKey, setFixedRatesByKey] = useState<Map<string, FixedRateRow>>(new Map());
+  // Same pending-then-Save pattern for the new edit surfaces.
+  const [pendingOverrides, setPendingOverrides] = useState<Map<string, number | null>>(new Map());
+  const [pendingFixedMode, setPendingFixedMode] = useState<Map<string, boolean>>(new Map());
+  const [pendingFixedRates, setPendingFixedRates] = useState<Map<string, FixedSlot>>(new Map());
   const [saving, setSaving] = useState(false);
-  const isDirty = pending.size > 0;
+  const isDirty = pending.size > 0
+    || pendingOverrides.size > 0
+    || pendingFixedMode.size > 0
+    || pendingFixedRates.size > 0;
 
   // Tell the silent auto-update reloader to defer a refresh while there
   // are unsaved baseline edits on this page.
   useDirty(isDirty);
 
+  // ── Lookup helpers (DB-loaded data) ──────────────────────────────────
+  const seasonByKey = useMemo(() => {
+    const m = new Map<SeasonKey, SeasonRow>();
+    for (const s of seasons) m.set(s.key, s);
+    return m;
+  }, [seasons]);
+  function getCommittedOverride(propertyId: string, season: SeasonKey): number | null {
+    const r = overridesByKey.get(cellKey(propertyId, year, season));
+    return r ? r.override_rate : null;
+  }
+  function getCommittedFixedSlot(propertyId: string, season: SeasonKey): FixedSlot {
+    const r = fixedRatesByKey.get(cellKey(propertyId, year, season));
+    return r ? { guest: r.guest_rate, owner: r.owner_rate } : {};
+  }
+
   useEffect(() => { if (!embedded) setPageTitle('Pricing'); }, [setPageTitle, embedded]);
 
   async function load() {
     setLoading(true);
-    const [propRes, baseRes, platRes] = await Promise.all([
+    const [propRes, baseRes, platRes, seasonRes, ovRes, fxRes] = await Promise.all([
       supabase
         .from('partner_properties')
-        .select('id, slug, property_name, is_archived, is_published')
+        .select('id, slug, property_name, is_archived, is_published, pricing_mode')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .eq('is_archived', false)
         .order('slug'),
@@ -143,10 +224,41 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .eq('is_active', true)
         .order('platform_name'),
+      supabase
+        .from('seasons')
+        .select('id, partner_id, key, name, multiplier, date_ranges, sort_order')
+        .eq('partner_id', CT_RENTALS_PARTNER_ID)
+        .order('sort_order'),
+      supabase
+        .from('property_season_overrides')
+        .select('property_id, year, season_id, override_rate')
+        .in('year', YEAR_OPTIONS),
+      supabase
+        .from('property_fixed_rates')
+        .select('property_id, year, season_id, guest_rate, owner_rate')
+        .in('year', YEAR_OPTIONS),
     ]);
     if (propRes.data) setProperties(propRes.data as Property[]);
     if (baseRes.data) setBaselines(baseRes.data as BaselineRow[]);
     if (platRes.data) setPlatforms(platRes.data as Platform[]);
+    const seasonRows = (seasonRes.data || []) as SeasonRow[];
+    setSeasons(seasonRows);
+    // Build the season-id → key map once, then index overrides + fixed_rates
+    // by `${propertyId}:${year}:${seasonKey}` for fast cell lookup.
+    const keyById = new Map<string, SeasonKey>();
+    for (const s of seasonRows) keyById.set(s.id, s.key);
+    const ov = new Map<string, OverrideRow>();
+    for (const r of (ovRes.data || []) as OverrideRow[]) {
+      const k = keyById.get(r.season_id);
+      if (k) ov.set(`${r.property_id}:${r.year}:${k}`, r);
+    }
+    setOverridesByKey(ov);
+    const fx = new Map<string, FixedRateRow>();
+    for (const r of (fxRes.data || []) as FixedRateRow[]) {
+      const k = keyById.get(r.season_id);
+      if (k) fx.set(`${r.property_id}:${r.year}:${k}`, r);
+    }
+    setFixedRatesByKey(fx);
     setLoading(false);
   }
   useEffect(() => { if (supabase) load(); /* eslint-disable-next-line */ }, [supabase]);
@@ -167,9 +279,44 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
       return next;
     });
   }
+  function stageOverride(propertyId: string, value: number | null) {
+    const key = cellKey(propertyId, year, season);
+    const current = getCommittedOverride(propertyId, season);
+    setPendingOverrides(prev => {
+      const next = new Map(prev);
+      if ((value ?? null) === current) next.delete(key);
+      else next.set(key, value);
+      return next;
+    });
+  }
+  function stageFixedMode(propertyId: string, value: boolean) {
+    const prop = properties.find(p => p.id === propertyId);
+    const current = prop?.pricing_mode === 'fixed';
+    setPendingFixedMode(prev => {
+      const next = new Map(prev);
+      if (value === current) next.delete(propertyId);
+      else next.set(propertyId, value);
+      return next;
+    });
+  }
+  function stageFixedSlot(propertyId: string, patch: Partial<FixedSlot>) {
+    const key = cellKey(propertyId, year, season);
+    const committed = getCommittedFixedSlot(propertyId, season);
+    setPendingFixedRates(prev => {
+      const next = new Map(prev);
+      const merged: FixedSlot = { ...committed, ...(next.get(key) || {}), ...patch };
+      // If merged matches committed, drop it from pending.
+      if ((merged.guest ?? null) === (committed.guest ?? null) && (merged.owner ?? null) === (committed.owner ?? null)) {
+        next.delete(key);
+      } else {
+        next.set(key, merged);
+      }
+      return next;
+    });
+  }
 
   async function saveAll() {
-    if (pending.size === 0 || saving) return;
+    if (!isDirty || saving) return;
     setSaving(true);
     try {
       const upserts: any[] = [];
@@ -213,10 +360,65 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
         }
         return next;
       });
+      // Flush staged season overrides to property_season_overrides.
+      const ovUpserts: Array<{ property_id: string; year: number; season_id: string; override_rate: number; updated_at: string }> = [];
+      const ovDeletes: Array<{ property_id: string; year: number; season_id: string }> = [];
+      for (const [k, v] of pendingOverrides.entries()) {
+        const [propertyId, yrStr, seasonKeyStr] = k.split(':');
+        const yr = parseInt(yrStr, 10);
+        const sRow = seasonByKey.get(seasonKeyStr as SeasonKey);
+        if (!sRow) continue;
+        if (v == null) ovDeletes.push({ property_id: propertyId, year: yr, season_id: sRow.id });
+        else ovUpserts.push({ property_id: propertyId, year: yr, season_id: sRow.id, override_rate: v, updated_at: new Date().toISOString() });
+      }
+      if (ovUpserts.length > 0) {
+        const { error } = await supabase.from('property_season_overrides').upsert(ovUpserts, { onConflict: 'property_id,year,season_id' });
+        if (error) throw error;
+      }
+      for (const d of ovDeletes) {
+        const { error } = await supabase.from('property_season_overrides').delete()
+          .eq('property_id', d.property_id).eq('year', d.year).eq('season_id', d.season_id);
+        if (error) throw error;
+      }
+
+      // Flush staged pricing_mode flips to partner_properties.
+      for (const [propertyId, value] of pendingFixedMode.entries()) {
+        const { error } = await supabase.from('partner_properties')
+          .update({ pricing_mode: value ? 'fixed' : 'system' })
+          .eq('id', propertyId);
+        if (error) throw error;
+      }
+
+      // Flush staged fixed-mode guest/owner rates to property_fixed_rates.
+      const fxUpserts: Array<{ property_id: string; year: number; season_id: string; guest_rate: number | null; owner_rate: number | null; updated_at: string }> = [];
+      for (const [k, v] of pendingFixedRates.entries()) {
+        const [propertyId, yrStr, seasonKeyStr] = k.split(':');
+        const yr = parseInt(yrStr, 10);
+        const sRow = seasonByKey.get(seasonKeyStr as SeasonKey);
+        if (!sRow) continue;
+        fxUpserts.push({
+          property_id: propertyId, year: yr, season_id: sRow.id,
+          guest_rate: v.guest ?? null, owner_rate: v.owner ?? null,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (fxUpserts.length > 0) {
+        const { error } = await supabase.from('property_fixed_rates').upsert(fxUpserts, { onConflict: 'property_id,year,season_id' });
+        if (error) throw error;
+      }
+
+      const protoCount = pendingOverrides.size + pendingFixedMode.size + pendingFixedRates.size;
+      setPendingOverrides(new Map());
+      setPendingFixedMode(new Map());
+      setPendingFixedRates(new Map());
+
       setPending(new Map());
       setUnlocked(false);
-      const total = upserts.length + deletes.length;
-      toast.success(`Saved ${total} baseline${total === 1 ? '' : 's'}`);
+      const total = upserts.length + deletes.length + protoCount;
+      toast.success(`Saved ${total} change${total === 1 ? '' : 's'}`);
+      // Reload so committed values for the new tables (and pricing_mode on
+      // properties) reflect what's now on disk.
+      await load();
     } catch (err: any) {
       toast.error('Failed to save: ' + (err?.message || String(err)));
     } finally {
@@ -228,6 +430,9 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
     if (unlocked && isDirty) {
       if (!confirm('You have unsaved changes. Discard them and lock?')) return;
       setPending(new Map());
+      setPendingOverrides(new Map());
+      setPendingFixedMode(new Map());
+      setPendingFixedRates(new Map());
     }
     setUnlocked(!unlocked);
   }
@@ -296,15 +501,22 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
     return <div className="page-loader"><div className="spinner" /></div>;
   }
 
+  const currentSeasonOrder = SEASON_ORDER.find(s => s.key === season) || SEASON_ORDER[0];
+  const currentSeasonRow = seasonByKey.get(season);
+  const currentDates = currentSeasonRow ? fmtDateRanges(currentSeasonRow.date_ranges) : '';
+  const currentMultiplier = currentSeasonRow?.multiplier ?? 1;
+
   return (
     <div>
-      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-        Per-night base rates per property. <strong>Base</strong> is what the
-        owner nets. <strong>CTR margin</strong> is CTR's {CTR_MARGIN_PCT}% share
-        of the guest rate. <strong>Direct</strong> is what a direct guest pays.
-        Platform columns add each channel's fee on top of Direct. Page is
-        locked by default.
-      </p>
+      {season === 'peak' ? (
+        <div className="pricing-banner pricing-banner--peak">
+          <strong>Peak = Owner's Normal Base Rate.</strong> The absolute base rate that drives every other season's calculation unless explicitly overridden.
+        </div>
+      ) : (
+        <div className={`pricing-banner pricing-banner--${season}`}>
+          <strong>You're viewing the {currentSeasonOrder.label} season ({currentDates}).</strong> Rates auto-fill from Peak × {currentMultiplier}. Type a cell to override just that property for this season; clear it to revert to the auto-fill.
+        </div>
+      )}
 
       {/* Toolbar — view modes + actions on top row, filters + search below. */}
       <div className="card" style={{ marginBottom: 16 }}>
@@ -324,10 +536,26 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
             </div>
           </div>
           <div className="list-toolbar-right">
+            <div className="view-toggle" title="Season">
+              {SEASON_ORDER.map(s => {
+                const row = seasonByKey.get(s.key);
+                const dates = row ? fmtDateRanges(row.date_ranges) : '';
+                return (
+                  <button
+                    key={s.key}
+                    className={`view-toggle-btn ${season === s.key ? 'active' : ''}`}
+                    onClick={() => setSeason(s.key)}
+                    title={dates ? `${s.label}: ${dates}` : s.label}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
             {isDirty && (
               <span className="ops-status-pill ops-status-pill--ready">
                 <span className="ops-status-pill-dot" />
-                {pending.size} unsaved
+                {pending.size + pendingOverrides.size + pendingFixedMode.size + pendingFixedRates.size} unsaved
               </span>
             )}
             {unlocked && (
@@ -344,7 +572,7 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
               className={`btn ${unlocked ? 'btn-outline-success' : 'btn-ghost'}`}
               onClick={toggleLock}
               disabled={saving}
-              title={unlocked ? 'Lock the page (view-only)' : 'Unlock to edit base rates'}
+              title={unlocked ? 'Lock the page (view-only)' : 'Unlock to edit rates'}
             >
               {unlocked ? '🔓 Unlocked' : '🔒 Locked'}
             </button>
@@ -390,10 +618,21 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
           properties={filtered}
           platforms={platforms}
           year={year}
+          season={season}
+          seasonLabelText={currentSeasonOrder.label}
+          seasonMultiplier={currentMultiplier}
           baselineByKey={baselineByKey}
           pending={pending}
+          overridesByKey={overridesByKey}
+          fixedRatesByKey={fixedRatesByKey}
+          pendingOverrides={pendingOverrides}
+          pendingFixedMode={pendingFixedMode}
+          pendingFixedRates={pendingFixedRates}
           unlocked={unlocked}
           stageBaseline={stageBaseline}
+          stageOverride={stageOverride}
+          stageFixedMode={stageFixedMode}
+          stageFixedSlot={stageFixedSlot}
           copyToClipboard={copyToClipboard}
         />
       )}
@@ -404,24 +643,69 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
 // ─── Sortable pricing table ─────────────────────────────────────────────
 
 function PricingTable({
-  properties, platforms, year, baselineByKey, pending, unlocked, stageBaseline, copyToClipboard,
+  properties, platforms, year, season, seasonLabelText, seasonMultiplier, baselineByKey, pending, overridesByKey, fixedRatesByKey, pendingOverrides, pendingFixedMode, pendingFixedRates, unlocked, stageBaseline, stageOverride, stageFixedMode, stageFixedSlot, copyToClipboard,
 }: {
   properties: Property[];
   platforms: Platform[];
   year: number;
+  season: SeasonKey;
+  seasonLabelText: string;
+  seasonMultiplier: number;
   baselineByKey: Map<string, BaselineRow>;
   pending: Map<string, number | null>;
+  overridesByKey: Map<string, OverrideRow>;
+  fixedRatesByKey: Map<string, FixedRateRow>;
+  pendingOverrides: Map<string, number | null>;
+  pendingFixedMode: Map<string, boolean>;
+  pendingFixedRates: Map<string, FixedSlot>;
   unlocked: boolean;
   stageBaseline: (propertyId: string, year: number, value: number | null) => void;
+  stageOverride: (propertyId: string, value: number | null) => void;
+  stageFixedMode: (propertyId: string, value: boolean) => void;
+  stageFixedSlot: (propertyId: string, patch: Partial<FixedSlot>) => void;
   copyToClipboard: (value: number, label: string) => Promise<void>;
 }) {
+  const mult = seasonMultiplier;
   const rows = properties.map(prop => {
-    const key = `${prop.id}:${year}`;
-    const saved = baselineByKey.get(key)?.daily_rate ?? null;
-    const pendingVal = pending.has(key) ? (pending.get(key) ?? null) : undefined;
-    const effective = pendingVal !== undefined ? pendingVal : saved;
-    const direct = effective != null ? directGuestRate(effective) : null;
-    const ctr = effective != null ? ctrMargin(effective) : null;
+    // Peak baseline (the property's anchor) — live DB value + any staged
+    // baseline edit. Always the same number across all season tabs.
+    const baseKey = `${prop.id}:${year}`;
+    const peakSaved = baselineByKey.get(baseKey)?.daily_rate ?? null;
+    const peakPending = pending.has(baseKey) ? (pending.get(baseKey) ?? null) : undefined;
+    const peakEffective = peakPending !== undefined ? peakPending : peakSaved;
+
+    // Fixed mode (per property) — DB pricing_mode + any staged flip.
+    const fmKey = prop.id;
+    const fixedCommitted = prop.pricing_mode === 'fixed';
+    const fixedPending = pendingFixedMode.has(fmKey) ? pendingFixedMode.get(fmKey)! : undefined;
+    const isFixed = fixedPending !== undefined ? fixedPending : fixedCommitted;
+
+    // Override (per property + season) — committed value + any staged edit.
+    const ovKey = cellKey(prop.id, year, season);
+    const ovCommitted = overridesByKey.get(ovKey)?.override_rate ?? null;
+    const ovPending = pendingOverrides.has(ovKey) ? (pendingOverrides.get(ovKey) ?? null) : undefined;
+
+    // Fixed slot (per property + season) — committed guest/owner + staged.
+    const fixedSlotRow = fixedRatesByKey.get(ovKey);
+    const fixedSlotCommitted: FixedSlot = fixedSlotRow
+      ? { guest: fixedSlotRow.guest_rate, owner: fixedSlotRow.owner_rate }
+      : {};
+    const fixedSlotPending = pendingFixedRates.has(ovKey) ? pendingFixedRates.get(ovKey)! : null;
+    const fixedSlotEffective = fixedSlotPending ?? fixedSlotCommitted;
+    const guestRate = fixedSlotEffective.guest ?? null;
+    const ownerRate = fixedSlotEffective.owner ?? null;
+    const fixedMargin = isFixed && guestRate != null && ownerRate != null ? guestRate - ownerRate : null;
+    const platformShare = fixedMargin != null ? Math.round(fixedMargin / 2) : null;
+
+    // Effective season rate (System mode). On Peak this IS the baseline.
+    // On other seasons, override wins; otherwise auto-suggest = peak × mult.
+    const suggested = peakEffective != null ? Math.round(peakEffective * mult) : null;
+    const overrideEffective = ovPending !== undefined ? ovPending : ovCommitted;
+    const systemRate = season === 'peak' ? peakEffective : (overrideEffective ?? suggested);
+
+    const effectiveRate = isFixed ? guestRate : systemRate;
+    const direct = !isFixed && effectiveRate != null ? directGuestRate(effectiveRate) : null;
+    const ctr = !isFixed && effectiveRate != null ? ctrMargin(effectiveRate) : null;
     const platformPrices: Record<string, number | null> = {};
     for (const plat of platforms) {
       platformPrices[`platform_${plat.id}`] = direct != null
@@ -433,13 +717,24 @@ function PricingTable({
       slug: prop.slug || '',
       name: titleCase(prop.property_name),
       is_published: prop.is_published ? 1 : 0,
-      base_rate: effective ?? 0,
-      ctr_margin: ctr ?? 0,
+      base_rate: effectiveRate ?? 0,
+      ctr_margin: isFixed ? (platformShare ?? 0) : (ctr ?? 0),
       direct_rate: direct ?? 0,
       ...platformPrices,
       prop,
-      saved,
-      pendingVal,
+      peakEffective,
+      peakSaved,
+      peakPending,
+      isFixed,
+      suggested,
+      ovCommitted,
+      ovPending,
+      guestRate,
+      ownerRate,
+      guestPending: fixedSlotPending?.guest,
+      ownerPending: fixedSlotPending?.owner,
+      guestCommitted: fixedSlotCommitted.guest ?? null,
+      ownerCommitted: fixedSlotCommitted.owner ?? null,
       direct,
     };
   });
@@ -470,31 +765,89 @@ function PricingTable({
       },
     },
     {
-      key: 'base_rate', label: `Base rate`, sortable: true, align: 'right' as const, width: '150px',
+      key: 'mode', label: 'Mode', sortable: false, align: 'center' as const, width: '160px',
       render: (row: DataRow) => {
         const r = row as any;
+        if (!unlocked) {
+          return (
+            <span className={`ops-status-pill ops-status-pill--${r.isFixed ? 'won' : 'drafting'}`}>
+              <span className="ops-status-pill-dot" />
+              {r.isFixed ? 'Fixed' : 'System'}
+            </span>
+          );
+        }
+        return (
+          <div className="view-toggle" title="Pricing mode">
+            <button
+              className={`view-toggle-btn ${!r.isFixed ? 'active' : ''}`}
+              onClick={() => stageFixedMode(r.id, false)}
+              title="System: standard pricing using the season rate column"
+            >System</button>
+            <button
+              className={`view-toggle-btn ${r.isFixed ? 'active' : ''}`}
+              onClick={() => stageFixedMode(r.id, true)}
+              title="Fixed: 3rd-party guest rate + pre-agreed owner rate. Platform earn = (Guest − Owner) ÷ 2 split with the agent."
+            >Fixed</button>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'base_rate', label: 'Owner Rate', sortable: true, align: 'right' as const, width: '220px',
+      cellClassName: `pricing-col-season-${season}`,
+      render: (row: DataRow) => {
+        const r = row as any;
+        if (r.isFixed) {
+          return (
+            <div className="pricing-fixed-cell">
+              <BaselineCell
+                year={year}
+                saved={r.guestCommitted}
+                pending={r.guestPending}
+                locked={!unlocked}
+                onChange={(v) => stageFixedSlot(r.id, { guest: v })}
+              />
+              <span className="pricing-fixed-cell-sep">/</span>
+              <BaselineCell
+                year={year}
+                saved={r.ownerCommitted}
+                pending={r.ownerPending}
+                locked={!unlocked}
+                onChange={(v) => stageFixedSlot(r.id, { owner: v })}
+              />
+            </div>
+          );
+        }
+        if (season === 'peak') {
+          // Peak edits the live baseline (existing flow, no change).
+          return (
+            <BaselineCell
+              year={year}
+              saved={r.peakSaved}
+              pending={r.peakPending}
+              locked={!unlocked}
+              onChange={(v) => stageBaseline(r.id, year, v)}
+            />
+          );
+        }
+        // Other seasons: saved shows committed override OR auto-suggested
+        // value. Pending shows staged override. Type to override, clear to
+        // revert to suggested.
         return (
           <BaselineCell
             year={year}
-            saved={r.saved}
-            pending={r.pendingVal}
+            saved={r.ovCommitted ?? r.suggested}
+            pending={r.ovPending}
             locked={!unlocked}
-            onChange={(v) => stageBaseline(r.id, year, v)}
+            onChange={(v) => stageOverride(r.id, v)}
           />
         );
       },
     },
     {
-      key: 'ctr_margin', label: 'CTR margin', sortable: true, align: 'right' as const, width: '120px',
-      render: (row: DataRow) => {
-        const v = (row as any).ctr_margin as number;
-        return v > 0
-          ? <span style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>R {v.toLocaleString('en-US')}</span>
-          : <span style={{ color: 'var(--text-light)' }}>—</span>;
-      },
-    },
-    {
-      key: 'direct_rate', label: 'Direct rate', sortable: true, align: 'right' as const, width: '130px',
+      key: 'direct_rate', label: 'Direct', sortable: true, align: 'right' as const, width: '130px',
+      cellClassName: 'pricing-col-guest-rate pricing-col-guest-rate--first',
+      group: 'Guest rates',
       render: (row: DataRow) => {
         const v = (row as any).direct_rate as number;
         if (v <= 0) return <span style={{ color: 'var(--text-light)' }}>—</span>;
@@ -517,6 +870,8 @@ function PricingTable({
       sortable: true,
       align: 'right' as const,
       width: '130px',
+      cellClassName: 'pricing-col-guest-rate',
+      group: 'Guest rates',
       render: (row: DataRow) => {
         const v = (row as any)[`platform_${plat.id}`] as number | null;
         if (!v || v <= 0) return <span style={{ color: 'var(--text-light)' }}>—</span>;
@@ -533,6 +888,17 @@ function PricingTable({
         );
       },
     })),
+    {
+      key: 'ctr_margin', label: 'CTR margin', sortable: true, align: 'right' as const, width: '120px',
+      cellClassName: 'pricing-col-ctr-margin',
+      group: 'CTR',
+      render: (row: DataRow) => {
+        const v = (row as any).ctr_margin as number;
+        return v > 0
+          ? <span style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>R {v.toLocaleString('en-US')}</span>
+          : <span style={{ color: 'var(--text-light)' }}>—</span>;
+      },
+    },
   ];
 
   return (

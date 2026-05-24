@@ -16,6 +16,12 @@ export interface Column<R = any> {
   width?: string;
   align?: 'left' | 'center' | 'right';
   hideOnMobile?: boolean;
+  /** Extra class applied to both <th> and <td>. Use for column-level tinting
+   *  / grouping accents that aren't appropriate at the row level. */
+  cellClassName?: string;
+  /** Optional label for a group header rendered above this column. Contiguous
+   *  columns sharing the same group string merge into one colspan'd cell. */
+  group?: string;
 }
 
 export interface FilterOption {
@@ -358,6 +364,34 @@ function DataTable({
         <div className="mobile-table-scroll">
           <table className="data-table">
             <thead>
+              {visibleColumns.some(c => c.group) && (
+                <tr className="datatable-group-row">
+                  {selectable && <th aria-hidden="true" />}
+                  {(() => {
+                    const cells: ReactNode[] = [];
+                    let i = 0;
+                    while (i < visibleColumns.length) {
+                      const col = visibleColumns[i];
+                      if (col.group) {
+                        let j = i;
+                        while (j < visibleColumns.length && visibleColumns[j].group === col.group) j++;
+                        const span = j - i;
+                        cells.push(
+                          <th key={`grp-${i}`} colSpan={span} className={`datatable-group-label ${col.cellClassName || ''}`}>
+                            {col.group}
+                          </th>
+                        );
+                        i = j;
+                      } else {
+                        cells.push(<th key={`grp-${i}`} aria-hidden="true" />);
+                        i++;
+                      }
+                    }
+                    return cells;
+                  })()}
+                  {actions && <th aria-hidden="true" />}
+                </tr>
+              )}
               <tr>
                 {selectable && (
                   <th className="table-col-checkbox">
@@ -367,7 +401,7 @@ function DataTable({
                 {visibleColumns.map(col => (
                   <th
                     key={col.key}
-                    className={`${col.sortable ? 'sortable' : ''} ${col.align ? `text-${col.align}` : 'text-left'}`}
+                    className={`${col.sortable ? 'sortable' : ''} ${col.align ? `text-${col.align}` : 'text-left'} ${col.cellClassName || ''}`}
                     style={{ width: col.width }}
                     onClick={() => col.sortable && handleSort(col.key)}
                   >
@@ -403,7 +437,7 @@ function DataTable({
                         </td>
                       )}
                       {visibleColumns.map(col => (
-                        <td key={col.key} className={col.align ? `text-${col.align}` : 'text-left'}>
+                        <td key={col.key} className={`${col.align ? `text-${col.align}` : 'text-left'} ${col.cellClassName || ''}`}>
                           {col.render
                             ? col.render(row)
                             : (getNestedValue(row, col.key) as ReactNode) ?? '-'}

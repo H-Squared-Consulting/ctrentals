@@ -27,6 +27,11 @@ function titleCase(s: string | null | undefined): string {
 interface PricingModalProps {
   property: { id: string; property_name: string };
   onClose: () => void;
+  /** Fires when a proposal is actually saved (distinct from onClose,
+   *  which also fires on cancel). Hosts use this to swap their success
+   *  state from "enquiry saved" → "proposal created" with the right
+   *  next-step CTAs. */
+  onCreated?: () => void;
   supabase: any;
   /** Edit mode pre-fills the dashboard with an existing pricing snapshot
    *  and changes the primary action to "Save pricing" (in-place UPDATE). */
@@ -41,6 +46,7 @@ interface PricingModalProps {
 export default function PricingModal({
   property,
   onClose,
+  onCreated,
   supabase,
   editPricingProposal,
   onPricingSaved,
@@ -63,12 +69,15 @@ export default function PricingModal({
     setSaving(true);
     try {
       const b = snap.breakdown;
+      // pricing_proposals rows are immutable post-insert (enforced by DB
+      // trigger — only status / notes / expiry_date may change). To "edit"
+      // a saved snapshot we INSERT a fresh row with the new values and
+      // repoint the parent proposal(s) at it. The old row stays as an
+      // historical record of what was originally quoted.
       const payload = {
+        property_id: editPricingProposal.property_id,
         scenario_type: snap.scenarioType,
         agent_id: snap.agentId,
-        // Multi-agent split — Postgres JSONB column; pg-driver serialises
-        // the array straight through. Empty array for non-agent scenarios
-        // so stale data doesn't linger on the row.
         agents: snap.agents.map(a => ({ id: a.id, pct: a.pct })),
         channel_profile_id: snap.channelId,
         baseline_used: snap.baseline,
@@ -84,15 +93,27 @@ export default function PricingModal({
         owner_net: b.ownerNet,
         company_take: b.ctrTake,
         client_price_excl_vat: b.clientPriceExclVat,
+        vat_enabled: false,
+        vat_rate_pct: 0,
         vat_amount: 0,
         client_price_incl_vat: b.clientPriceExclVat,
-        updated_at: new Date().toISOString(),
+        status: 'draft' as const,
+        expiry_date: null,
+        notes: null,
       };
-      const { error } = await supabase
+      const { data: newSnap, error: insErr } = await supabase
         .from('pricing_proposals')
-        .update(payload)
-        .eq('id', editPricingProposal.id);
-      if (error) throw error;
+        .insert(payload)
+        .select('id')
+        .single();
+      if (insErr) throw insErr;
+
+      const { error: updErr } = await supabase
+        .from('proposals')
+        .update({ pricing_proposal_id: newSnap.id, updated_at: new Date().toISOString() })
+        .eq('pricing_proposal_id', editPricingProposal.id);
+      if (updErr) throw updErr;
+
       toast.success('Pricing updated — linked proposal reflects the new price.');
       onPricingSaved?.();
       onClose();
@@ -117,6 +138,17 @@ export default function PricingModal({
           property={property}
           supabase={supabase}
           initialSnapshot={editPricingProposal ?? null}
+          // Pre-select scenario from the enquiry: agent enquiries skip
+          // straight to the agent pricing surface; everything else lands
+          // on direct. Users can still flip if they want. Without this
+          // the dashboard's State A asks the user to pick — wasted click
+          // when we already know from the enquiry context.
+          initialScenario={enquiryPrefill ? (enquiryPrefill.is_agent ? 'agent' : 'direct') : undefined}
+          // Pre-select the agent who made the enquiry. Only fires when
+          // the enquiry is_agent and the user picks the 'agent' scenario
+          // in the dashboard. Without this the dropdown defaults to
+          // "(any agent)" — frustrating when we already know who.
+          initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
           onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
           actionLabel={isEdit ? 'Save pricing' : 'Create proposal from this'}
           saving={saving}
@@ -130,7 +162,7 @@ export default function PricingModal({
           supabase={supabase}
           enquiryPrefill={enquiryPrefill}
           onClose={() => setCreatingFromSnapshot(null)}
-          onCreated={() => { setCreatingFromSnapshot(null); onClose(); }}
+          onCreated={() => { setCreatingFromSnapshot(null); onCreated?.(); onClose(); }}
         />
       )}
     </>

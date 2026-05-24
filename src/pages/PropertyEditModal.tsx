@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import DetailModal from '../components/DetailModal';
+import MultiPicker from '../components/MultiPicker';
 import BrochureShareMenu from '../components/BrochureShareMenu';
 import NightCount from '../components/NightCount';
 import { useDirty } from '../lib/dirtyState';
@@ -90,6 +91,17 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     gallery_sections: Array.isArray(property.gallery_sections) ? property.gallery_sections : [],
     amenity_tags: parseAmenityTags(property.amenity_tags),
     booking_url: property.booking_url || '',
+    // Multi-platform listing URLs (jsonb column). Falls back to the legacy
+    // single booking_url under booking_com when listing_urls is empty so
+    // pre-migration data isn't invisible in the new UI.
+    listing_urls: (() => {
+      const raw = property.listing_urls;
+      if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
+        return raw as Record<string, string>;
+      }
+      if (property.booking_url) return { booking_com: property.booking_url } as Record<string, string>;
+      return {} as Record<string, string>;
+    })(),
     listing_links: stringifyJSON(property.listing_links),
     contact_email: property.contact_email || '',
     contact_phone: property.contact_phone || '',
@@ -166,7 +178,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   async function loadOwners() {
     const { data } = await supabase
       .from('home_owners')
-      .select('id, name, company, vat_number')
+      .select('id, name, company, vat_number, role')
       .eq('partner_id', partnerId)
       .order('name');
     if (data) setOwners(data);
@@ -589,7 +601,16 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         gallery_sections: form.gallery_sections,
         ...deriveFlatColumns(form.gallery_sections),
         amenity_tags: parseAmenityTagsInput(form.amenity_tags),
-        booking_url: form.booking_url.trim() || null,
+        // Trim each URL; drop empty entries so the jsonb doesn't accumulate
+        // blank keys over time. Also keep booking_url synced to the new
+        // booking_com slot so legacy readers still get a value during the
+        // transition period.
+        listing_urls: Object.fromEntries(
+          Object.entries(form.listing_urls)
+            .map(([k, v]) => [k, (v || '').trim()])
+            .filter(([, v]) => v)
+        ),
+        booking_url: (form.listing_urls.booking_com || form.booking_url || '').trim() || null,
         listing_links: safeParseJSON(form.listing_links),
         contact_email: form.contact_email.trim() || null,
         contact_phone: form.contact_phone.trim() || null,
@@ -886,7 +907,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             isNew={isNew}
             viewOnly={viewOnly}
             onPublishChange={(checked) => setForm({ ...form, is_published: checked })}
-            onBookingUrlChange={(v) => setForm({ ...form, booking_url: v })}
+            onListingUrlChange={(platform, v) => setForm({
+              ...form,
+              listing_urls: { ...form.listing_urls, [platform]: v },
+            })}
             onShare={() => setSharingBrochure(true)}
           />
 
@@ -931,123 +955,119 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>Owners</span>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
-                onClick={() => setShowOwnerCreate(s => !s)}
-              >
-                {showOwnerCreate ? '× Cancel' : '+ New owner'}
-              </button>
-            </label>
+            <label className="form-label">People</label>
 
-            {/* Multi-owner rows. Each row links one home_owner to this
-                property with an optional ownership %. Exactly one row is
-                Primary — that owner's name/email surfaces as the property's
-                headline contact across the app and is mirrored back to
-                partner_properties.owner_id on save for legacy readers. */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
-              {ownerLinks.map((row, idx) => {
-                // Hide owners already picked in OTHER rows so the same
-                // person can't be added twice. Save-time validation also
-                // rejects duplicates; this is just UX belt-and-braces.
-                const takenElsewhere = new Set(
-                  ownerLinks.filter((_, i) => i !== idx).map((r) => r.ownerId).filter(Boolean)
-                );
-                const availableOwners = owners.filter((o) => !takenElsewhere.has(o.id));
-                return (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 110px auto auto',
-                      gap: 'var(--s-2)',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <select
-                      className="form-input"
-                      value={row.ownerId}
-                      disabled={showOwnerCreate}
-                      onChange={(e) => setOwnerLinks((rows) => {
-                        const next = rows.slice();
-                        next[idx] = { ...next[idx], ownerId: e.target.value };
-                        return next;
-                      })}
-                    >
-                      <option value="">— Select owner —</option>
-                      {availableOwners.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.name}{o.company ? ` (${o.company})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.01"
-                      placeholder="% share"
-                      value={row.pct}
-                      disabled={showOwnerCreate}
-                      onChange={(e) => setOwnerLinks((rows) => {
-                        const next = rows.slice();
-                        next[idx] = { ...next[idx], pct: e.target.value };
-                        return next;
-                      })}
-                    />
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-1)', fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      <input
-                        type="radio"
-                        name="owner-primary"
-                        checked={!!row.isPrimary}
-                        disabled={showOwnerCreate || !row.ownerId}
-                        onChange={() => setOwnerLinks((rows) => rows.map((r, i) => ({ ...r, isPrimary: i === idx })))}
-                      />
-                      Primary
-                    </label>
+            {/* People picker: one MultiPicker showing all home_owners rows
+                (any role). Selecting an option adds it to ownerLinks; the
+                rows below show selected people with their role and a
+                Primary radio (enabled only for role='owner' — Primary is
+                the property's headline OWNER, mirrored back to
+                partner_properties.owner_id for legacy readers). The
+                inline "+ New person" creation flow stays as the picker's
+                footer affordance so users don't leave the picker. */}
+            {(() => {
+              const ROLE_LABELS: Record<string, string> = {
+                owner: 'Owner', manager: 'House manager', domestic: 'Domestic', gardener: 'Gardener', other: 'Other',
+              };
+              const fmtOwner = (id: number | string) => {
+                const o = owners.find((x: any) => x.id === id);
+                if (!o) return String(id);
+                const role = ROLE_LABELS[o.role || 'owner'];
+                const company = o.company ? ` (${o.company})` : '';
+                return `${o.name}${company} — ${role}`;
+              };
+              const selectedIds = ownerLinks.map(r => r.ownerId).filter(Boolean);
+              return (
+                <MultiPicker
+                  label="Add people"
+                  searchable
+                  searchPlaceholder="Type to find a person..."
+                  options={owners.map((o: any) => o.id)}
+                  selected={selectedIds}
+                  format={fmtOwner}
+                  onChange={(nextIds: (number | string)[]) => {
+                    const set = new Set(nextIds.map(String));
+                    // Keep existing rows that are still selected (preserves
+                    // pct + isPrimary). Append any new ones with defaults.
+                    const existing = ownerLinks.filter(r => r.ownerId && set.has(r.ownerId));
+                    const existingIds = new Set(existing.map(r => r.ownerId));
+                    const added = nextIds
+                      .filter(id => !existingIds.has(String(id)))
+                      .map(id => ({ ownerId: String(id), pct: '', isPrimary: false }));
+                    const merged = [...existing, ...added];
+                    // Ensure exactly one Primary among owner-role people.
+                    const firstOwnerIdx = merged.findIndex(r => {
+                      const owner = owners.find((x: any) => x.id === r.ownerId);
+                      return (owner?.role || 'owner') === 'owner';
+                    });
+                    if (firstOwnerIdx >= 0 && !merged.some(r => r.isPrimary)) {
+                      merged[firstOwnerIdx] = { ...merged[firstOwnerIdx], isPrimary: true };
+                    }
+                    setOwnerLinks(merged.length ? merged : [{ ownerId: '', pct: '', isPrimary: true }]);
+                  }}
+                  footer={
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      style={{ fontSize: '0.875rem', padding: '2px 8px', lineHeight: 1 }}
-                      aria-label="Remove owner"
-                      disabled={showOwnerCreate}
-                      onClick={() => setOwnerLinks((rows) => {
-                        if (rows.length === 1) {
-                          // Always keep one (possibly empty) row visible
-                          // so the picker doesn't disappear entirely.
-                          return [{ ownerId: '', pct: '', isPrimary: true }];
-                        }
-                        const next = rows.filter((_, i) => i !== idx);
-                        // If the removed row was primary, promote the
-                        // first remaining row so the UI always has one.
-                        if (!next.some((r) => r.isPrimary)) next[0] = { ...next[0], isPrimary: true };
-                        return next;
-                      })}
+                      style={{ fontSize: '0.75rem', width: '100%' }}
+                      onClick={() => setShowOwnerCreate(true)}
                     >
-                      ×
+                      + New person
                     </button>
-                  </div>
-                );
-              })}
-              <div>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ fontSize: '0.75rem' }}
-                  disabled={showOwnerCreate}
-                  onClick={() => setOwnerLinks((rows) => [
-                    ...rows,
-                    { ownerId: '', pct: '', isPrimary: rows.length === 0 },
-                  ])}
-                >
-                  + Add another owner
-                </button>
+                  }
+                />
+              );
+            })()}
+
+            {/* Selected people list — name + role + Primary radio + Remove. */}
+            {ownerLinks.filter(r => r.ownerId).length > 0 && (
+              <div className="property-people-list">
+                {ownerLinks.filter(r => r.ownerId).map((row, _idx) => {
+                  const owner = owners.find((x: any) => x.id === row.ownerId);
+                  if (!owner) return null;
+                  const role = (owner.role || 'owner') as string;
+                  const isOwnerRole = role === 'owner';
+                  const ROLE_LABELS: Record<string, string> = {
+                    owner: 'Owner', manager: 'House manager', domestic: 'Domestic', gardener: 'Gardener', other: 'Other',
+                  };
+                  return (
+                    <div key={row.ownerId} className="property-people-row">
+                      <span className="property-people-name">{owner.name}{owner.company ? ` (${owner.company})` : ''}</span>
+                      <span className="ops-status-pill ops-status-pill--drafting"><span className="ops-status-pill-dot" />{ROLE_LABELS[role]}</span>
+                      <label className="property-people-primary" title={isOwnerRole ? 'Make this the primary owner contact' : 'Only owners can be the primary contact'}>
+                        <input
+                          type="radio"
+                          name="owner-primary"
+                          checked={!!row.isPrimary}
+                          disabled={!isOwnerRole}
+                          onChange={() => setOwnerLinks(rows => rows.map(r => ({ ...r, isPrimary: r.ownerId === row.ownerId })))}
+                        />
+                        Primary
+                      </label>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ fontSize: '0.875rem', padding: '2px 8px', lineHeight: 1 }}
+                        aria-label="Remove"
+                        onClick={() => setOwnerLinks(rows => {
+                          const next = rows.filter(r => r.ownerId !== row.ownerId);
+                          // Promote the first remaining owner to Primary if
+                          // none currently are.
+                          const firstOwnerIdx = next.findIndex(r => {
+                            const o = owners.find((x: any) => x.id === r.ownerId);
+                            return (o?.role || 'owner') === 'owner';
+                          });
+                          if (firstOwnerIdx >= 0 && !next.some(r => r.isPrimary)) {
+                            next[firstOwnerIdx] = { ...next[firstOwnerIdx], isPrimary: true };
+                          }
+                          return next.length ? next : [{ ownerId: '', pct: '', isPrimary: true }];
+                        })}
+                      >×</button>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
+            )}
 
             {showOwnerCreate && (
               <div style={{ marginTop: 'var(--s-3)', padding: 'var(--s-3)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
@@ -1406,7 +1426,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
       {sendingProposal && (
         <SendProposalDialog
-          proposal={{
+          proposals={[{
             id: sendingProposal.id,
             ref_code: sendingProposal.ref_code,
             property_name: property.property_name,
@@ -1414,7 +1434,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             guest_email: sendingProposal.guest_email,
             guest_phone: sendingProposal.guest_phone,
             is_agent: !!sendingProposal.is_agent,
-          }}
+          }]}
           supabase={supabase}
           onClose={() => setSendingProposal(null)}
           onSent={() => { setSendingProposal(null); refetchProposals(); }}
@@ -1540,15 +1560,25 @@ function LinkRow({ label, hint, url, disabled }: { label: string; hint?: string;
   );
 }
 
+/** Labelled set of external listing platforms. Order = render order in the
+ *  editor. Keys match the keys stored in partner_properties.listing_urls. */
+const LISTING_PLATFORMS: Array<{ key: string; label: string }> = [
+  { key: 'airbnb',      label: 'Airbnb' },
+  { key: 'booking_com', label: 'Booking.com' },
+  { key: 'vrbo',        label: 'VRBO' },
+  { key: 'direct',      label: 'Direct' },
+  { key: 'other',       label: 'Other' },
+];
+
 function PropertyLinksSection({
-  property, form, isNew, viewOnly, onPublishChange, onBookingUrlChange, onShare,
+  property, form, isNew, viewOnly, onPublishChange, onListingUrlChange, onShare,
 }: {
   property: any;
   form: any;
   isNew: boolean;
   viewOnly: boolean;
   onPublishChange: (checked: boolean) => void;
-  onBookingUrlChange: (value: string) => void;
+  onListingUrlChange: (platform: string, value: string) => void;
   onShare: () => void;
 }) {
   const canShare = !isNew && !form.is_archived;
@@ -1597,14 +1627,21 @@ function PropertyLinksSection({
       )}
 
       <div className="form-group" style={{ marginTop: '14px', marginBottom: 0 }}>
-        <label className="form-label">External listing URL</label>
-        <ExternalUrlInput
-          value={form.booking_url}
-          disabled={viewOnly}
-          onChange={onBookingUrlChange}
-        />
-        <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-          Where this property is listed externally (Airbnb, Booking.com, etc). One link for now — multi-platform support is coming.
+        <label className="form-label">External listing URLs</label>
+        <div className="property-listing-urls">
+          {LISTING_PLATFORMS.map(({ key, label }) => (
+            <div key={key} className="property-listing-url-row">
+              <span className="property-listing-url-label">{label}</span>
+              <ExternalUrlInput
+                value={(form.listing_urls && form.listing_urls[key]) || ''}
+                disabled={viewOnly}
+                onChange={(v) => onListingUrlChange(key, v)}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+          Where this property is listed externally. Leave blank for platforms you don't use.
         </div>
       </div>
     </div>

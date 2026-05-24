@@ -1698,13 +1698,20 @@ select.form-input { cursor: pointer; }
   color: var(--color-primary);
   white-space: nowrap;
 }
+/* Property name is visually distinct from the guest name above it —
+ * smaller, info-blue (a known platform accent), and prefixed by a 🏠
+ * marker added in JSX. Three signals (size, colour, icon) so a column of
+ * sibling proposals reads at a glance: same dark client headline, but
+ * different blue properties below it. */
 .ops-board-card-property {
   font-size: 0.75rem;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--info);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 1px;
+  margin-top: 2px;
+  margin-bottom: 4px;
 }
 .ops-board-card-meta {
   font-size: 0.6875rem;
@@ -1760,6 +1767,20 @@ select.form-input { cursor: pointer; }
 }
 .ops-board-card-tag--agent { background: #E0E7FF; color: #3730A3; }
 .ops-board-card-tag--viewed { background: var(--info-bg); color: var(--info); }
+/* Clickable variant — used when a tag drives a navigation/filter action.
+ * Adds cursor + a subtle hover so the user sees it's pressable rather
+ * than just a label. Border-none keeps the tag's flat look in the row. */
+button.ops-board-card-tag--clickable {
+  cursor: pointer;
+  border: none;
+  transition: filter 0.12s, transform 0.12s;
+}
+button.ops-board-card-tag--clickable:hover {
+  filter: brightness(0.93);
+}
+button.ops-board-card-tag--clickable:active {
+  transform: translateY(1px);
+}
 
 /* Small days-in-stage indicator that sits top-right on the card.
  * Subtle by default, becomes amber once a card has been sitting around. */
@@ -1917,7 +1938,9 @@ select.form-input { cursor: pointer; }
 .ops-status-pill--peak       { background: var(--error-bg);   color: #991B1B; border-color: #FECACA; }
 .ops-status-pill--high       { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
 .ops-status-pill--mid        { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--shoulder   { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
 .ops-status-pill--low        { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--winter     { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
 
 /* ================================================================
    Action modal — the standard Tier B shell used by all one-shot
@@ -2115,6 +2138,11 @@ select.form-input { cursor: pointer; }
   border-color: #A7F3D0;
   color: #065F46;
 }
+.detail-modal-banner--info {
+  background: var(--info-bg);
+  border-color: #BFDBFE;
+  color: #1E40AF;
+}
 .detail-modal-section { margin-bottom: 14px; }
 .detail-modal-section:last-child { margin-bottom: 0; }
 .detail-modal-section + .detail-modal-section {
@@ -2192,6 +2220,95 @@ select.form-input { cursor: pointer; }
    booked dates on each property's row. Horizontal scroll for the
    timeline; property column sticks to the left edge as you scroll.
    ================================================================ */
+/* Pricing page: Fixed-mode rate cell holds two BaselineCell inputs
+ * (Guest / Owner) side by side. Pure layout wrapper, no visual styling. */
+.pricing-fixed-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.pricing-fixed-cell-sep {
+  color: var(--text-light);
+  font-size: 0.75rem;
+}
+
+/* Pricing page: Owner Rate column gets a per-season accent on the header
+ * (and a faint matching tint on each body cell) so the active season is
+ * unmissable beyond the toggle. Tints intentionally soft — older eyes,
+ * never light grey for content. */
+.pricing-col-season-peak     { background: rgba(220, 38, 38, 0.06); }
+.pricing-col-season-high     { background: rgba(217, 119, 6, 0.06); }
+.pricing-col-season-shoulder { background: rgba(5, 150, 105, 0.06); }
+.pricing-col-season-winter   { background: rgba(37, 99, 235, 0.06); }
+
+/* Pricing page: Direct + each external platform list-price column belong
+ * to the "Guest rates" visual group — same neutral tint, a left border
+ * on the first column to mark the group boundary. */
+.pricing-col-guest-rate         { background: rgba(0, 0, 0, 0.02); }
+.pricing-col-guest-rate--first  { border-left: 2px solid var(--border); }
+
+/* CTR Margin: own column group, distinct from Guest Rates. Left border
+ * matches the Guest Rates group's right edge so the split is visible all
+ * the way down the table. */
+.pricing-col-ctr-margin { border-left: 2px solid var(--border); }
+
+/* Seasons page: inline editor for the JSONB date_ranges array. Each row
+ * is one {start, end} pair with a remove button; "+ Add range" appends. */
+.seasons-ranges-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.seasons-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seasons-range-row .form-input {
+  width: 80px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+.seasons-range-arrow {
+  color: var(--text-light);
+  font-size: 0.75rem;
+}
+
+/* DataTable group header row — sits above the regular column headers,
+ * colspan-merges columns sharing the same `group` label. Small caps text
+ * with a subtle bottom rule so it reads as a section title. */
+.datatable-group-row > th {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: transparent;
+}
+.datatable-group-row > th.datatable-group-label { text-align: center; }
+
+/* Pricing page banners — one calm definition banner on Peak, one tinted
+ * "you're in [season] override" notice on every other season. Sits above
+ * the toolbar so it's the first thing the user reads. */
+.pricing-banner {
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  border-left: 4px solid var(--border);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+}
+.pricing-banner strong { color: var(--text); }
+.pricing-banner--peak     { background: rgba(220, 38, 38, 0.08);  border-left-color: rgba(220, 38, 38, 0.7); }
+.pricing-banner--high     { background: rgba(217, 119, 6, 0.08);  border-left-color: rgba(217, 119, 6, 0.7); }
+.pricing-banner--shoulder { background: rgba(5, 150, 105, 0.08);  border-left-color: rgba(5, 150, 105, 0.7); }
+.pricing-banner--winter   { background: rgba(37, 99, 235, 0.08);  border-left-color: rgba(37, 99, 235, 0.7); }
+
 /* Two-pane layout: left = property column (no horizontal scroll, ever),
  * right = timeline (horizontal scroll). Vertical scroll lives on the right
  * pane; JS mirrors its scrollTop to the left so rows stay aligned. The
@@ -2905,6 +3022,32 @@ select.form-input { cursor: pointer; }
   .property-url-input-row { flex-wrap: wrap; }
   .property-url-input-row .form-input { flex-basis: 100%; }
 }
+
+/* Multi-platform listing URLs: one labelled row per platform, stacked. */
+.property-listing-urls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.property-listing-url-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.property-listing-url-label {
+  flex: 0 0 110px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.property-listing-url-row .property-url-input-row {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 540px) {
+  .property-listing-url-row { flex-direction: column; align-items: stretch; gap: 4px; }
+  .property-listing-url-label { flex: none; }
+}
 .property-link-pending {
   display: inline-flex;
   align-items: center;
@@ -3550,6 +3693,61 @@ select.form-input { cursor: pointer; }
   font-family: inherit;
 }
 .multi-picker-clear:hover { color: var(--color-primary); }
+
+/* MultiPicker search + footer slots (opt-in). The search input is pinned
+ * to the top of the popover so it doesn't scroll away with long lists. */
+.multi-picker-search {
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.multi-picker-search:focus { border-color: var(--color-primary); }
+.multi-picker-empty {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+}
+.multi-picker-footer {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* PropertyEditModal: list of people linked to the property. Sits below
+ * the People MultiPicker. Each row reads as a contact card line. */
+.property-people-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.property-people-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+.property-people-name { font-weight: 600; color: var(--text); }
+.property-people-primary {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap;
+  cursor: pointer;
+}
+.property-people-primary input { margin: 0; cursor: pointer; }
+.property-people-primary input:disabled { cursor: not-allowed; }
 
 
 /* Status pill — clickable active/inactive toggle with clear colour

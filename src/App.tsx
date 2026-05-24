@@ -164,7 +164,8 @@ export function App() {
       {/* CRM */}
       <Route path="/crm" element={<Navigate to="/crm/guests" replace />} />
       <Route path="/crm/guests" element={<Page><GuestsPage /></Page>} />
-      <Route path="/crm/home-owners" element={<Page><HomeOwnersPage /></Page>} />
+      <Route path="/crm/people" element={<Page><HomeOwnersPage /></Page>} />
+      <Route path="/crm/home-owners" element={<Navigate to="/crm/people" replace />} />
       <Route path="/crm/agents" element={<Navigate to="/settings/agents" replace />} />
 
       {/* Finance */}

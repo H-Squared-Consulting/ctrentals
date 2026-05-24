@@ -22,7 +22,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculatePricing, CTR_DEFAULT, fmtRand } from '../lib/pricingEngine';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
-import type { Baseline, SeasonTag, Agent, ChannelProfile, PricingBreakdown, PricingProposal } from '../types/pricing';
+import type { Baseline, Agent, ChannelProfile, PricingBreakdown, PricingProposal } from '../types/pricing';
+
+// ─── New 4-tier seasons model (DB-backed, lives in `seasons` table) ─────
+// Replaces the legacy free-form `season_tags`. Keys are fixed; dates +
+// multiplier are editable on /settings/seasons. PricingDashboard reads
+// the season for the picked tab, applies the per-property override if
+// set, otherwise falls back to baseline × multiplier.
+const SEASON_ORDER = ['peak', 'high', 'shoulder', 'winter'] as const;
+type SeasonKey = typeof SEASON_ORDER[number];
+interface SeasonRow {
+  id: string;
+  key: SeasonKey;
+  name: string;
+  multiplier: number;
+  date_ranges: Array<{ start: string; end: string }>;
+  sort_order: number;
+}
+interface OverrideRow {
+  property_id: string;
+  year: number;
+  season_id: string;
+  override_rate: number;
+}
+interface FixedRateRow {
+  property_id: string;
+  year: number;
+  season_id: string;
+  guest_rate: number | null;
+  owner_rate: number | null;
+}
 
 /** Generic-agent commission default when no specific agent is picked. */
 const GENERIC_AGENT_PCT = 15;
@@ -40,6 +69,7 @@ export interface SnapshotAgent {
   pct: number;
   name: string;
   email: string | null;
+  phone: string | null;
   company: string | null;
 }
 
@@ -48,7 +78,7 @@ export interface PricingSnapshot {
   scenarioType: ScenarioType;
   agentId: string | null;
   agents: SnapshotAgent[];
-  agentContact: { name: string; email: string | null; company: string | null } | null;
+  agentContact: { name: string; email: string | null; phone: string | null; company: string | null } | null;
   channelId: string | null;
   baseline: number;
   seasonTag: string | null;
@@ -89,6 +119,10 @@ interface Props {
   nights?: number;
   /** Edit-mode: existing pricing_proposal whose state hydrates the form. */
   initialSnapshot?: PricingProposal | null;
+  /** Pre-select this agent in the agent dropdown when the user picks the
+   *  agent scenario. Used when raising a proposal from an agent enquiry —
+   *  the agent's already known, no need for the user to re-pick. */
+  initialAgentId?: string | null;
   onCreateProposal?: (snapshot: PricingSnapshot) => void;
   actionLabel?: string;
   saving?: boolean;
@@ -201,6 +235,7 @@ export default function PricingDashboard({
   initialScenario,
   nights: _nights, // reserved for total-stay display in a future iteration
   initialSnapshot,
+  initialAgentId,
   onCreateProposal,
   actionLabel = 'Create proposal from this',
   saving = false,
@@ -208,7 +243,10 @@ export default function PricingDashboard({
   const currentYear = new Date().getFullYear();
 
   const [baseline, setBaseline] = useState<Baseline | null>(null);
-  const [seasonTags, setSeasonTags] = useState<SeasonTag[]>([]);
+  const [seasons, setSeasons] = useState<SeasonRow[]>([]);
+  const [overrides, setOverrides] = useState<OverrideRow[]>([]);
+  const [fixedRates, setFixedRates] = useState<FixedRateRow[]>([]);
+  const [pricingMode, setPricingMode] = useState<'system' | 'fixed'>('system');
   const [agents, setAgents] = useState<Agent[]>([]);
   const [channels, setChannels] = useState<ChannelProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,17 +260,18 @@ export default function PricingDashboard({
   const [scenario, setScenario] = useState<ScenarioType | null>(
     (hydrate?.scenario_type as ScenarioType) ?? initialScenario ?? null,
   );
-  /** Season selection is either the sentinel 'normal' (base rate, ×1) or a
-   *  season_tags row ID. Using the ID (not the name) means per-property
-   *  season tags can't be silently shadowed by a business-wide tag with the
-   *  same name — each row is uniquely selectable. Snapshots store the
-   *  human-readable season name (so they stay meaningful if the tag is
-   *  later renamed or deleted), so edit-mode hydration is deferred to a
-   *  useEffect below that runs once seasonTags has loaded. */
-  const [selectedSeason, setSelectedSeason] = useState<string>('normal');
+  /** Season selection is a SeasonKey ('peak' / 'high' / 'shoulder' /
+   *  'winter') for the new 4-tier model. Default to 'peak' (the anchor).
+   *  Snapshots store the human-readable season name; edit-mode hydration
+   *  below maps that name back to a key once seasons have loaded. */
+  const [selectedSeason, setSelectedSeason] = useState<SeasonKey>('peak');
   const [selectedAgentId, setSelectedAgentId] = useState<string>(
+    // Priority: edit-mode hydration > enquiry-prefill > blank. The
+    // initialAgentId comes from the parent enquiry on create-mode and
+    // is null otherwise, so it never overrides a saved snapshot.
     (hydrate?.agents && hydrate.agents.length > 0 && hydrate.agents[0]?.id)
       || hydrate?.agent_id
+      || initialAgentId
       || '',
   );
   const [selectedChannelId, setSelectedChannelId] = useState<string>(hydrate?.channel_profile_id || '');
@@ -262,15 +301,21 @@ export default function PricingDashboard({
     async function load() {
       setLoading(true);
       try {
-        const [baselineRes, seasonRes, agentRes, channelRes] = await Promise.all([
+        const [baselineRes, seasonRes, ovRes, fxRes, modeRes, agentRes, channelRes] = await Promise.all([
           supabase.from('baselines').select('*').eq('property_id', property.id).eq('year', currentYear).maybeSingle(),
-          supabase.from('season_tags').select('*').or(`property_id.eq.${property.id},property_id.is.null`).order('start_date'),
+          supabase.from('seasons').select('id, key, name, multiplier, date_ranges, sort_order').eq('partner_id', CT_RENTALS_PARTNER_ID).order('sort_order'),
+          supabase.from('property_season_overrides').select('property_id, year, season_id, override_rate').eq('property_id', property.id).eq('year', currentYear),
+          supabase.from('property_fixed_rates').select('property_id, year, season_id, guest_rate, owner_rate').eq('property_id', property.id).eq('year', currentYear),
+          supabase.from('partner_properties').select('pricing_mode').eq('id', property.id).maybeSingle(),
           supabase.from('agents').select('*').order('name'),
           supabase.from('channel_defaults').select('*').eq('partner_id', CT_RENTALS_PARTNER_ID).eq('is_active', true).order('platform_name'),
         ]);
         if (cancelled) return;
         if (baselineRes.data) setBaseline(baselineRes.data);
-        if (seasonRes.data) setSeasonTags(seasonRes.data);
+        if (seasonRes.data) setSeasons(seasonRes.data as SeasonRow[]);
+        if (ovRes.data) setOverrides(ovRes.data as OverrideRow[]);
+        if (fxRes.data) setFixedRates(fxRes.data as FixedRateRow[]);
+        if (modeRes.data?.pricing_mode) setPricingMode(modeRes.data.pricing_mode as 'system' | 'fixed');
         if (agentRes.data) setAgents(agentRes.data);
         if (channelRes.data) {
           setChannels(channelRes.data.map((d: any) => ({
@@ -297,32 +342,51 @@ export default function PricingDashboard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, property?.id, currentYear]);
 
-  const baseRate = baseline?.daily_rate ?? 0;
-  const selectedSeasonTag = useMemo(
-    () => (selectedSeason === 'normal' ? null : seasonTags.find(s => s.id === selectedSeason) || null),
-    [seasonTags, selectedSeason],
+  // Resolve the selected season's row (multiplier, name, dates, id).
+  const selectedSeasonRow = useMemo(
+    () => seasons.find(s => s.key === selectedSeason) || null,
+    [seasons, selectedSeason],
   );
   const seasonMultiplier = useMemo(
-    () => (selectedSeasonTag ? Number(selectedSeasonTag.multiplier) : 1),
-    [selectedSeasonTag],
+    () => (selectedSeasonRow ? Number(selectedSeasonRow.multiplier) : 1),
+    [selectedSeasonRow],
   );
+  // Per-property per-season override (System mode). When set, replaces
+  // the auto-suggested rate of baseline × multiplier for this season.
+  const seasonOverride = useMemo(() => {
+    if (!selectedSeasonRow) return null;
+    const row = overrides.find(o => o.season_id === selectedSeasonRow.id);
+    return row ? Number(row.override_rate) : null;
+  }, [overrides, selectedSeasonRow]);
+  // baseRate is the per-night OWNER-side rate before any margin maths.
+  // Note: PricingDashboard's engine still expects `baseline` × `seasonMultiplier`
+  // → owner net. When an override is set we pre-divide so the engine math holds.
+  //   override_rate = effective owner rate for this season
+  //   adjusted_baseline = override / multiplier (so baseline × mult = override)
+  const baseRate = useMemo(() => {
+    if (seasonOverride != null && seasonMultiplier > 0) {
+      return seasonOverride / seasonMultiplier;
+    }
+    return baseline?.daily_rate ?? 0;
+  }, [seasonOverride, seasonMultiplier, baseline]);
+  // Fixed-mode helpers (used only when pricingMode === 'fixed').
+  const fixedSlot = useMemo(() => {
+    if (pricingMode !== 'fixed' || !selectedSeasonRow) return null;
+    return fixedRates.find(r => r.season_id === selectedSeasonRow.id) || null;
+  }, [pricingMode, fixedRates, selectedSeasonRow]);
 
   // Edit-mode hydration for selectedSeason. Snapshots store the season
-  // name (e.g. "Peak"), but the dropdown values are row IDs. Once
-  // seasonTags has loaded, resolve the snapshot's season_tag to the
-  // matching tag.id — preferring a property-scoped tag over a business-
-  // wide one when both share the name. Ref-guarded so a later refetch
-  // of seasonTags doesn't overwrite the user's subsequent picks.
+  // name (e.g. "Peak"); the dropdown now uses SeasonKey ('peak' etc.).
+  // Once seasons has loaded, map the snapshot's season name back to its
+  // key. Ref-guarded so a later refetch doesn't overwrite user picks.
   const seasonHydratedRef = useRef(false);
   useEffect(() => {
     if (seasonHydratedRef.current) return;
-    if (!hydrate?.season_tag || seasonTags.length === 0) return;
-    const matches = seasonTags.filter(s => s.name === hydrate.season_tag);
-    if (matches.length === 0) { seasonHydratedRef.current = true; return; }
-    const preferred = matches.find(s => s.property_id) ?? matches[0];
-    setSelectedSeason(preferred.id);
+    if (!hydrate?.season_tag || seasons.length === 0) return;
+    const match = seasons.find(s => s.name === hydrate.season_tag || s.key === hydrate.season_tag);
+    if (match) setSelectedSeason(match.key);
     seasonHydratedRef.current = true;
-  }, [seasonTags, hydrate]);
+  }, [seasons, hydrate]);
 
   const activeChannel = useMemo(
     () => channels.find(c => c.id === selectedChannelId) || null,
@@ -396,6 +460,7 @@ export default function PricingDashboard({
           pct: effAgentPct,
           name: selectedAgent.name,
           email: selectedAgent.email ?? null,
+          phone: (selectedAgent as any).phone ?? null,
           company: (selectedAgent as any).company ?? null,
         }]
       : [];
@@ -405,14 +470,14 @@ export default function PricingDashboard({
       agentId: snapshotAgents[0]?.id ?? null,
       agents: snapshotAgents,
       agentContact: snapshotAgents[0]
-        ? { name: snapshotAgents[0].name, email: snapshotAgents[0].email, company: snapshotAgents[0].company }
+        ? { name: snapshotAgents[0].name, email: snapshotAgents[0].email, phone: snapshotAgents[0].phone, company: snapshotAgents[0].company }
         : null,
       channelId: scenario === 'platform' ? selectedChannelId || null : null,
       baseline: baseRate,
       // Snapshot carries the human-readable name (not the row ID) so the
-      // saved proposal stays meaningful even if the season_tags row is
-      // later edited or deleted.
-      seasonTag: selectedSeasonTag?.name ?? null,
+      // saved proposal stays meaningful even if the seasons row is later
+      // edited or deleted.
+      seasonTag: selectedSeasonRow?.name ?? null,
       seasonMultiplier,
       ctrPct: defaultCtrPct,
       agentPct: defaultAgentPct,
@@ -493,6 +558,16 @@ export default function PricingDashboard({
 
   return (
     <>
+      {pricingMode === 'fixed' && (
+        <div className="pricing-banner pricing-banner--peak" style={{ marginBottom: 12 }}>
+          <strong>This property uses Fixed pricing</strong> — guest rate is set by a 3rd party and the owner rate is pre-agreed.
+          {fixedSlot && (fixedSlot.guest_rate != null || fixedSlot.owner_rate != null) && (
+            <span> For {selectedSeasonRow?.name}: Guest <strong>R {Math.round(Number(fixedSlot.guest_rate ?? 0)).toLocaleString('en-US')}</strong> / Owner <strong>R {Math.round(Number(fixedSlot.owner_rate ?? 0)).toLocaleString('en-US')}</strong> / night. Platform earn = (Guest − Owner) ÷ 2.</span>
+          )}
+          <br />
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>The calculator below still applies standard margin maths — for Fixed properties, quote manually using the rates above until Phase 2 of this feature ships.</span>
+        </div>
+      )}
       {/* Context bar — channel pill + season selector */}
       <div className="detail-modal-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: 0 }}>
         <button
@@ -506,21 +581,30 @@ export default function PricingDashboard({
         </button>
         <div className="form-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="form-label" style={{ margin: 0 }}>Season</label>
-          <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value)}>
-            <option value="normal">Normal (base rate)</option>
-            {seasonTags.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name} (×{s.multiplier}){s.property_id ? ' — this property' : ''}
-              </option>
-            ))}
+          <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value as SeasonKey)}>
+            {SEASON_ORDER.map(k => {
+              const row = seasons.find(s => s.key === k);
+              if (!row) return null;
+              return (
+                <option key={k} value={k}>
+                  {row.name} (×{row.multiplier})
+                </option>
+              );
+            })}
           </select>
+          {seasonOverride != null && (
+            <span className="ops-status-pill ops-status-pill--ready" title={`Per-property override applied for ${selectedSeasonRow?.name}: R${seasonOverride.toLocaleString('en-US')}/night (otherwise auto-suggest would be R${Math.round((baseline?.daily_rate ?? 0) * seasonMultiplier).toLocaleString('en-US')})`}>
+              <span className="ops-status-pill-dot" />
+              Override
+            </span>
+          )}
         </div>
       </div>
 
       {/* Benchmark — read-only default for this channel + season */}
       <div className="detail-modal-section">
         <div className="detail-modal-section-heading">
-          Default · {channelLabel} · {selectedSeasonTag?.name ?? 'Normal'}
+          Default · {channelLabel} · {selectedSeasonRow?.name ?? 'Peak'}
         </div>
         {benchmark && (
           <BreakdownRows
