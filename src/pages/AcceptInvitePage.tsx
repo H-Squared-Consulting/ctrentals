@@ -117,7 +117,7 @@ export default function AcceptInvitePage() {
       <div className="login-page">
         <div className="login-card">
           <div className="login-header">
-            <h1>CT Rentals</h1>
+            <h1>Southern Escapes</h1>
             <p>Checking your invite…</p>
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}>
@@ -139,7 +139,7 @@ export default function AcceptInvitePage() {
       <div className="login-page">
         <div className="login-card">
           <div className="login-header">
-            <h1>CT Rentals</h1>
+            <h1>Southern Escapes</h1>
             <p>Admin Portal</p>
           </div>
           <div className="alert alert-error">{heading}</div>
@@ -164,7 +164,7 @@ export default function AcceptInvitePage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
-          <h1>CT Rentals</h1>
+          <h1>Southern Escapes</h1>
           <p>Set up your account</p>
         </div>
         <form onSubmit={handleSubmit}>

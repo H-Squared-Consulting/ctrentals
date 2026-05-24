@@ -115,7 +115,7 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <NavLink to="/dashboard" className="sidebar-brand-link">CT Rentals</NavLink>
+        <NavLink to="/dashboard" className="sidebar-brand-link">Southern Escapes</NavLink>
       </div>
 
       <nav className="sidebar-nav">

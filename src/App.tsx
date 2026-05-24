@@ -105,10 +105,10 @@ function ComingSoon() {
         Our new home is being built. For enquiries and reservations, please get in touch.
       </p>
       <a
-        href="mailto:info@ctrentals.co.za"
+        href="mailto:hayley@capetrentals.com"
         style={{ color: '#1E40AF', textDecoration: 'none', fontSize: '14px', fontWeight: 500 }}
       >
-        info@ctrentals.co.za
+        hayley@capetrentals.com
       </a>
     </div>
   );

@@ -9,7 +9,7 @@ function LoadingSpinner({ fullScreen = false }: LoadingSpinnerProps) {
     <div className={`loading-spinner ${fullScreen ? 'full-screen' : ''}`}>
       <div className="spinner" />
       {fullScreen && (
-        <p style={styles.branding}>CT Rentals</p>
+        <p style={styles.branding}>Southern Escapes</p>
       )}
     </div>
   );

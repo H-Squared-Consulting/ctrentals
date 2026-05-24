@@ -58,7 +58,7 @@ export default function SendProposalDialog({ proposal, supabase, onClose, onSent
 
   function sendWhatsApp() {
     const msg = encodeURIComponent(
-      `Hi ${proposal.guest_name.split(' ')[0]},\n\nHere is your property proposal from CT Rentals:\n${proposalUrl()}\n\nLet us know if you have any questions!`
+      `Hi ${proposal.guest_name.split(' ')[0]},\n\nHere is your property proposal from Southern Escapes:\n${proposalUrl()}\n\nLet us know if you have any questions!`
     );
     let phone = (proposal.guest_phone || '').replace(/[^0-9]/g, '');
     if (phone.startsWith('0')) phone = '27' + phone.slice(1);
@@ -67,9 +67,9 @@ export default function SendProposalDialog({ proposal, supabase, onClose, onSent
   }
 
   function sendEmail() {
-    const subject = encodeURIComponent(`CT Rentals — Property Proposal: ${proposal.property_name}`);
+    const subject = encodeURIComponent(`Southern Escapes: Property Proposal for ${proposal.property_name}`);
     const body = encodeURIComponent(
-      `Hi ${proposal.guest_name.split(' ')[0]},\n\nHere is your property proposal from CT Rentals:\n${proposalUrl()}\n\nLet us know if you have any questions!\n\nBest regards,\nCT Rentals`
+      `Hi ${proposal.guest_name.split(' ')[0]},\n\nHere is your property proposal from Southern Escapes:\n${proposalUrl()}\n\nLet us know if you have any questions!\n\nBest regards,\nSouthern Escapes`
     );
     window.open(`mailto:${proposal.guest_email || ''}?subject=${subject}&body=${body}`, '_blank');
     markSent().then(onSent);
