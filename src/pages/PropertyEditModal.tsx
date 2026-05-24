@@ -1406,7 +1406,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
 
       {sendingProposal && (
         <SendProposalDialog
-          proposal={{
+          proposals={[{
             id: sendingProposal.id,
             ref_code: sendingProposal.ref_code,
             property_name: property.property_name,
@@ -1414,7 +1414,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             guest_email: sendingProposal.guest_email,
             guest_phone: sendingProposal.guest_phone,
             is_agent: !!sendingProposal.is_agent,
-          }}
+          }]}
           supabase={supabase}
           onClose={() => setSendingProposal(null)}
           onSent={() => { setSendingProposal(null); refetchProposals(); }}

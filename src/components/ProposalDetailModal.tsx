@@ -14,9 +14,8 @@
 import { useEffect, useState } from 'react';
 import DetailModal, { DetailModalSection } from './DetailModal';
 import NightCount from './NightCount';
-import { useToast } from './ToastProvider';
 import { fmtRand } from '../lib/pricingEngine';
-import { notifyPipelineChanged } from '../lib/pipelineEvents';
+import { nightsBetween } from '../lib/nights';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -71,6 +70,12 @@ export interface ProposalForDetail {
   accepted_at: string | null;
   created_at: string;
   notes: string | null;
+  /** Parent enquiry's id + ref_code (from a join). Standalone proposals
+   *  raised without an enquiry have both null. Used to render a clickable
+   *  "From enquiry ENQ-…" handle in the subtitle that navigates to the
+   *  Proposals page filtered to this enquiry's siblings. */
+  enquiry_id?: string | null;
+  enquiry_ref_code?: string | null;
   /** From a pricing_proposals join — may be absent when no snapshot linked. */
   guest_price?: number | null;
   scenario_type?: string | null;
@@ -107,19 +112,33 @@ interface ProposalDetailModalProps {
   onClose: () => void;
   /** Called after any mutation (status change) so the host can refetch. */
   onChange?: () => void;
-  /** Opens the calculator pre-filled with this proposal's pricing snapshot. */
+  /** Opens the calculator pre-filled with this proposal's pricing snapshot.
+   *  Only shown in pre-send states (drafting/ready). Hidden once Sent. */
   onEditPricing?: () => void;
+  /** Continue button — opens the host's Send flow (SendProposalDialog).
+   *  Only shown in pre-send states. Hidden once Sent. */
+  onSend?: () => void;
+  /** Accept / Decline — only shown once the proposal is Sent. The host
+   *  is responsible for writing the new status and syncing the enquiry. */
+  onAccept?: () => void;
+  onDecline?: () => void;
+  /** Click handler for the "From enquiry ENQ-…" subtitle link. Hosts wire
+   *  this to navigate to the Proposals page filtered to this enquiry's
+   *  siblings (?enquiry=<id>). Omitted on standalone proposals. */
+  onOpenEnquiry?: (enquiryId: string) => void;
 }
 
 export default function ProposalDetailModal({
   proposal,
   supabase,
   onClose,
-  onChange,
+  onChange: _onChange,
   onEditPricing,
+  onSend,
+  onAccept,
+  onDecline,
+  onOpenEnquiry,
 }: ProposalDetailModalProps) {
-  const toast = useToast();
-  const [copied, setCopied] = useState(false);
 
   // Resolve agent ids → names so the breakdown can show each agent by
   // name rather than just their pct. JSONB on pricing_proposals only
@@ -141,48 +160,6 @@ export default function ProposalDetailModal({
     })();
     return () => { cancelled = true; };
   }, [proposal.agents, supabase]);
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(proposalUrl(proposal.ref_code));
-      setCopied(true);
-      toast.success('Link copied to clipboard');
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error('Could not copy to clipboard');
-    }
-  }
-
-  async function markSentIfDraft() {
-    if (proposal.status !== 'draft') return;
-    await supabase
-      .from('proposals')
-      .update({ status: 'sent', sent_at: new Date().toISOString() })
-      .eq('id', proposal.id);
-    notifyPipelineChanged();
-    onChange?.();
-  }
-
-  function sendWhatsApp() {
-    const url = proposalUrl(proposal.ref_code);
-    const msg = encodeURIComponent(
-      `Hi ${proposal.guest_name},\n\nHere is your property proposal from Southern Escapes:\n${url}\n\nLet us know if you have any questions!`
-    );
-    let phone = (proposal.guest_phone || '').replace(/[^0-9]/g, '');
-    if (phone.startsWith('0')) phone = '27' + phone.slice(1);
-    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
-    markSentIfDraft();
-  }
-
-  function sendEmail() {
-    const url = proposalUrl(proposal.ref_code);
-    const subject = encodeURIComponent(`Southern Escapes: Property Proposal for ${proposal.property_name || 'Property'}`);
-    const body = encodeURIComponent(
-      `Hi ${proposal.guest_name},\n\nHere is your property proposal from Southern Escapes:\n${url}\n\nLet us know if you have any questions!\n\nBest regards,\nSouthern Escapes`
-    );
-    window.open(`mailto:${proposal.guest_email || ''}?subject=${subject}&body=${body}`, '_blank');
-    markSentIfDraft();
-  }
 
   // Derive per-line pricing splits when a snapshot is linked.
   const ownerNet = proposal.owner_net != null ? Math.round(Number(proposal.owner_net)) : null;
@@ -208,13 +185,37 @@ export default function ProposalDetailModal({
       {proposal.check_in && proposal.check_out && (
         <span>· {fmtDate(proposal.check_in)} to {fmtDate(proposal.check_out)}<NightCount checkIn={proposal.check_in} checkOut={proposal.check_out} /></span>
       )}
+      {proposal.enquiry_ref_code && proposal.enquiry_id && onOpenEnquiry && (
+        // Click handle to jump to all proposals raised under the same
+        // enquiry. Standalone proposals (no enquiry_id) skip this entirely.
+        <span>
+          · From{' '}
+          <button
+            type="button"
+            className="ops-board-card-tag ops-board-card-tag--clickable"
+            onClick={() => onOpenEnquiry(proposal.enquiry_id!)}
+            title="Show all proposals from this enquiry"
+          >
+            {proposal.enquiry_ref_code} →
+          </button>
+        </span>
+      )}
       {proposal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
     </>
   );
 
+  // Footer changes shape based on the proposal's lifecycle stage. In the
+  // pre-send states (drafting/ready) the user is still authoring — they
+  // see Edit Pricing + Continue (Continue opens the Send dialog). Once
+  // Sent, those are gone and the user can only mark the outcome
+  // (Accepted / Declined). Closed states (accepted/declined) show no
+  // footer actions — the proposal is final.
+  const isSent = proposal.status === 'sent' || proposal.status === 'viewed' || proposal.status === 'interested';
+  const isPreSend = proposal.status === 'draft' || proposal.status === 'drafting' || proposal.status === 'ready';
+
   const footer = (
     <>
-      {onEditPricing && (
+      {isPreSend && onEditPricing && (
         <button
           className="btn btn-ghost"
           onClick={onEditPricing}
@@ -224,20 +225,31 @@ export default function ProposalDetailModal({
           💰 Edit Pricing
         </button>
       )}
-      <button className="btn btn-ghost" onClick={handleCopy}>
-        {copied ? '✓ Copied' : '🔗 Copy Link'}
-      </button>
-      <a className="btn btn-ghost" href={proposalUrl(proposal.ref_code)} target="_blank" rel="noopener noreferrer">
-        👁 Preview
-      </a>
-      {proposal.guest_phone && (
-        <button className="btn btn-outline-whatsapp" onClick={() => { sendWhatsApp(); onClose(); }}>
-          WhatsApp
+      {isPreSend && onSend && (
+        <button className="btn btn-primary" onClick={onSend}>
+          Continue →
         </button>
       )}
-      {proposal.guest_email && (
-        <button className="btn btn-outline" onClick={() => { sendEmail(); onClose(); }}>
-          Email
+      {isSent && onDecline && (
+        // Background colour mirrors the Declined column accent so the
+        // button visually signals the destination state.
+        <button
+          className="btn"
+          style={{ background: STATUS_ACCENT.declined, color: '#fff', border: 'none' }}
+          onClick={onDecline}
+        >
+          ✕ Mark Declined
+        </button>
+      )}
+      {isSent && onAccept && (
+        // Same idea — green Accepted accent makes the action's outcome
+        // unambiguous before the user commits.
+        <button
+          className="btn"
+          style={{ background: STATUS_ACCENT.accepted, color: '#fff', border: 'none' }}
+          onClick={onAccept}
+        >
+          ✓ Mark Accepted
         </button>
       )}
     </>
@@ -281,51 +293,76 @@ export default function ProposalDetailModal({
             : null
         }
       >
-        {guestPrice != null ? (
-          <>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>
-              {fmtRand(guestPrice)}
-              <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: 6 }}>/ night</span>
-            </div>
-            <div className="pricing-breakdown" style={{ fontSize: '0.8125rem' }}>
-              {ownerNet != null && (
-                <div className="pricing-breakdown-row">
-                  <span className="pricing-breakdown-label">Owner receives</span>
-                  <span className="pricing-breakdown-value">{fmtRand(ownerNet)}</span>
+        {guestPrice != null ? (() => {
+          // Stay totals — mirrors the CreateProposalModal Step 2 review
+          // panel so the user sees per-night and the full stay total
+          // (per-night × nights) side by side once dates are set. Breakdown
+          // rows scale to stay totals too. Display-only: the stored
+          // pricing_proposals snapshot keeps per-night rates for readers.
+          const stayNights = proposal.check_in && proposal.check_out
+            ? nightsBetween(proposal.check_in, proposal.check_out)
+            : null;
+          const stayTotal = stayNights && stayNights > 0 ? guestPrice * stayNights : null;
+          const scale = (n: number) => stayNights && stayNights > 0 ? n * stayNights : n;
+          return (
+            <>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>
+                {fmtRand(guestPrice)}
+                <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: 6 }}>/ night</span>
+              </div>
+              {stayNights != null && stayTotal != null && (
+                <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    Stay total · {stayNights} night{stayNights !== 1 ? 's' : ''}
+                  </span>
+                  <strong style={{ fontSize: '1.125rem' }}>{fmtRand(stayTotal)}</strong>
                 </div>
               )}
-              {ctrTake != null && (
-                <div className="pricing-breakdown-row">
-                  <span className="pricing-breakdown-label">CTR earns</span>
-                  <span className="pricing-breakdown-value">{fmtRand(ctrTake)}</span>
+              {stayNights != null && stayNights > 0 && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6, textAlign: 'right' }}>
+                  Totals for {stayNights} night{stayNights !== 1 ? 's' : ''}
                 </div>
               )}
-              {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (() => {
-                const splits = proposal.agents?.filter(a => !!a.id) || [];
-                const totalPct = splits.reduce((s, a) => s + (Number(a.pct) || 0), 0);
-                if (splits.length === 0 || totalPct <= 0) {
-                  return (
-                    <div className="pricing-breakdown-row">
-                      <span className="pricing-breakdown-label">Agent commission</span>
-                      <span className="pricing-breakdown-value">{fmtRand(agentTake)}</span>
-                    </div>
-                  );
-                }
-                return splits.map(sa => {
-                  const share = Math.round((Number(sa.pct) / totalPct) * agentTake);
-                  return (
-                    <div key={sa.id} className="pricing-breakdown-row">
-                      <span className="pricing-breakdown-label">
-                        {agentNames[sa.id] || 'Agent'} ({Number(sa.pct).toFixed(1)}%)
-                      </span>
-                      <span className="pricing-breakdown-value">{fmtRand(share)}</span>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </>
-        ) : (
+              <div className="pricing-breakdown" style={{ fontSize: '0.8125rem' }}>
+                {ownerNet != null && (
+                  <div className="pricing-breakdown-row">
+                    <span className="pricing-breakdown-label">Owner receives</span>
+                    <span className="pricing-breakdown-value">{fmtRand(scale(ownerNet))}</span>
+                  </div>
+                )}
+                {ctrTake != null && (
+                  <div className="pricing-breakdown-row">
+                    <span className="pricing-breakdown-label">CTR earns</span>
+                    <span className="pricing-breakdown-value">{fmtRand(scale(ctrTake))}</span>
+                  </div>
+                )}
+                {proposal.scenario_type === 'agent' && agentTake != null && agentTake > 0 && (() => {
+                  const splits = proposal.agents?.filter(a => !!a.id) || [];
+                  const totalPct = splits.reduce((s, a) => s + (Number(a.pct) || 0), 0);
+                  if (splits.length === 0 || totalPct <= 0) {
+                    return (
+                      <div className="pricing-breakdown-row">
+                        <span className="pricing-breakdown-label">Agent commission</span>
+                        <span className="pricing-breakdown-value">{fmtRand(scale(agentTake))}</span>
+                      </div>
+                    );
+                  }
+                  return splits.map(sa => {
+                    const share = Math.round((Number(sa.pct) / totalPct) * agentTake);
+                    return (
+                      <div key={sa.id} className="pricing-breakdown-row">
+                        <span className="pricing-breakdown-label">
+                          {agentNames[sa.id] || 'Agent'} ({Number(sa.pct).toFixed(1)}%)
+                        </span>
+                        <span className="pricing-breakdown-value">{fmtRand(scale(share))}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </>
+          );
+        })() : (
           <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
             No pricing snapshot linked. Use Edit Pricing to attach one.
           </div>

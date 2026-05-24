@@ -1678,13 +1678,20 @@ select.form-input { cursor: pointer; }
   color: var(--color-primary);
   white-space: nowrap;
 }
+/* Property name is visually distinct from the guest name above it —
+ * smaller, info-blue (a known platform accent), and prefixed by a 🏠
+ * marker added in JSX. Three signals (size, colour, icon) so a column of
+ * sibling proposals reads at a glance: same dark client headline, but
+ * different blue properties below it. */
 .ops-board-card-property {
   font-size: 0.75rem;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--info);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 1px;
+  margin-top: 2px;
+  margin-bottom: 4px;
 }
 .ops-board-card-meta {
   font-size: 0.6875rem;
@@ -1740,6 +1747,20 @@ select.form-input { cursor: pointer; }
 }
 .ops-board-card-tag--agent { background: #E0E7FF; color: #3730A3; }
 .ops-board-card-tag--viewed { background: var(--info-bg); color: var(--info); }
+/* Clickable variant — used when a tag drives a navigation/filter action.
+ * Adds cursor + a subtle hover so the user sees it's pressable rather
+ * than just a label. Border-none keeps the tag's flat look in the row. */
+button.ops-board-card-tag--clickable {
+  cursor: pointer;
+  border: none;
+  transition: filter 0.12s, transform 0.12s;
+}
+button.ops-board-card-tag--clickable:hover {
+  filter: brightness(0.93);
+}
+button.ops-board-card-tag--clickable:active {
+  transform: translateY(1px);
+}
 
 /* Small days-in-stage indicator that sits top-right on the card.
  * Subtle by default, becomes amber once a card has been sitting around. */
@@ -2094,6 +2115,11 @@ select.form-input { cursor: pointer; }
   background: var(--success-bg);
   border-color: #A7F3D0;
   color: #065F46;
+}
+.detail-modal-banner--info {
+  background: var(--info-bg);
+  border-color: #BFDBFE;
+  color: #1E40AF;
 }
 .detail-modal-section { margin-bottom: 14px; }
 .detail-modal-section:last-child { margin-bottom: 0; }

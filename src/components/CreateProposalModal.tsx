@@ -17,7 +17,9 @@ import ActionModal from './ActionModal';
 import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { fmtRand } from '../lib/pricingEngine';
+import { nightsBetween } from '../lib/nights';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
+import { syncEnquiryFromProposal } from '../lib/statusSync';
 import type { PricingSnapshot } from './PricingDashboard';
 
 interface GuestRow {
@@ -43,6 +45,19 @@ export interface EnquiryPrefill {
   check_out: string | null;
   guests_total: number | null;
   notes: string | null;
+  /** Agent-on-behalf enquiry flag + the disclosed-guest fields. When the
+   *  enquiry is from an agent and the underlying guest hasn't been
+   *  disclosed yet, guest_name will be null and we fall back to a
+   *  "Valued Guest" placeholder on the proposal — keeps the proposal
+   *  forwardable without baking the agent's identity into the greeting. */
+  is_agent?: boolean;
+  /** Set on agent-on-behalf enquiries — pre-selects this agent in the
+   *  PricingDashboard's agent dropdown so the user doesn't have to
+   *  re-pick the same person they already saved on the enquiry. */
+  agent_id?: string | null;
+  guest_name?: string | null;
+  guest_email?: string | null;
+  guest_phone?: string | null;
 }
 
 interface CreateProposalModalProps {
@@ -74,15 +89,32 @@ export default function CreateProposalModal({
 
   // Agent scenario: pre-fill recipient details from Settings → Agents.
   // The "guest" on an agent proposal is really the agent who'll forward it.
+  // A *specific* agent (agentContact set) overrides any enquiry-side
+  // recipient details — the agent IS the recipient on these proposals,
+  // not the guest the enquiry came from. A generic agent rate (no
+  // agentContact) falls back to the enquiry's details so a manually-
+  // entered "test"-style enquiry's recipient still seeds the form.
   const agentPrefill = snapshot.scenarioType === 'agent' ? snapshot.agentContact : null;
 
-  // Enquiry pre-fill takes precedence over agent contact when both exist
-  // (an agent-scenario proposal raised against an enquiry uses the
-  // enquiry's recipient details; the agent's contact still seeds the
-  // calculator's agent selection upstream).
-  const initialName = enquiryPrefill?.client_name || agentPrefill?.name || '';
-  const initialEmail = enquiryPrefill?.client_email || agentPrefill?.email || '';
-  const initialPhone = enquiryPrefill?.client_phone || '';
+  // Agent-on-behalf enquiry without a disclosed underlying guest: the
+  // proposal page's "Dear X," greeting can't be the agent's name (the
+  // agent will forward this to their guest). Default to a "Guest"
+  // placeholder so the public page reads "Dear Guest," — generic and
+  // forwardable. Once the agent shares the actual guest later, the
+  // cascade helper updates the proposal's guest_name in place.
+  const isAgentEnquiryNoGuest = !!enquiryPrefill?.is_agent && !enquiryPrefill?.guest_name;
+  const initialName = isAgentEnquiryNoGuest
+    ? 'Guest'
+    : (enquiryPrefill?.guest_name || agentPrefill?.name || enquiryPrefill?.client_name || '');
+  // Recipient email/phone always go to whoever we actually send to. For
+  // agent enquiries that's the agent (client_*); for direct it's the
+  // guest (client_* mirrors guest_*).
+  const initialEmail = enquiryPrefill?.is_agent
+    ? (enquiryPrefill?.client_email || agentPrefill?.email || '')
+    : (agentPrefill?.email || enquiryPrefill?.client_email || '');
+  const initialPhone = enquiryPrefill?.is_agent
+    ? (enquiryPrefill?.client_phone || agentPrefill?.phone || '')
+    : (agentPrefill?.phone || enquiryPrefill?.client_phone || '');
 
   const [guestName, setGuestName] = useState(initialName);
   const [guestEmail, setGuestEmail] = useState(initialEmail);
@@ -93,10 +125,11 @@ export default function CreateProposalModal({
   const [isAgent, setIsAgent] = useState(snapshot.scenarioType === 'agent');
   const [notes, setNotes] = useState(enquiryPrefill?.notes || '');
   const [saving, setSaving] = useState(false);
-  // Two-step wizard: 'review' shows the pricing for confirmation; 'details'
-  // collects guest info. The ladies need a visual breakpoint between "I've
-  // calculated this" and "I'm committing to a sendable proposal."
-  const [step, setStep] = useState<'review' | 'details'>('review');
+  // Two-step wizard: 'details' collects guest info first (incl. optional
+  // dates/guests), then 'review' confirms the pricing as the final pre-send
+  // gate — with stay total (per-night × nights) computed once dates are set
+  // so the user signs off on the actual stay cost, not just the per-night.
+  const [step, setStep] = useState<'details' | 'review'>('details');
 
   // ── Guest lookup state ──
   // selectedGuest is set once the user picks an existing guest (via search
@@ -254,12 +287,20 @@ export default function CreateProposalModal({
         guests_total: guestsTotal.trim() ? Number(guestsTotal) : null,
         check_in: checkIn || null,
         check_out: checkOut || null,
-        status: 'draft' as const,
+        status: 'drafting' as const,
         is_agent: isAgent,
         notes: notes.trim() || null,
       };
-      const propRes = await supabase.from('proposals').insert(proposalPayload);
+      const propRes = await supabase.from('proposals').insert(proposalPayload).select('id').single();
       if (propRes.error) throw propRes.error;
+      const newProposalId = propRes.data.id;
+
+      // Mirror the new proposal's status onto the enquiry's deal_status
+      // (1:1 case only). If this is a second proposal on the same enquiry,
+      // syncEnquiryFromProposal sees count > 1 and no-ops.
+      if (newProposalId) {
+        await syncEnquiryFromProposal(supabase, newProposalId, 'drafting');
+      }
 
       notifyPipelineChanged();
       toast.success(`Proposal ${refCode} created`);
@@ -277,8 +318,13 @@ export default function CreateProposalModal({
   const b = snapshot.breakdown;
 
   const propertyName = titleCase(property.property_name);
-  const stepNum = step === 'review' ? 1 : 2;
-  const stepTitle = step === 'review' ? 'Review pricing' : 'Recipient details';
+  const stepNum = step === 'details' ? 1 : 2;
+  const stepTitle = step === 'details' ? 'Recipient details' : 'Review pricing';
+
+  // Stay total — only meaningful when both dates are provided. If either
+  // is empty (agent quote with no dates) we show per-night only.
+  const stayNights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : null;
+  const stayTotal = stayNights && stayNights > 0 ? guestPrice * stayNights : null;
 
   return (
     <ActionModal
@@ -286,11 +332,15 @@ export default function CreateProposalModal({
       subtitle={<>Step {stepNum} of 2 · {propertyName}</>}
       width={620}
       onClose={onClose}
-      secondaryActions={step === 'details' ? (
-        <button className="btn btn-ghost" onClick={() => setStep('review')}>← Back</button>
+      secondaryActions={step === 'review' ? (
+        <button className="btn btn-ghost" onClick={() => setStep('details')}>← Back</button>
       ) : null}
-      primaryAction={step === 'review' ? (
-        <button className="btn btn-primary" onClick={() => setStep('details')}>
+      primaryAction={step === 'details' ? (
+        <button
+          className="btn btn-primary"
+          onClick={() => setStep('review')}
+          disabled={!guestName.trim()}
+        >
           Continue →
         </button>
       ) : (
@@ -315,29 +365,46 @@ export default function CreateProposalModal({
             <div className="pricing-price-sublabel">
               per night{snapshot.seasonTag ? ` · ${snapshot.seasonTag} season (×${snapshot.seasonMultiplier})` : ''}
             </div>
+            {stayNights != null && stayTotal != null && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                  Stay total · {stayNights} night{stayNights !== 1 ? 's' : ''}
+                </span>
+                <strong style={{ fontSize: '1.125rem' }}>{fmtRand(stayTotal)}</strong>
+              </div>
+            )}
           </div>
 
+          {/* When dates are known, scale the breakdown rows to stay totals
+              so the user signs off on what each party actually earns over
+              the stay, not per-night. Display-only — the saved pricing
+              snapshot still stores per-night rates for downstream readers. */}
+          {stayNights != null && stayNights > 0 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6, textAlign: 'right' }}>
+              Totals for {stayNights} night{stayNights !== 1 ? 's' : ''}
+            </div>
+          )}
           <div className="pricing-breakdown">
             <div className="pricing-breakdown-row">
               <span className="pricing-breakdown-label">Owner receives</span>
-              <span className="pricing-breakdown-value">{fmtRand(b.ownerNet)}</span>
+              <span className="pricing-breakdown-value">{fmtRand(stayNights != null && stayNights > 0 ? b.ownerNet * stayNights : b.ownerNet)}</span>
             </div>
             <div className="pricing-breakdown-row">
               <span className="pricing-breakdown-label">CTR earns</span>
-              <span className="pricing-breakdown-value pricing-breakdown-value--accent">{fmtRand(b.ctrTake)}</span>
+              <span className="pricing-breakdown-value pricing-breakdown-value--accent">{fmtRand(stayNights != null && stayNights > 0 ? b.ctrTake * stayNights : b.ctrTake)}</span>
             </div>
             {snapshot.scenarioType === 'agent' && b.agentTake > 0 && (
               <div className="pricing-breakdown-row">
                 <span className="pricing-breakdown-label">
                   Agent earns{snapshot.agentContact ? ` (${snapshot.agentContact.name})` : ''}
                 </span>
-                <span className="pricing-breakdown-value">{fmtRand(b.agentTake)}</span>
+                <span className="pricing-breakdown-value">{fmtRand(stayNights != null && stayNights > 0 ? b.agentTake * stayNights : b.agentTake)}</span>
               </div>
             )}
             {snapshot.scenarioType === 'platform' && b.platformFees > 0 && (
               <div className="pricing-breakdown-row pricing-breakdown-row--platform">
                 <span className="pricing-breakdown-label">Platform fee</span>
-                <span className="pricing-breakdown-value">{fmtRand(b.platformFees)}</span>
+                <span className="pricing-breakdown-value">{fmtRand(stayNights != null && stayNights > 0 ? b.platformFees * stayNights : b.platformFees)}</span>
               </div>
             )}
           </div>
@@ -351,9 +418,33 @@ export default function CreateProposalModal({
             <strong>{fmtRand(guestPrice)} / night</strong>
           </div>
 
+          {/* Agent context panel. When the proposal scenario is "agent" we
+              ALWAYS send the link to the agent — the underlying guest may
+              not even be known yet. This panel makes that explicit so the
+              user isn't confused about why the name field below says
+              "Guest" while the email is the agent's address. */}
+          {isAgent && (agentPrefill || enquiryPrefill?.client_email) && (
+            <div style={{ padding: '10px 14px', marginBottom: 14, background: 'var(--info-bg, #EFF6FF)', border: '1px solid var(--info)', borderRadius: 6, fontSize: '0.8125rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span className="form-label" style={{ margin: 0 }}>Sending to (agent)</span>
+                <strong>{agentPrefill?.name || enquiryPrefill?.client_name}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                <span>{agentPrefill?.email || enquiryPrefill?.client_email || '—'}</span>
+                <span>{agentPrefill?.phone || enquiryPrefill?.client_phone || ''}</span>
+              </div>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', marginTop: 6, fontStyle: 'italic' }}>
+                The greeting below is what the proposal page shows ("Dear &lt;name&gt;,"). Default is "Guest" — the agent forwards to their guest, so a generic greeting works either way. Override when you know the guest.
+              </div>
+            </div>
+          )}
+
           {/* Existing-guest lookup — sits above the editable fields so the
               user is gently nudged to link rather than re-type a known
-              contact. Free-text below still works if she ignores it. */}
+              contact. Free-text below still works if she ignores it.
+              Hidden for agent proposals: the recipient is the agent, not
+              a guest, and surfacing this search just confuses the role. */}
+          {!isAgent && (
           <div className="form-group">
             <label className="form-label">Existing guest? (optional)</label>
             <input
@@ -401,54 +492,69 @@ export default function CreateProposalModal({
               </div>
             )}
           </div>
+          )}
 
           <div className="form-group">
-            <label className="form-label">{isAgent ? 'Agent name' : 'Guest name'} *</label>
+            <label className="form-label">
+              {isAgent
+                ? 'Greeting name (shown on proposal as "Dear …,") *'
+                : 'Guest name *'}
+            </label>
             <input
               type="text"
               className="form-input"
               value={guestName}
               onChange={(e) => setGuestName(e.target.value)}
-              placeholder={isAgent ? 'e.g. Anneline Klaase' : 'e.g. Hayley Harrod'}
+              placeholder={isAgent ? 'Guest (or the actual guest name if disclosed)' : 'e.g. Hayley Harrod'}
               readOnly={isLocked}
               autoFocus
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Email</label>
-              <input
-                type="email"
-                className="form-input"
-                value={guestEmail}
-                onChange={(e) => setGuestEmail(e.target.value)}
-                onBlur={onEmailBlur}
-                placeholder="recipient@example.com"
-                readOnly={isLocked}
-              />
-              {emailMatch && !isLocked && (
-                <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--warning-bg)', borderRadius: 6, fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span>Email matches <strong>{titleCase(emailMatch.name)}</strong>.</span>
-                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => applyGuest(emailMatch)}>Link</button>
-                    <button type="button" className="btn btn-ghost" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => setEmailMatch(null)}>Use anyway</button>
+          {/* Email + Phone are user-editable for direct proposals (the
+              recipient IS the guest, so these are guest contact details).
+              For agent proposals they're locked to the agent's contact
+              and shown read-only in the "Sending to (agent)" panel above
+              — exposing them again here would let the user accidentally
+              overwrite the agent's address. The values still get saved
+              to proposals.guest_email/phone because that's where the
+              send actually goes. */}
+          {!isAgent && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  value={guestEmail}
+                  onChange={(e) => setGuestEmail(e.target.value)}
+                  onBlur={onEmailBlur}
+                  placeholder="recipient@example.com"
+                  readOnly={isLocked}
+                />
+                {emailMatch && !isLocked && (
+                  <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--warning-bg)', borderRadius: 6, fontSize: '0.8125rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span>Email matches <strong>{titleCase(emailMatch.name)}</strong>.</span>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => applyGuest(emailMatch)}>Link</button>
+                      <button type="button" className="btn btn-ghost" style={{ fontSize: '0.75rem', padding: '4px 10px' }} onClick={() => setEmailMatch(null)}>Use anyway</button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Phone</label>
+                <input
+                  type="tel"
+                  className="form-input"
+                  value={guestPhone}
+                  onChange={(e) => setGuestPhone(e.target.value)}
+                  placeholder="+27 …"
+                  readOnly={isLocked}
+                />
+              </div>
             </div>
-            <div className="form-group">
-              <label className="form-label">Phone</label>
-              <input
-                type="tel"
-                className="form-input"
-                value={guestPhone}
-                onChange={(e) => setGuestPhone(e.target.value)}
-                placeholder="+27 …"
-                readOnly={isLocked}
-              />
-            </div>
-          </div>
+          )}
 
           <div style={{ fontSize: '0.625rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginTop: 8, marginBottom: 6 }}>
             Optional. Only fill in if the recipient has dates or guest count in mind.

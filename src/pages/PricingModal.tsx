@@ -63,12 +63,15 @@ export default function PricingModal({
     setSaving(true);
     try {
       const b = snap.breakdown;
+      // pricing_proposals rows are immutable post-insert (enforced by DB
+      // trigger — only status / notes / expiry_date may change). To "edit"
+      // a saved snapshot we INSERT a fresh row with the new values and
+      // repoint the parent proposal(s) at it. The old row stays as an
+      // historical record of what was originally quoted.
       const payload = {
+        property_id: editPricingProposal.property_id,
         scenario_type: snap.scenarioType,
         agent_id: snap.agentId,
-        // Multi-agent split — Postgres JSONB column; pg-driver serialises
-        // the array straight through. Empty array for non-agent scenarios
-        // so stale data doesn't linger on the row.
         agents: snap.agents.map(a => ({ id: a.id, pct: a.pct })),
         channel_profile_id: snap.channelId,
         baseline_used: snap.baseline,
@@ -84,15 +87,27 @@ export default function PricingModal({
         owner_net: b.ownerNet,
         company_take: b.ctrTake,
         client_price_excl_vat: b.clientPriceExclVat,
+        vat_enabled: false,
+        vat_rate_pct: 0,
         vat_amount: 0,
         client_price_incl_vat: b.clientPriceExclVat,
-        updated_at: new Date().toISOString(),
+        status: 'draft' as const,
+        expiry_date: null,
+        notes: null,
       };
-      const { error } = await supabase
+      const { data: newSnap, error: insErr } = await supabase
         .from('pricing_proposals')
-        .update(payload)
-        .eq('id', editPricingProposal.id);
-      if (error) throw error;
+        .insert(payload)
+        .select('id')
+        .single();
+      if (insErr) throw insErr;
+
+      const { error: updErr } = await supabase
+        .from('proposals')
+        .update({ pricing_proposal_id: newSnap.id, updated_at: new Date().toISOString() })
+        .eq('pricing_proposal_id', editPricingProposal.id);
+      if (updErr) throw updErr;
+
       toast.success('Pricing updated — linked proposal reflects the new price.');
       onPricingSaved?.();
       onClose();
@@ -117,6 +132,11 @@ export default function PricingModal({
           property={property}
           supabase={supabase}
           initialSnapshot={editPricingProposal ?? null}
+          // Pre-select the agent who made the enquiry. Only fires when
+          // the enquiry is_agent and the user picks the 'agent' scenario
+          // in the dashboard. Without this the dropdown defaults to
+          // "(any agent)" — frustrating when we already know who.
+          initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
           onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
           actionLabel={isEdit ? 'Save pricing' : 'Create proposal from this'}
           saving={saving}
