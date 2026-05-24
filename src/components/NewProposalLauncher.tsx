@@ -36,13 +36,17 @@ interface Property {
 
 interface Props {
   onClose: () => void;
+  /** Fires when a proposal is actually created (distinct from onClose,
+   *  which also fires on cancel). Hosts swap their success-screen state
+   *  on this signal — see EnquiryForm. */
+  onCreated?: () => void;
   /** When supplied, the chosen property's PricingModal is opened with this
    *  enquiry pre-filled, and the resulting proposal links back to the
    *  enquiry. Used by the New Enquiry page's post-save CTA. */
   enquiryPrefill?: EnquiryPrefill | null;
 }
 
-export default function NewProposalLauncher({ onClose, enquiryPrefill }: Props) {
+export default function NewProposalLauncher({ onClose, onCreated, enquiryPrefill }: Props) {
   const { supabase } = useAuth();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,6 +100,7 @@ export default function NewProposalLauncher({ onClose, enquiryPrefill }: Props) 
         supabase={supabase}
         enquiryPrefill={enquiryPrefill}
         onClose={() => { setSelected(null); onClose(); }}
+        onCreated={onCreated}
       />
     );
   }

@@ -211,11 +211,24 @@ export default function CreateProposalModal({
     setSaving(true);
     try {
       // 0) Resolve the guest_id — link to existing or create a new row.
-      // If the user picked an existing guest via search or the email-blur
-      // prompt, we already have selectedGuest. Otherwise insert a new
-      // guests row from the entered name/email/phone so every proposal
-      // carries a guest_id (the workflow rebuild's CRM link).
+      // Priority:
+      //   a. User explicitly picked one via the search/email-match UI.
+      //   b. The entered email already matches a row (silent dedupe — the
+      //      partial UNIQUE index would reject the insert otherwise, and
+      //      the user shouldn't have to read a warning to avoid an error).
+      //   c. Insert a new guests row.
       let guestId: string | null = selectedGuest?.id ?? null;
+      const emailNormalized = guestEmail.trim().toLowerCase();
+      if (!guestId && emailNormalized) {
+        const { data: existing } = await supabase
+          .from('guests')
+          .select('id')
+          .eq('partner_id', CT_RENTALS_PARTNER_ID)
+          .ilike('email', emailNormalized)
+          .limit(1)
+          .maybeSingle();
+        if (existing?.id) guestId = existing.id;
+      }
       if (!guestId) {
         const guestInsert = await supabase
           .from('guests')

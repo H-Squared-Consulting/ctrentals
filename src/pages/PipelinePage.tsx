@@ -1183,7 +1183,11 @@ function DealCard({
         {wasViewed && <span className="ops-board-card-tag ops-board-card-tag--viewed">Viewed</span>}
       </div>
 
-      {featuredProperty && (
+      {/* Property line is only honest for 1-proposal enquiries — once
+          there are multiple, each can be on a different property and
+          showing only the first is misleading. The "N proposals" tag
+          above is the right summary at that point. */}
+      {featuredProperty && proposalCount <= 1 && (
         <div className="ops-board-card-property" title={featuredProperty}>🏠 {titleCase(featuredProperty)}</div>
       )}
 
