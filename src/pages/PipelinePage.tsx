@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DataTable, { StatusBadge } from '../components/DataTable';
@@ -34,6 +34,16 @@ import { nightsBetween } from '../lib/nights';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged, onPipelineChanged } from '../lib/pipelineEvents';
+import {
+  syncProposalFromEnquiry,
+  syncEnquiryFromProposal,
+  closeEnquiryOnProposalAccept,
+  maybeCloseEnquiryOnProposalDecline,
+  countLiveSiblings,
+  type DealStatus,
+  type ProposalStatus,
+} from '../lib/statusSync';
+import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
 
 // ─── Data shapes ────────────────────────────────────────────────────────
@@ -63,13 +73,23 @@ interface ProposalRow {
   owner_net: number | null;
   company_take: number | null;
   agents: Array<{ id: string; pct: number }> | null;
+  /** Parent enquiry context for the "From ENQ-…" link in the detail
+   *  modal. Both null for standalone proposals. */
+  enquiry_id: string | null;
+  enquiry_ref_code: string | null;
 }
 
 interface EnquirySide {
   id: string;
+  ref_code: string;
+  is_agent: boolean;
+  agent_id: string | null;
   client_name: string;
   client_email: string | null;
   client_phone: string | null;
+  guest_name: string | null;
+  guest_email: string | null;
+  guest_phone: string | null;
   check_in: string;
   check_out: string;
   bedrooms_needed: number;
@@ -110,29 +130,35 @@ interface Deal {
   is_agent: boolean;
 }
 
+/** Kanban columns. Three buckets — New (arrived, untouched), Open
+ *  (anything in flight: drafting/ready/sent/stalled/interested), and
+ *  Closed (won or lost). The underlying enquiries.deal_status enum still
+ *  carries the finer-grained internal stages; columnFor() maps them to
+ *  these three display buckets. Outcome buttons (Mark Booked / Mark
+ *  Lost) still write 'won' / 'lost' so the booking-creation flow keeps
+ *  working — the kanban just bundles both under Closed visually. */
 const STAGES = [
-  { key: 'new',        label: 'New',        description: 'Arrived, untouched',           emptyMsg: 'Nothing new' },
-  { key: 'drafting',   label: 'Drafting',   description: 'Proposal being written',       emptyMsg: 'No drafts in flight' },
-  { key: 'ready',      label: 'Ready',      description: 'Written, awaiting send',       emptyMsg: 'Nothing ready' },
-  { key: 'sent',       label: 'Sent',       description: 'Out with the client',          emptyMsg: 'Nothing awaiting response' },
-  { key: 'stalled',    label: 'Stalled',    description: '5+ days no client response',   emptyMsg: 'Nothing stalled' },
-  { key: 'interested', label: 'Interested', description: 'Client engaged, close it',     emptyMsg: 'No live leads' },
-  { key: 'won',        label: 'Won',        description: 'Booked',                       emptyMsg: 'No wins yet' },
-  { key: 'lost',       label: 'Lost',       description: 'Closed, not booked',           emptyMsg: 'No losses' },
+  { key: 'new',    label: 'New',    description: 'Arrived, untouched',          emptyMsg: 'Nothing new' },
+  { key: 'open',   label: 'Open',   description: 'Quoting, sent or awaiting',   emptyMsg: 'Nothing open' },
+  { key: 'closed', label: 'Closed', description: 'Booked or lost',              emptyMsg: 'Nothing closed' },
 ] as const;
 
-/** Top-border accent per stage. References CSS tokens defined in app.css
- *  so colour theming stays in one place if the brand palette shifts. */
 const STAGE_ACCENT: Record<string, string> = {
-  new:        'var(--info)',
-  drafting:   'var(--text-secondary)',
-  ready:      'var(--warning)',
-  sent:       'var(--info)',
-  stalled:    'var(--color-accent-warm)',
-  interested: 'var(--success)',
-  won:        'var(--color-primary)',
-  lost:       'var(--text-light)',
+  new:    'var(--info)',
+  open:   'var(--warning)',
+  closed: 'var(--text-light)',
 };
+
+/** Internal deal_status → display column. dealStage() still returns the
+ *  fine-grained value (so card logic — stale, viewed badges, primary
+ *  action — keeps working), but the kanban groups by columnFor(stage). */
+type DealStageInternal = 'new' | 'drafting' | 'ready' | 'sent' | 'stalled' | 'interested' | 'won' | 'lost';
+type ColumnKey = 'new' | 'open' | 'closed';
+function columnFor(stage: DealStageInternal): ColumnKey {
+  if (stage === 'new') return 'new';
+  if (stage === 'won' || stage === 'lost') return 'closed';
+  return 'open';
+}
 
 /** Cards are dense by default (two-row layout: client + price; dates +
  *  property + action). Once a column tips past this, switch to an even
@@ -198,7 +224,9 @@ const INACTIVE_PROPOSAL_STATUSES = new Set([
   'accepted', 'declined',                         // post-migration
 ]);
 
-type StageKey = typeof STAGES[number]['key'];
+/** Internal stage key — what dealStage() returns. Use ColumnKey for
+ *  display-column buckets and DealStageInternal for storage / write paths. */
+type StageKey = DealStageInternal;
 
 /** Derive which Kanban column the deal belongs in.
  *
@@ -209,9 +237,17 @@ type StageKey = typeof STAGES[number]['key'];
  * rebuild migration, so the visual result is the same before and after.
  */
 function dealStage(d: Deal): StageKey {
-  // 1. Stored deal_status takes priority once migration is applied.
+  // Stored deal_status is the internal vocabulary (new/drafting/ready/
+  // sent/stalled/interested/won/lost) — distinct from the display
+  // columns (new/open/closed). columnFor() maps the former onto the
+  // latter. We validate against the FULL internal vocab here so that
+  // 'won' / 'lost' are honoured even though the kanban doesn't have
+  // dedicated columns for them.
+  const STORED_VALID: Set<DealStageInternal> = new Set([
+    'new', 'drafting', 'ready', 'sent', 'stalled', 'interested', 'won', 'lost',
+  ]);
   const stored = d.enquiry?.deal_status;
-  if (stored && STAGES.some(s => s.key === stored)) {
+  if (stored && STORED_VALID.has(stored as DealStageInternal)) {
     return stored as StageKey;
   }
 
@@ -222,13 +258,16 @@ function dealStage(d: Deal): StageKey {
   // 3. Look at proposals.
   const active = d.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
 
-  // Standalone deals lose if their lone proposal is finished.
-  if (d.type === 'standalone' && active.length === 0) {
-    const onlyAccepted = d.proposals.some(p => p.status === 'accepted' || p.status === 'booked');
-    return onlyAccepted ? 'won' : 'lost';
+  // No active proposals — derive the terminal stage from what's on file.
+  // Any acceptance ⇒ won; otherwise lost. Standalone deals always hit
+  // this; enquiry-rooted deals where every proposal has gone terminal
+  // (e.g. accepted + auto-declined siblings) hit it too.
+  if (active.length === 0 && d.proposals.length > 0) {
+    const anyAccepted = d.proposals.some(p => p.status === 'accepted' || p.status === 'booked');
+    return anyAccepted ? 'won' : 'lost';
   }
 
-  // Enquiry-rooted with no active proposals: still waiting for someone
+  // Enquiry-rooted with no proposals at all: still waiting for someone
   // on our side to do something.
   if (active.length === 0) return 'new';
 
@@ -268,10 +307,15 @@ function prefillFromDeal(d: Deal): EnquiryPrefill | null {
     check_out: d.enquiry.check_out,
     guests_total: d.enquiry.guests_total,
     notes: d.enquiry.notes,
+    is_agent: d.enquiry.is_agent,
+    agent_id: d.enquiry.agent_id,
+    guest_name: d.enquiry.guest_name,
+    guest_email: d.enquiry.guest_email,
+    guest_phone: d.enquiry.guest_phone,
   };
 }
 
-function mapProposalRow(p: any): ProposalRow {
+function mapProposalRow(p: any, parentEnquiry?: { id: string; ref_code: string }): ProposalRow {
   return {
     id: p.id,
     ref_code: p.ref_code,
@@ -297,6 +341,8 @@ function mapProposalRow(p: any): ProposalRow {
     owner_net: p.pricing_proposals?.owner_net ?? null,
     company_take: p.pricing_proposals?.company_take ?? null,
     agents: p.pricing_proposals?.agents ?? null,
+    enquiry_id: parentEnquiry?.id ?? p.enquiry_id ?? null,
+    enquiry_ref_code: parentEnquiry?.ref_code ?? p.enquiries?.ref_code ?? null,
   };
 }
 
@@ -313,6 +359,7 @@ export default function PipelinePage() {
   // ?search=<client name> so the deal they care about pops out of the list.
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [search, setSearch] = useState(searchParams.get('search') || '');
 
   // Filter state. Two filters per page is the agreed placeholder pattern
@@ -360,7 +407,7 @@ export default function PipelinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageFromUrl]);
 
-  async function fetchDeals() {
+  async function fetchDeals(): Promise<Deal[]> {
     setLoading(true);
     const [enqRes, standaloneRes] = await Promise.all([
       // Enquiries with all their proposals + property + pricing joined.
@@ -384,9 +431,15 @@ export default function PipelinePage() {
       type: 'enquiry',
       enquiry: {
         id: e.id,
+        ref_code: e.ref_code,
+        is_agent: !!e.is_agent,
+        agent_id: e.agent_id ?? null,
         client_name: e.client_name,
         client_email: e.client_email,
         client_phone: e.client_phone,
+        guest_name: e.guest_name ?? null,
+        guest_email: e.guest_email ?? null,
+        guest_phone: e.guest_phone ?? null,
         check_in: e.check_in,
         check_out: e.check_out,
         bedrooms_needed: e.bedrooms_needed,
@@ -401,7 +454,7 @@ export default function PipelinePage() {
         deal_status: e.deal_status ?? null,
         created_at: e.created_at,
       },
-      proposals: (e.proposals || []).map(mapProposalRow),
+      proposals: (e.proposals || []).map((p: any) => mapProposalRow(p, { id: e.id, ref_code: e.ref_code })),
       client_name: e.client_name,
       client_email: e.client_email,
       client_phone: e.client_phone,
@@ -410,7 +463,10 @@ export default function PipelinePage() {
       guests_total: e.guests_total,
       created_at: e.created_at,
       manual_status: e.status,
-      is_agent: (e.proposals || []).some((p: any) => p.is_agent),
+      // Deal-level is_agent surfaces the Agent tag on cards. True when
+      // the enquiry was explicitly raised on behalf of a guest OR any
+      // existing proposal is agent-flagged (older data, pre-flag).
+      is_agent: !!e.is_agent || (e.proposals || []).some((p: any) => p.is_agent),
     }));
 
     const fromStandalone: Deal[] = (standaloneRes.data || []).map((p: any) => {
@@ -443,6 +499,7 @@ export default function PipelinePage() {
     });
     setDeals(merged);
     setLoading(false);
+    return merged;
   }
 
   useEffect(() => { if (supabase) fetchDeals(); }, [supabase]);
@@ -470,9 +527,10 @@ export default function PipelinePage() {
       });
     }
 
-    // Stage filter
+    // Stage filter — values are column keys (new/open/closed), so compare
+    // against the display column the deal lands in, not its internal stage.
     if (stageFilter) {
-      result = result.filter(d => dealStage(d) === stageFilter);
+      result = result.filter(d => columnFor(dealStage(d)) === stageFilter);
     }
 
     // Date filter
@@ -498,14 +556,10 @@ export default function PipelinePage() {
   }, [deals, search, stageFilter, dateFilter]);
 
   const byStage = useMemo(() => {
-    const map: Record<string, Deal[]> = {
-      new: [], drafting: [], ready: [], sent: [], stalled: [], interested: [], won: [], lost: [],
-    };
+    const map: Record<ColumnKey, Deal[]> = { new: [], open: [], closed: [] };
     for (const d of filtered) {
-      map[dealStage(d)].push(d);
+      map[columnFor(dealStage(d))].push(d);
     }
-    // Comparator helpers, used by both the smart-default sort and the
-    // per-column override sort.
     const byCheckIn = (a: Deal, b: Deal) => {
       if (!a.check_in && !b.check_in) return 0;
       if (!a.check_in) return 1;
@@ -518,37 +572,22 @@ export default function PipelinePage() {
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     const byClient = (a: Deal, b: Deal) =>
       (a.client_name || '').localeCompare(b.client_name || '');
-    const oldestDraftAt = (d: Deal) => {
-      const drafts = d.proposals
-        .filter(p => p.status === 'draft' || p.status === 'drafting')
-        .map(p => new Date(p.created_at).getTime());
-      return drafts.length ? Math.min(...drafts) : Number.POSITIVE_INFINITY;
-    };
 
-    // For each column, pick its sort: explicit override > smart default.
+    // Smart default per display column:
+    //   New    → oldest waiting (priority)
+    //   Open   → soonest check-in (the closing window matters more than age)
+    //   Closed → most recently closed first
     for (const stage of STAGES) {
       const sort = columnSort[stage.key] || 'smart';
-      const list = map[stage.key];
+      const list = map[stage.key as ColumnKey];
       if (sort === 'newest')           list.sort(byNewest);
       else if (sort === 'oldest')      list.sort(byOldest);
       else if (sort === 'check-in')    list.sort(byCheckIn);
       else if (sort === 'client')      list.sort(byClient);
       else {
-        // Smart default per stage:
-        //   New        → oldest waiting (priority)
-        //   Drafting   → oldest draft (lingered)
-        //   Ready      → oldest (don't pile up)
-        //   Sent       → soonest check-in (closing window)
-        //   Stalled    → oldest (most overdue first)
-        //   Interested → soonest check-in (close fast)
-        //   Won / Lost → recent first
-        if (stage.key === 'new')             list.sort(byOldest);
-        else if (stage.key === 'drafting')   list.sort((a, b) => oldestDraftAt(a) - oldestDraftAt(b));
-        else if (stage.key === 'ready')      list.sort(byOldest);
-        else if (stage.key === 'sent')       list.sort(byCheckIn);
-        else if (stage.key === 'stalled')    list.sort(byOldest);
-        else if (stage.key === 'interested') list.sort(byCheckIn);
-        else                                  list.sort(byNewest);
+        if (stage.key === 'new')         list.sort(byOldest);
+        else if (stage.key === 'open')   list.sort(byCheckIn);
+        else                              list.sort(byNewest);
       }
     }
     return map;
@@ -568,7 +607,11 @@ export default function PipelinePage() {
    *  open the quick Send dialog. If it has more, open the deal detail
    *  modal so the user picks which to send. */
   function startSend(d: Deal) {
-    const drafts = d.proposals.filter(p => p.status === 'draft');
+    // Tolerate both vocabularies: 'draft' (pre-workflow_rebuild) and
+    // 'drafting' (post). Without the second, a single freshly-created
+    // proposal would never short-circuit to the Send dialog and the user
+    // would always land on the deal modal instead.
+    const drafts = d.proposals.filter(p => p.status === 'draft' || p.status === 'drafting');
     if (drafts.length === 1) {
       setSendingProposal(drafts[0]);
     } else {
@@ -631,6 +674,9 @@ export default function PipelinePage() {
       const deal = deals.find(d => d.enquiry?.id === enquiryId);
       if (deal) await createBookingFromDeal(deal);
     }
+    // Mirror to the enquiry's sole proposal (1:1 case) so Mark Booked /
+    // Cancelled flips the proposal's status the same direction.
+    await syncProposalFromEnquiry(supabase, enquiryId, dealStatus as DealStatus);
     // Close the modal so the user sees the card slide to its new column,
     // the action feels definitive that way. They can reopen if they need to.
     setOpenDeal(null);
@@ -645,6 +691,9 @@ export default function PipelinePage() {
       .from('enquiries')
       .update({ deal_status: dealStatus, updated_at: new Date().toISOString() })
       .eq('id', enquiryId);
+    // Mirror onto the enquiry's sole proposal (1:1 case) so the user
+    // never has to update two surfaces.
+    await syncProposalFromEnquiry(supabase, enquiryId, dealStatus as DealStatus);
     setOpenDeal(null);
     notifyPipelineChanged();
   }
@@ -662,6 +711,49 @@ export default function PipelinePage() {
     }
     setOpenDeal(null);
     notifyPipelineChanged();
+  }
+
+  /** Mark a sent proposal as accepted or declined from the detail modal.
+   *  Cascade rules (see statusSync helpers + closeEnquiryOnProposalAccept):
+   *    Accept → enquiry closes as Won, sibling proposals auto-decline.
+   *    Decline → enquiry stays Open while other proposals are live;
+   *              closes as Lost only when this was the last live one.
+   *  Confirms before the cascading branch so the user knows what'll
+   *  happen to siblings / the parent deal. Single-proposal accepts
+   *  skip the prompt — there's nothing else to close.
+   */
+  async function markProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
+    const liveSiblings = await countLiveSiblings(supabase, p.id);
+
+    if (outcome === 'accepted' && liveSiblings > 0) {
+      const ok = window.confirm(
+        `Accepting this will close this enquiry and auto-decline the other ${liveSiblings} proposal${liveSiblings === 1 ? '' : 's'}. Continue?`,
+      );
+      if (!ok) return;
+    }
+    if (outcome === 'declined' && liveSiblings === 0) {
+      const ok = window.confirm(
+        'This is the last live proposal on the enquiry — declining will close the enquiry. Continue?',
+      );
+      if (!ok) return;
+    }
+
+    const patch: any = { status: outcome, updated_at: new Date().toISOString() };
+    if (outcome === 'accepted') patch.accepted_at = new Date().toISOString();
+    await supabase.from('proposals').update(patch).eq('id', p.id);
+
+    if (outcome === 'accepted') {
+      await closeEnquiryOnProposalAccept(supabase, p.id);
+    } else if (outcome === 'declined') {
+      await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
+    } else {
+      // Other outcomes (none today) — fall back to the 1:1 sync helper.
+      await syncEnquiryFromProposal(supabase, p.id, outcome);
+    }
+
+    setOpenProposal(null);
+    notifyPipelineChanged();
+    await fetchDeals();
   }
 
   // ── Render ──
@@ -777,7 +869,20 @@ export default function PipelinePage() {
           onUpdateStatus={updateEnquiryStatus}
           onUpdateProposalOutcome={updateProposalOutcome}
           onSetStage={updateDealStage}
-          onOpenProposal={setOpenProposal}
+          onOpenProposal={(p) => {
+            // Per-deal proposal click navigates to the Proposals page
+            // narrowed to this enquiry rather than opening the proposal
+            // detail in-place. Standalone proposals (no enquiry) fall back
+            // to the in-place modal — there's nothing meaningful to
+            // narrow to without an enquiry_id.
+            const eid = openDeal.deal.enquiry?.id;
+            if (eid) {
+              setOpenDeal(null);
+              navigate(`/operations/proposals?enquiry=${eid}`);
+            } else {
+              setOpenProposal(p);
+            }
+          }}
         />
       )}
 
@@ -799,9 +904,19 @@ export default function PipelinePage() {
               .eq('id', openProposal.pricing_proposal_id)
               .single();
             if (data) {
-              setEditPricingFor({ ...data, _propertyName: openProposal.property_name });
+              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id });
               setOpenProposal(null);
             }
+          }}
+          onSend={() => {
+            setSendingProposal(openProposal);
+            setOpenProposal(null);
+          }}
+          onAccept={() => markProposalOutcome(openProposal, 'accepted')}
+          onDecline={() => markProposalOutcome(openProposal, 'declined')}
+          onOpenEnquiry={(enquiryId) => {
+            setOpenProposal(null);
+            navigate(`/operations/proposals?enquiry=${enquiryId}`);
           }}
         />
       )}
@@ -812,7 +927,15 @@ export default function PipelinePage() {
           supabase={supabase}
           editPricingProposal={editPricingFor}
           onClose={() => setEditPricingFor(null)}
-          onPricingSaved={() => { setEditPricingFor(null); fetchDeals(); }}
+          onPricingSaved={async () => {
+            const reopenId = editPricingFor?._reopenProposalId;
+            setEditPricingFor(null);
+            const refreshed = await fetchDeals();
+            if (reopenId) {
+              const next = refreshed.flatMap(d => d.proposals).find(p => p.id === reopenId);
+              if (next) setOpenProposal(next);
+            }
+          }}
         />
       )}
 
@@ -834,10 +957,15 @@ export default function PipelinePage() {
       {/* Quick Send confirmation — moves the card to Sent on confirm */}
       {sendingProposal && (
         <SendProposalDialog
-          proposal={sendingProposal}
+          proposals={[sendingProposal]}
           supabase={supabase}
           onClose={() => setSendingProposal(null)}
           onSent={() => { setSendingProposal(null); fetchDeals(); }}
+          onBack={() => {
+            const row = sendingProposal;
+            setSendingProposal(null);
+            setOpenProposal(row);
+          }}
         />
       )}
 
@@ -1013,36 +1141,17 @@ function DealCard({
   const wasViewed = (stage === 'sent' || stage === 'stalled') &&
     deal.proposals.some(p => p.status === 'viewed' || p.viewed_at);
 
-  // Card primary action depends on stage:
-  //   New        → "Create Proposal" (opens the quote flow)
-  //   Drafting / Ready → "Send proposal" (drives the deal toward Sent)
-  //   Sent / Stalled / Interested → "+ Add proposal" (secondary action)
-  //   Won / Lost → no primary (closed)
-  const draftCount = deal.proposals.filter(p =>
-    p.status === 'draft' || p.status === 'drafting'
-  ).length;
-  let primary: { label: string; onClick: () => void } | null = null;
-  if (!isClosed) {
-    if (stage === 'new') {
-      primary = { label: '📝 Create Proposal', onClick: () => onQuote(deal) };
-    } else if (stage === 'drafting' || stage === 'ready') {
-      primary = {
-        label: draftCount > 1 ? `📤 Send proposals (${draftCount})` : '📤 Send proposal',
-        onClick: () => onSend(deal),
-      };
-    } else {
-      // sent / stalled / interested
-      primary = { label: '+ Add proposal', onClick: () => onQuote(deal) };
-    }
-  }
-
+  // No primary action button on the card itself any more — the card is
+  // purely informational. Click to open the deal modal where Create /
+  // Add Proposal, Mark Booked, etc. all live in the footer.
+  //
   // Pick the proposal to feature in the card headline — prefer an active
   // one, fall back to whatever's first. Standalone deals only ever have one
   // proposal, so this is a no-op for them.
   const featured = deal.proposals.find(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status)) || deal.proposals[0] || null;
   const featuredPrice = featured?.guest_price ?? null;
   const featuredProperty = featured?.property_name;
-  const extraProposals = Math.max(0, deal.proposals.length - 1);
+  const proposalCount = deal.proposals.length;
 
   return (
     <div
@@ -1053,35 +1162,35 @@ function DealCard({
         <span className="ops-board-card-client" title={deal.client_name}>
           {titleCase(deal.client_name)}
         </span>
-        {featuredPrice != null ? (
-          <span className="ops-board-card-amount">{fmtRand(featuredPrice)}</span>
-        ) : (
-          <span
-            className="ops-board-card-amount"
-            style={{ color: 'var(--text-light)' }}
-            title={deal.type === 'standalone' ? 'Standalone proposal, no enquiry' : 'From enquiry'}
-          >
-            {deal.type === 'standalone' ? '★' : '✉'}
-          </span>
-        )}
+        {/* Top-right slot now carries the enquiry's stable ref_code
+            (or the standalone proposal's CTR-… when there's no parent
+            enquiry). Replaces the headline price, which was misleading
+            on multi-proposal enquiries — different proposals can quote
+            different prices, so any single number was stale by design. */}
+        <span
+          className="ops-board-card-ref"
+          title={deal.enquiry?.ref_code ? `Enquiry ${deal.enquiry.ref_code}` : 'Standalone proposal'}
+        >
+          {deal.enquiry?.ref_code ?? deal.proposals[0]?.ref_code ?? ''}
+        </span>
       </div>
 
-      {(deal.is_agent || wasViewed) && (
-        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-          {deal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
-          {wasViewed && <span className="ops-board-card-tag ops-board-card-tag--viewed">Viewed</span>}
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+        <span className="ops-board-card-tag">
+          {proposalCount} proposal{proposalCount === 1 ? '' : 's'}
+        </span>
+        {deal.is_agent && <span className="ops-board-card-tag ops-board-card-tag--agent">Agent</span>}
+        {wasViewed && <span className="ops-board-card-tag ops-board-card-tag--viewed">Viewed</span>}
+      </div>
 
       {featuredProperty && (
-        <div className="ops-board-card-property" title={featuredProperty}>{titleCase(featuredProperty)}</div>
+        <div className="ops-board-card-property" title={featuredProperty}>🏠 {titleCase(featuredProperty)}</div>
       )}
 
       <div className="ops-board-card-meta">
         {deal.check_in && deal.check_out
           ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
           : <span style={{ fontStyle: 'italic' }}>No dates</span>}
-        {extraProposals > 0 && <span>· +{extraProposals} more</span>}
         <span style={{ flex: 1 }} />
         {(() => {
           const days = daysSince(deal.created_at);
@@ -1092,16 +1201,6 @@ function DealCard({
         })()}
       </div>
 
-      {primary && (
-        <div className="ops-board-card-actions">
-          <button
-            className="ops-board-action ops-board-action--primary"
-            onClick={stop(primary.onClick)}
-          >
-            {primary.label}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1207,9 +1306,10 @@ function TableView({ deals, loading, onOpen }: { deals: Deal[]; loading: boolean
       key: 'stage', label: 'Stage', align: 'center' as const, sortable: true,
       render: (row: DataRow) => {
         const r = row as TableRow;
-        const label = STAGES.find(s => s.key === r.stage)?.label || r.stage;
+        const col = columnFor(r.stage as DealStageInternal);
+        const label = STAGES.find(s => s.key === col)?.label || col;
         return (
-          <span className={`ops-status-pill ops-status-pill--${r.stage}`}>
+          <span className={`ops-status-pill ops-status-pill--${col}`}>
             <span className="ops-status-pill-dot" />
             {label}
           </span>
@@ -1304,6 +1404,13 @@ function DealDetailModal({
     budget_min: e?.budget_min ?? null,
     budget_max: e?.budget_max ?? null,
     notes: e?.notes ?? standaloneProp?.notes ?? '',
+    // Agent enquiries only — captured/edited in the "Guest" section
+    // below. Saving these triggers a cascade to all linked proposals so
+    // the proposal page personalisation flips from "Dear Guest" to the
+    // disclosed guest's name.
+    guest_name: e?.guest_name ?? '',
+    guest_email: e?.guest_email ?? '',
+    guest_phone: e?.guest_phone ?? '',
   }), [deal.key]);
   const [form, setForm] = useState(initialForm);
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
@@ -1323,6 +1430,14 @@ function DealDetailModal({
 
   async function save() {
     if (e) {
+      // For direct (non-agent) enquiries, mirror client_* into guest_* on
+      // save so the "guest_* is the underlying guest" convention stays
+      // honest. For agent enquiries, guest_* is captured separately in
+      // its own section and may be empty (cascade no-ops in that case).
+      const guestName  = e.is_agent ? (form.guest_name  || null) : (form.client_name);
+      const guestEmail = e.is_agent ? (form.guest_email || null) : (form.client_email || null);
+      const guestPhone = e.is_agent ? (form.guest_phone || null) : (form.client_phone || null);
+
       await supabase.from('enquiries').update({
         client_name: form.client_name,
         client_email: form.client_email || null,
@@ -1335,8 +1450,46 @@ function DealDetailModal({
         budget_min: form.budget_min,
         budget_max: form.budget_max,
         notes: form.notes || null,
+        guest_name: guestName,
+        guest_email: guestEmail,
+        guest_phone: guestPhone,
         updated_at: new Date().toISOString(),
       }).eq('id', e.id);
+
+      // Cascade disclosed guest details to all linked proposals so the
+      // public proposal page personalises correctly ("Dear Sarah,"
+      // instead of "Dear Guest,"). Only fires when guest_name was
+      // changed from the initial form snapshot. For direct enquiries
+      // this is a no-op-ish (guest_name == client_name == what the
+      // proposal already has).
+      if (e.is_agent && guestName && guestName !== initialForm.guest_name) {
+        await supabase
+          .from('proposals')
+          .update({
+            guest_name: guestName,
+            guest_email: guestEmail,
+            guest_phone: guestPhone,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('enquiry_id', e.id);
+      }
+
+      // CRM auto-link: when guest details land for the first time (or
+      // change), ensure a guests row exists and that the enquiry points
+      // at it. Silent on failure — don't block the save UX.
+      if (guestName || guestEmail) {
+        try {
+          await linkOrCreateGuestForEnquiry(supabase, {
+            enquiryId: e.id,
+            partnerId: CT_RENTALS_PARTNER_ID,
+            guestName: guestName,
+            guestEmail: guestEmail,
+            guestPhone: guestPhone,
+          });
+        } catch (err) {
+          console.error('Guest CRM link failed (non-blocking):', err);
+        }
+      }
     } else if (standaloneProp) {
       await supabase.from('proposals').update({
         guest_name: form.client_name,
@@ -1369,12 +1522,16 @@ function DealDetailModal({
 
   const title = titleCase(form.client_name) || (deal.type === 'standalone' ? 'Standalone proposal' : 'Deal');
   const stage = dealStage(deal);
-  const accentColour = STAGE_ACCENT[stage] ?? 'var(--text-light)';
-  const stageLabel = STAGES.find(s => s.key === stage)?.label ?? stage;
+  const col = columnFor(stage);
+  const accentColour = STAGE_ACCENT[col] ?? 'var(--text-light)';
+  const stageLabel = STAGES.find(s => s.key === col)?.label ?? col;
 
   const subtitle = (
     <>
       <span>Stage: <strong style={{ color: 'var(--text)' }}>{stageLabel}</strong></span>
+      {deal.enquiry?.ref_code && (
+        <span>· <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{deal.enquiry.ref_code}</span></span>
+      )}
       {deal.type === 'standalone' && <span>· standalone proposal</span>}
       {deal.check_in && deal.check_out && (
         <span>· {fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
@@ -1386,9 +1543,19 @@ function DealDetailModal({
     ? <span className="detail-modal-mode-badge detail-modal-mode-badge--closed">{stageLabel}</span>
     : undefined;
 
+  // Banners: closed-deal notice wins (terminal state, more important to
+  // surface). Otherwise, when proposals exist, point the user at the
+  // Proposals page where they're actually managed — keeps the deal modal
+  // focused on client/stay data rather than per-proposal actions.
+  const hasProposals = deal.proposals.length > 0;
   const banner = isClosed ? (
     <div className="detail-modal-banner detail-modal-banner--success">
       This deal is <strong>{stageLabel}</strong>. Use Reopen below to make changes.
+    </div>
+  ) : hasProposals ? (
+    <div className="detail-modal-banner detail-modal-banner--info">
+      {deal.proposals.length} proposal{deal.proposals.length === 1 ? '' : 's'} on this deal —
+      manage them on the <strong>Proposals page</strong>. Click any proposal below to jump there.
     </div>
   ) : undefined;
 
@@ -1398,10 +1565,11 @@ function DealDetailModal({
         📝 {deal.proposals.length === 0 ? 'Create Proposal' : 'Add another proposal'}
       </button>
       {!isClosed && e && (
-        // Manual stage move for the in-between columns the auto-move can't
-        // reliably reach (Drafting/Ready/Sent/Stalled/Interested). Won/Lost
-        // stay on their dedicated buttons because Mark Booked also creates
-        // a booking row, that's more than a status change.
+        // Context-aware stage move. From New the user can advance to
+        // Open or jump straight to Closed; from Open the only valid
+        // forward move is Closed. "Closed" writes 'lost' (the default
+        // terminal state — Mark Booked is the dedicated 'won' path
+        // because it also creates a booking row).
         <select
           className="list-filter-select"
           value=""
@@ -1409,11 +1577,8 @@ function DealDetailModal({
           title="Move this deal to a different column"
         >
           <option value="" disabled>Set stage…</option>
-          <option value="drafting">Drafting</option>
-          <option value="ready">Ready</option>
-          <option value="sent">Sent</option>
-          <option value="stalled">Stalled</option>
-          <option value="interested">Interested</option>
+          {col === 'new' && <option value="drafting">Open</option>}
+          <option value="lost">Closed</option>
         </select>
       )}
       {!isClosed && (
@@ -1463,98 +1628,171 @@ function DealDetailModal({
       footerHint={footerHint}
       onClose={onClose}
     >
-      <DetailModalSection heading="Client details">
-        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
-          <div className="form-grid-2">
-            <div className="form-group">
-              <label className="form-label">Client name</label>
-              <input className="form-input" value={form.client_name} onChange={ev => update('client_name', ev.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Email</label>
-              <input type="email" className="form-input" value={form.client_email} onChange={ev => update('client_email', ev.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Phone</label>
-              <input className="form-input" value={form.client_phone} onChange={ev => update('client_phone', ev.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Nationality</label>
-              <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} />
-            </div>
-          </div>
-        </fieldset>
-      </DetailModalSection>
-
-      <DetailModalSection heading="Stay details">
-        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
-          <div className="form-grid-2">
-            <div className="form-group">
-              <label className="form-label">Check-in</label>
-              <input type="date" className="form-input" value={form.check_in || ''} onChange={ev => update('check_in', ev.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Check-out</label>
-              <input type="date" className="form-input" value={form.check_out || ''} onChange={ev => update('check_out', ev.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Guests</label>
-              <input type="number" min={1} className="form-input" value={form.guests_total ?? ''} onChange={ev => update('guests_total', ev.target.value ? Number(ev.target.value) : null)} />
-            </div>
-            {e && (
-              <div className="form-group">
-                <label className="form-label">Bedrooms needed</label>
-                <input type="number" min={0} className="form-input" value={form.bedrooms_needed ?? ''} onChange={ev => update('bedrooms_needed', ev.target.value ? Number(ev.target.value) : null)} />
-              </div>
-            )}
-            {e && (
-              <>
-                <div className="form-group">
-                  <label className="form-label">Budget min</label>
-                  <input type="number" className="form-input" value={form.budget_min ?? ''} onChange={ev => update('budget_min', ev.target.value ? Number(ev.target.value) : null)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Budget max</label>
-                  <input type="number" className="form-input" value={form.budget_max ?? ''} onChange={ev => update('budget_max', ev.target.value ? Number(ev.target.value) : null)} />
-                </div>
-              </>
-            )}
-          </div>
-          <div className="form-group" style={{ marginTop: 4 }}>
-            <label className="form-label">Notes</label>
-            <textarea className="form-input" rows={3} value={form.notes} onChange={ev => update('notes', ev.target.value)} />
-          </div>
-        </fieldset>
-      </DetailModalSection>
-
-      <DetailModalSection heading="Proposals" headingRight={deal.proposals.length || null}>
-        {deal.proposals.length === 0 ? (
-          <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No proposals yet. Use "Create Proposal" below to add one for this client.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {deal.proposals.map(p => (
-              <button
-                key={p.id}
-                onClick={() => onOpenProposal(p)}
-                className="editor-list-row"
-                style={{ cursor: 'pointer', background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'left' }}
-              >
-                <div className="editor-list-main">
-                  <div className="editor-list-title">{titleCase(p.property_name)}</div>
-                  <div className="editor-list-sub">
-                    {p.guest_price != null ? <><strong>{fmtRand(p.guest_price)}</strong> / night</> : 'No pricing'}
-                    {p.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {p.scenario_type}</span>}
-                    <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: '0.6875rem', color: 'var(--text-light)' }}>{p.ref_code}</span>
+      {/* Section ordering is hasProposals-driven: when the deal has at
+          least one proposal, surface them first (that's what the user
+          most likely came here for). Otherwise fall back to the original
+          Client → Stay → Proposals(empty) order so the New-stage card
+          editor still feels like a data form. */}
+      {(() => {
+        const clientSection = (
+          // For agent enquiries: split the section into two — the agent
+          // (read-only, source-of-truth in Settings → Agents) and the
+          // underlying guest (editable, may start empty, gets disclosed
+          // later). Direct enquiries keep the single "Client details"
+          // section since the recipient IS the guest.
+          e?.is_agent ? (
+            <>
+              <DetailModalSection heading="Agent (recipient)" headingRight={<span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>edit in Settings → Agents</span>}>
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Name</label>
+                    <input className="form-input" value={form.client_name} disabled readOnly />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input className="form-input" value={form.client_email} disabled readOnly />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" value={form.client_phone} disabled readOnly />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Nationality</label>
+                    <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} disabled={fieldsDisabled} />
                   </div>
                 </div>
-                <StatusBadge status={p.status} config={PROPOSAL_STATUS_CONFIG} />
-              </button>
-            ))}
-          </div>
-        )}
-      </DetailModalSection>
+              </DetailModalSection>
+              <DetailModalSection
+                heading="Guest"
+                headingRight={!form.guest_name && <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>not disclosed yet</span>}
+              >
+                <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+                  <div className="form-grid-2">
+                    <div className="form-group">
+                      <label className="form-label">Guest name</label>
+                      <input className="form-input" value={form.guest_name} onChange={ev => update('guest_name', ev.target.value)} placeholder="e.g. Sarah Whitmore" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Guest email</label>
+                      <input type="email" className="form-input" value={form.guest_email} onChange={ev => update('guest_email', ev.target.value)} placeholder="guest@example.com" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Guest phone</label>
+                      <input className="form-input" value={form.guest_phone} onChange={ev => update('guest_phone', ev.target.value)} placeholder="+27 …" />
+                    </div>
+                  </div>
+                  {fieldsDisabled && !form.guest_name && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4, fontStyle: 'italic' }}>
+                      Click Edit and fill in the guest's details when the agent shares them — linked proposals will update automatically.
+                    </div>
+                  )}
+                </fieldset>
+              </DetailModalSection>
+            </>
+          ) : (
+            <DetailModalSection heading="Client details">
+              <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Client name</label>
+                    <input className="form-input" value={form.client_name} onChange={ev => update('client_name', ev.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input type="email" className="form-input" value={form.client_email} onChange={ev => update('client_email', ev.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" value={form.client_phone} onChange={ev => update('client_phone', ev.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Nationality</label>
+                    <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} />
+                  </div>
+                </div>
+              </fieldset>
+            </DetailModalSection>
+          )
+        );
+
+        const staySection = (
+          <DetailModalSection heading="Stay details">
+            <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+              <div className="form-grid-2">
+                <div className="form-group">
+                  <label className="form-label">Check-in</label>
+                  <input type="date" className="form-input" value={form.check_in || ''} onChange={ev => update('check_in', ev.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Check-out</label>
+                  <input type="date" className="form-input" value={form.check_out || ''} onChange={ev => update('check_out', ev.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Guests</label>
+                  <input type="number" min={1} className="form-input" value={form.guests_total ?? ''} onChange={ev => update('guests_total', ev.target.value ? Number(ev.target.value) : null)} />
+                </div>
+                {e && (
+                  <div className="form-group">
+                    <label className="form-label">Bedrooms needed</label>
+                    <input type="number" min={0} className="form-input" value={form.bedrooms_needed ?? ''} onChange={ev => update('bedrooms_needed', ev.target.value ? Number(ev.target.value) : null)} />
+                  </div>
+                )}
+                {e && (
+                  <>
+                    <div className="form-group">
+                      <label className="form-label">Budget min</label>
+                      <input type="number" className="form-input" value={form.budget_min ?? ''} onChange={ev => update('budget_min', ev.target.value ? Number(ev.target.value) : null)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Budget max</label>
+                      <input type="number" className="form-input" value={form.budget_max ?? ''} onChange={ev => update('budget_max', ev.target.value ? Number(ev.target.value) : null)} />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="form-group" style={{ marginTop: 4 }}>
+                <label className="form-label">Notes</label>
+                <textarea className="form-input" rows={3} value={form.notes} onChange={ev => update('notes', ev.target.value)} />
+              </div>
+            </fieldset>
+          </DetailModalSection>
+        );
+
+        const proposalsSection = (
+          <DetailModalSection heading="Proposals" headingRight={deal.proposals.length || null}>
+            {deal.proposals.length === 0 ? (
+              <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                No proposals yet. Use "Create Proposal" below to add one for this client.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {deal.proposals.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => onOpenProposal(p)}
+                    className="editor-list-row"
+                    style={{ cursor: 'pointer', background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'left' }}
+                  >
+                    <div className="editor-list-main">
+                      <div className="editor-list-title">{titleCase(p.property_name)}</div>
+                      <div className="editor-list-sub">
+                        {p.guest_price != null ? <><strong>{fmtRand(p.guest_price)}</strong> / night</> : 'No pricing'}
+                        {p.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {p.scenario_type}</span>}
+                        <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: '0.6875rem', color: 'var(--text-light)' }}>{p.ref_code}</span>
+                      </div>
+                    </div>
+                    <StatusBadge status={p.status} config={PROPOSAL_STATUS_CONFIG} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </DetailModalSection>
+        );
+
+        return hasProposals
+          ? <>{proposalsSection}{clientSection}{staySection}</>
+          : <>{clientSection}{staySection}{proposalsSection}</>;
+      })()}
     </DetailModal>
   );
 }

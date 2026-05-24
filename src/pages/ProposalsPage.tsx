@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DataTable from '../components/DataTable';
@@ -18,18 +19,32 @@ import type { DataRow } from '../components/DataTable';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import NightCount from '../components/NightCount';
 import ProposalDetailModal, { type ProposalForDetail } from '../components/ProposalDetailModal';
+import SendProposalDialog, { type SendableProposal } from '../components/SendProposalDialog';
 import PricingModal from './PricingModal';
+import {
+  syncEnquiryFromProposal,
+  closeEnquiryOnProposalAccept,
+  maybeCloseEnquiryOnProposalDecline,
+  countLiveSiblings,
+  type ProposalStatus,
+} from '../lib/statusSync';
+import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { nightsBetween } from '../lib/nights';
 
 interface ProposalRow extends ProposalForDetail {
   property_name: string;
   decline_reason: string | null;
+  /** Carrier for the per-enquiry view ("show only proposals from this
+   *  enquiry" deep-link from the Pipeline page). Null for standalone
+   *  proposals raised without a parent enquiry. enquiry_ref_code is the
+   *  human-readable handle surfaced in the detail modal subtitle. */
+  enquiry_id: string | null;
+  enquiry_ref_code: string | null;
 }
 
 const COLUMNS = [
   { key: 'drafting', label: 'Drafting', description: 'Being written',          emptyMsg: 'No drafts' },
-  { key: 'ready',    label: 'Ready',    description: 'Awaiting send',          emptyMsg: 'Nothing ready' },
   { key: 'sent',     label: 'Sent',     description: 'Out with the client',    emptyMsg: 'Nothing awaiting response' },
   { key: 'accepted', label: 'Accepted', description: 'Client said yes',        emptyMsg: 'No acceptances yet' },
   { key: 'declined', label: 'Declined', description: 'Closed without booking', emptyMsg: 'No declines' },
@@ -37,20 +52,22 @@ const COLUMNS = [
 
 const COLUMN_ACCENT: Record<string, string> = {
   drafting: 'var(--text-secondary)',
-  ready:    'var(--warning)',
   sent:     'var(--info)',
   accepted: 'var(--success)',
   declined: 'var(--text-light)',
 };
 
-/** Map any proposal status (legacy or new) to one of the five columns. */
+/** Map any proposal status (legacy or new) to one of the four columns.
+ *  'ready' is folded into 'drafting' — Ready was retired from the kanban
+ *  since writing-and-sending is one step in practice. Any historical
+ *  proposals still sitting on status='ready' surface under Drafting so
+ *  they don't disappear from view. */
 function columnFor(status: string): string {
   switch (status) {
     case 'draft':
     case 'drafting':
-      return 'drafting';
     case 'ready':
-      return 'ready';
+      return 'drafting';
     case 'sent':
     case 'viewed':
     case 'interested':
@@ -103,12 +120,74 @@ function fmtDateLong(d: string | null) {
 export default function ProposalsPage() {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
+  const [searchParams, setSearchParams] = useSearchParams();
+  /** When a user clicks "View proposals" on a Pipeline enquiry card, we
+   *  deep-link here with ?enquiry=<id>. The page narrows to just that
+   *  enquiry's proposals plus a banner to clear the filter. */
+  const enquiryFilter = searchParams.get('enquiry');
   const [proposals, setProposals] = useState<ProposalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'board' | 'list'>('board');
   const [search, setSearch] = useState('');
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
+  /** Send-flow modal — opened from the detail modal's Continue button.
+   *  All cards route through detail first; Continue leads here. */
+  const [sendingProposal, setSendingProposal] = useState<SendableProposal | null>(null);
+
+  /** Write the chosen outcome on the proposal then cascade:
+   *    Accept → enquiry closes, sibling proposals auto-decline.
+   *    Decline → enquiry stays Open until the last live proposal goes;
+   *              then closes.
+   *  Confirms before destructive cascades so the user knows what'll
+   *  happen to siblings / the parent enquiry. */
+  async function markOutcome(p: ProposalRow, outcome: ProposalStatus) {
+    const liveSiblings = await countLiveSiblings(supabase, p.id);
+
+    if (outcome === 'accepted' && liveSiblings > 0) {
+      const ok = window.confirm(
+        `Accepting this will close this enquiry and auto-decline the other ${liveSiblings} proposal${liveSiblings === 1 ? '' : 's'}. Continue?`,
+      );
+      if (!ok) return;
+    }
+    if (outcome === 'declined' && liveSiblings === 0) {
+      const ok = window.confirm(
+        'This is the last live proposal on the enquiry — declining will close the enquiry. Continue?',
+      );
+      if (!ok) return;
+    }
+
+    const patch: any = { status: outcome, updated_at: new Date().toISOString() };
+    if (outcome === 'accepted') patch.accepted_at = new Date().toISOString();
+    await supabase.from('proposals').update(patch).eq('id', p.id);
+
+    if (outcome === 'accepted') {
+      await closeEnquiryOnProposalAccept(supabase, p.id);
+    } else if (outcome === 'declined') {
+      await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
+    } else {
+      await syncEnquiryFromProposal(supabase, p.id, outcome);
+    }
+
+    notifyPipelineChanged();
+    setOpenProposal(null);
+    await fetchProposals();
+  }
+
+  function toSendable(p: ProposalRow): SendableProposal {
+    // Attach _row so the Send dialog's Back button can hand the original
+    // ProposalRow back to setOpenProposal without a parallel state.
+    return {
+      id: p.id,
+      ref_code: p.ref_code,
+      property_name: p.property_name,
+      guest_name: p.guest_name,
+      guest_email: p.guest_email,
+      guest_phone: p.guest_phone,
+      is_agent: p.is_agent,
+      _row: p,
+    } as SendableProposal & { _row: ProposalRow };
+  }
   /** Hydrated pricing_proposals row for the Edit Pricing → PricingDashboard
    *  flow. Mirrors the wiring in PipelinePage / PropertyEditModal so the
    *  entry point appears wherever a proposal is opened. */
@@ -122,8 +201,8 @@ export default function ProposalsPage() {
 
   useEffect(() => { setPageTitle('Proposals'); }, [setPageTitle]);
 
-  async function fetchProposals() {
-    if (!supabase) return;
+  async function fetchProposals(): Promise<ProposalRow[]> {
+    if (!supabase) return [];
     setLoading(true);
     // decline_reason is added by the workflow_rebuild migration. Until that
     // runs in Supabase, omit it from the select so we don't get a column
@@ -131,11 +210,12 @@ export default function ProposalsPage() {
     const { data, error } = await supabase
       .from('proposals')
       .select(`
-        id, ref_code, property_id, status, is_agent,
+        id, ref_code, property_id, status, is_agent, enquiry_id,
         guest_name, guest_email, guest_phone, check_in, check_out,
         guests_total, notes, pricing_proposal_id,
         created_at, sent_at, viewed_at, accepted_at,
         partner_properties(property_name),
+        enquiries(ref_code),
         pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)
       `)
       .eq('partner_id', CT_RENTALS_PARTNER_ID)
@@ -144,9 +224,9 @@ export default function ProposalsPage() {
       console.error('Proposals fetch failed:', error);
       setProposals([]);
       setLoading(false);
-      return;
+      return [];
     }
-    setProposals((data || []).map((p: any) => ({
+    const mapped: ProposalRow[] = (data || []).map((p: any) => ({
       id: p.id,
       ref_code: p.ref_code,
       property_id: p.property_id,
@@ -154,6 +234,8 @@ export default function ProposalsPage() {
       pricing_proposal_id: p.pricing_proposal_id ?? null,
       status: p.status,
       is_agent: !!p.is_agent,
+      enquiry_id: p.enquiry_id ?? null,
+      enquiry_ref_code: p.enquiries?.ref_code ?? null,
       guest_name: p.guest_name || '—',
       guest_email: p.guest_email,
       guest_phone: p.guest_phone,
@@ -172,8 +254,10 @@ export default function ProposalsPage() {
       owner_net: p.pricing_proposals?.owner_net ?? null,
       company_take: p.pricing_proposals?.company_take ?? null,
       agents: p.pricing_proposals?.agents ?? null,
-    })));
+    }));
+    setProposals(mapped);
     setLoading(false);
+    return mapped;
   }
 
   useEffect(() => { fetchProposals(); }, [supabase]);
@@ -205,12 +289,88 @@ export default function ProposalsPage() {
       result = result.filter(p => p.property_name === propertyFilter);
     }
 
+    // Deep-link narrowing from a Pipeline enquiry card.
+    if (enquiryFilter) {
+      result = result.filter(p => p.enquiry_id === enquiryFilter);
+    }
+
     return result;
-  }, [proposals, search, statusFilter, propertyFilter]);
+  }, [proposals, search, statusFilter, propertyFilter, enquiryFilter]);
+
+  /** Pull the enquiring client's name off the first matching proposal so
+   *  the deep-link banner reads "Showing proposals for <name>" instead of
+   *  a raw UUID. Empty when the filter is off. */
+  const enquiryBannerName = useMemo(() => {
+    if (!enquiryFilter) return '';
+    const match = proposals.find(p => p.enquiry_id === enquiryFilter);
+    return match ? titleCase(match.guest_name) : '';
+  }, [enquiryFilter, proposals]);
+
+  /** Map of enquiry_id → number of sibling proposals (including self).
+   *  Built from the full proposals list (not filtered) so the count stays
+   *  honest when the user is viewing a subset. Cards use this to surface
+   *  "📎 3 in this deal" so multi-proposal deals are obvious at a glance. */
+  const siblingCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of proposals) {
+      if (!p.enquiry_id) continue;
+      m.set(p.enquiry_id, (m.get(p.enquiry_id) ?? 0) + 1);
+    }
+    return m;
+  }, [proposals]);
+
+  function focusEnquiry(enquiryId: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set('enquiry', enquiryId);
+    setSearchParams(next, { replace: true });
+  }
+
+  // ── Multi-select for batch send ───────────────────────────────────────
+  // Always available — checkboxes live on every card, no mode toggle to
+  // enter or exit. The first selection locks a recipient key (email if
+  // present, name otherwise); any card whose recipient doesn't match
+  // becomes disabled until cleared. Selection actions surface inline in
+  // the toolbar count area only when ≥1 is selected, so the page stays
+  // visually quiet when nobody's selecting.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchSending, setBatchSending] = useState(false);
+
+  function recipientKey(p: ProposalRow): string {
+    const email = (p.guest_email || '').trim().toLowerCase();
+    if (email) return `e:${email}`;
+    return `n:${(p.guest_name || '').trim().toLowerCase()}`;
+  }
+
+  /** The recipient locked in by the first selected proposal. Once set,
+   *  other cards with a different key become disabled. Null when nothing
+   *  is selected — every card is eligible. */
+  const lockedRecipientKey = useMemo(() => {
+    if (selectedIds.size === 0) return null;
+    const first = proposals.find(p => selectedIds.has(p.id));
+    return first ? recipientKey(first) : null;
+  }, [selectedIds, proposals]);
+
+  const selectedProposals = useMemo(
+    () => proposals.filter(p => selectedIds.has(p.id)),
+    [proposals, selectedIds],
+  );
+
+  function toggleSelected(p: ProposalRow) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(p.id)) next.delete(p.id);
+      else next.add(p.id);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   const byColumn = useMemo(() => {
     const map: Record<string, ProposalRow[]> = {
-      drafting: [], ready: [], sent: [], accepted: [], declined: [],
+      drafting: [], sent: [], accepted: [], declined: [],
     };
     for (const p of filtered) {
       const key = columnFor(p.status);
@@ -238,9 +398,9 @@ export default function ProposalsPage() {
       else if (sort === 'client')   list.sort(byClient);
       else {
         // Smart: most-actionable first per column
-        if (col.key === 'drafting' || col.key === 'ready') list.sort(byOldest);
-        else if (col.key === 'sent')                       list.sort(byCheckIn);
-        else                                                list.sort(byNewest);
+        if (col.key === 'drafting')      list.sort(byOldest);
+        else if (col.key === 'sent')     list.sort(byCheckIn);
+        else                             list.sort(byNewest);
       }
     }
     return map;
@@ -248,6 +408,36 @@ export default function ProposalsPage() {
 
   return (
     <div>
+      {/* Deep-link narrowing banner. Shown when ?enquiry=<id> is in the
+          URL — typically arrived via a click on a Pipeline enquiry card.
+          Clearing it strips the URL param and reveals all proposals. */}
+      {enquiryFilter && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 14px', marginBottom: 12,
+            background: 'var(--bg-info, #EFF6FF)', border: '1px solid var(--info)', borderRadius: 'var(--radius-sm)',
+            fontSize: '0.8125rem',
+          }}
+        >
+          <span>
+            Showing proposals for {enquiryBannerName ? <strong>{enquiryBannerName}</strong> : 'this enquiry'}
+            {' '}({filtered.length} of {proposals.length})
+          </span>
+          <button
+            className="btn btn-ghost"
+            style={{ fontSize: '0.75rem', padding: '2px 10px' }}
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete('enquiry');
+              setSearchParams(next, { replace: true });
+            }}
+          >
+            ✕ Show all proposals
+          </button>
+        </div>
+      )}
+
       {/* Toolbar — view modes + actions on top row, filters + search below. */}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
@@ -278,6 +468,8 @@ export default function ProposalsPage() {
             </button>
           </div>
         </div>
+
+
         <div className="list-toolbar">
           <div className="list-toolbar-left">
             <select
@@ -315,10 +507,37 @@ export default function ProposalsPage() {
               )}
             </div>
           </div>
-          <div className="list-toolbar-right">
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {filtered.length} of {proposals.length}
-            </span>
+          <div className="list-toolbar-right" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {selectedIds.size > 0 ? (
+              // Inline selection actions. Sits in the same slot as the
+              // count so the toolbar never grows or jumps when items get
+              // selected — only the contents swap.
+              <>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  <strong>{selectedIds.size}</strong> selected for{' '}
+                  <strong>{titleCase(selectedProposals[0]?.guest_name || '')}</strong>
+                </span>
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+                  onClick={clearSelection}
+                >
+                  Clear
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: '0.75rem', padding: '4px 12px' }}
+                  disabled={batchSending}
+                  onClick={() => setBatchSending(true)}
+                >
+                  📤 Send {selectedIds.size}
+                </button>
+              </>
+            ) : (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+                {filtered.length} of {proposals.length}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -333,9 +552,20 @@ export default function ProposalsPage() {
             setColumnSort(prev => ({ ...prev, [key]: value }))
           }
           onOpen={setOpenProposal}
+          siblingCounts={siblingCounts}
+          onFocusEnquiry={focusEnquiry}
+          selectedIds={selectedIds}
+          lockedRecipientKey={lockedRecipientKey}
+          recipientKey={recipientKey}
+          onToggleSelected={toggleSelected}
         />
       ) : (
-        <ListView proposals={filtered} onOpen={setOpenProposal} />
+        <ListView
+          proposals={filtered}
+          onOpen={setOpenProposal}
+          siblingCounts={siblingCounts}
+          onFocusEnquiry={focusEnquiry}
+        />
       )}
 
       {launcherOpen && (
@@ -358,9 +588,61 @@ export default function ProposalsPage() {
               .eq('id', openProposal.pricing_proposal_id)
               .single();
             if (data) {
-              setEditPricingFor({ ...data, _propertyName: openProposal.property_name });
+              // Stash the proposal id so we can reopen the detail modal
+              // with the refreshed pricing after Save Pricing closes.
+              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id });
               setOpenProposal(null);
             }
+          }}
+          onSend={() => {
+            setSendingProposal(toSendable(openProposal));
+            setOpenProposal(null);
+          }}
+          onAccept={() => markOutcome(openProposal, 'accepted')}
+          onDecline={() => markOutcome(openProposal, 'declined')}
+          onOpenEnquiry={(enquiryId) => {
+            setOpenProposal(null);
+            focusEnquiry(enquiryId);
+          }}
+        />
+      )}
+
+      {batchSending && selectedProposals.length > 0 && (
+        // Batch send for the multi-select picker. Same SendProposalDialog
+        // — just fed an array of proposals all sharing one recipient.
+        <SendProposalDialog
+          proposals={selectedProposals.map(p => ({
+            id: p.id,
+            ref_code: p.ref_code,
+            property_name: p.property_name,
+            guest_name: p.guest_name,
+            guest_email: p.guest_email,
+            guest_phone: p.guest_phone,
+            is_agent: p.is_agent,
+          }))}
+          supabase={supabase}
+          onClose={() => setBatchSending(false)}
+          onSent={async () => {
+            setBatchSending(false);
+            clearSelection();
+            await fetchProposals();
+          }}
+        />
+      )}
+
+      {sendingProposal && (
+        <SendProposalDialog
+          proposals={[sendingProposal]}
+          supabase={supabase}
+          onClose={() => setSendingProposal(null)}
+          onSent={() => { setSendingProposal(null); fetchProposals(); }}
+          onBack={() => {
+            // Reopen the detail modal the user came from. We stash the
+            // full ProposalRow on the sendable as _row so Back doesn't
+            // need a parallel state variable.
+            const row = (sendingProposal as any)._row as ProposalRow | undefined;
+            setSendingProposal(null);
+            if (row) setOpenProposal(row);
           }}
         />
       )}
@@ -371,7 +653,16 @@ export default function ProposalsPage() {
           supabase={supabase}
           editPricingProposal={editPricingFor}
           onClose={() => setEditPricingFor(null)}
-          onPricingSaved={() => { setEditPricingFor(null); fetchProposals(); }}
+          onPricingSaved={async () => {
+            const reopenId = editPricingFor?._reopenProposalId;
+            setEditPricingFor(null);
+            // Refetch so the reopened detail modal shows the new pricing.
+            const refreshed = await fetchProposals();
+            if (reopenId) {
+              const next = refreshed.find(p => p.id === reopenId);
+              if (next) setOpenProposal(next);
+            }
+          }}
         />
       )}
     </div>
@@ -381,12 +672,19 @@ export default function ProposalsPage() {
 // ─── Board view ─────────────────────────────────────────────────────────
 
 function BoardView({
-  byColumn, columnSort, onColumnSortChange, onOpen,
+  byColumn, columnSort, onColumnSortChange, onOpen, siblingCounts, onFocusEnquiry,
+  selectedIds, lockedRecipientKey, recipientKey, onToggleSelected,
 }: {
   byColumn: Record<string, ProposalRow[]>;
   columnSort: Record<string, string>;
   onColumnSortChange: (key: string, value: string) => void;
   onOpen: (p: ProposalRow) => void;
+  siblingCounts: Map<string, number>;
+  onFocusEnquiry: (enquiryId: string) => void;
+  selectedIds: Set<string>;
+  lockedRecipientKey: string | null;
+  recipientKey: (p: ProposalRow) => string;
+  onToggleSelected: (p: ProposalRow) => void;
 }) {
   return (
     <div className="ops-board">
@@ -420,7 +718,28 @@ function BoardView({
             {byColumn[col.key].length === 0 ? (
               <div className="ops-board-empty">{col.emptyMsg}</div>
             ) : (
-              byColumn[col.key].map(p => <ProposalCard key={p.id} p={p} onOpen={onOpen} />)
+              byColumn[col.key].map(p => {
+                const isSelected = selectedIds.has(p.id);
+                // Once one card is selected the recipient is locked —
+                // any card with a different recipient greys out until
+                // selection is cleared. Subtle visual cue rather than a
+                // big banner explaining the rule.
+                const isDisabled = lockedRecipientKey !== null
+                  && recipientKey(p) !== lockedRecipientKey
+                  && !isSelected;
+                return (
+                  <ProposalCard
+                    key={p.id}
+                    p={p}
+                    onOpen={onOpen}
+                    siblingCount={p.enquiry_id ? (siblingCounts.get(p.enquiry_id) ?? 1) : 1}
+                    onFocusEnquiry={onFocusEnquiry}
+                    isSelected={isSelected}
+                    isDisabled={isDisabled}
+                    onToggleSelected={onToggleSelected}
+                  />
+                );
+              })
             )}
           </div>
         </div>
@@ -429,19 +748,77 @@ function BoardView({
   );
 }
 
-function ProposalCard({ p, onOpen }: { p: ProposalRow; onOpen: (p: ProposalRow) => void }) {
+function ProposalCard({
+  p, onOpen, siblingCount, onFocusEnquiry,
+  isSelected, isDisabled, onToggleSelected,
+}: {
+  p: ProposalRow;
+  onOpen: (p: ProposalRow) => void;
+  siblingCount: number;
+  onFocusEnquiry: (enquiryId: string) => void;
+  isSelected: boolean;
+  isDisabled: boolean;
+  onToggleSelected: (p: ProposalRow) => void;
+}) {
   const days = daysSince(p.created_at);
   const daysCls = days >= 10 ? 'ops-board-card-days--hot'
     : days >= 5 ? 'ops-board-card-days--warn' : '';
   const guestName = titleCase(p.guest_name);
   const propertyName = titleCase(p.property_name);
+  const hasSiblings = !!p.enquiry_id && siblingCount > 1;
+
+  // Card body click → open detail. The checkbox owns its own click
+  // (stopPropagation) so toggling selection never opens the modal.
+  // Disabled cards are inert — they can't be selected because their
+  // recipient doesn't match the one already locked in.
   return (
-    <div className="ops-board-card" onClick={() => onOpen(p)}>
-      <div className="ops-board-card-head">
+    <div
+      className="ops-board-card"
+      onClick={() => { if (!isDisabled) onOpen(p); }}
+      style={{
+        opacity: isDisabled ? 0.4 : 1,
+        cursor: isDisabled ? 'not-allowed' : 'pointer',
+        outline: isSelected ? '2px solid var(--info)' : undefined,
+        outlineOffset: isSelected ? '1px' : undefined,
+        position: 'relative',
+      }}
+    >
+      {/* Always-on checkbox in the top-left. Small and unobtrusive when
+          nothing is selected; visible affordance the moment a user wants
+          to batch-send. */}
+      <input
+        type="checkbox"
+        checked={isSelected}
+        disabled={isDisabled}
+        onChange={() => onToggleSelected(p)}
+        onClick={(e) => e.stopPropagation()}
+        title="Select for batch send"
+        style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          cursor: isDisabled ? 'not-allowed' : 'pointer',
+        }}
+      />
+      <div className="ops-board-card-head" style={{ paddingLeft: 22 }}>
         <span className="ops-board-card-client" title={guestName}>{guestName}</span>
-        <span className="ops-board-card-ref">{p.ref_code}</span>
+        {hasSiblings && (
+          // Sibling pill sits where the ref code used to (top-right) —
+          // far more useful at a glance: "this is 1 of N in a deal".
+          // Uses .ops-board-card-tag for visual consistency with Agent /
+          // Viewed tags; the trailing arrow signals it's actionable
+          // (click to filter the page to just this deal's siblings).
+          <button
+            type="button"
+            className="ops-board-card-tag ops-board-card-tag--clickable"
+            onClick={(e) => { e.stopPropagation(); onFocusEnquiry(p.enquiry_id!); }}
+            title="Show only this deal's proposals"
+          >
+            📎 {siblingCount} in this deal →
+          </button>
+        )}
       </div>
-      <div className="ops-board-card-property" title={propertyName}>{propertyName}</div>
+      <div className="ops-board-card-property" title={propertyName}>🏠 {propertyName}</div>
       <div className="ops-board-card-meta">
         {p.check_in && p.check_out
           ? <span>{fmtDate(p.check_in)} to {fmtDate(p.check_out)}<NightCount checkIn={p.check_in} checkOut={p.check_out} /></span>
@@ -474,7 +851,12 @@ interface ListRow extends DataRow {
   proposal: ProposalRow;
 }
 
-function ListView({ proposals, onOpen }: { proposals: ProposalRow[]; onOpen: (p: ProposalRow) => void }) {
+function ListView({ proposals, onOpen, siblingCounts, onFocusEnquiry }: {
+  proposals: ProposalRow[];
+  onOpen: (p: ProposalRow) => void;
+  siblingCounts: Map<string, number>;
+  onFocusEnquiry: (enquiryId: string) => void;
+}) {
   const rows: ListRow[] = proposals.map(p => ({
     id: p.id,
     ref_code: p.ref_code,
@@ -494,10 +876,23 @@ function ListView({ proposals, onOpen }: { proposals: ProposalRow[]; onOpen: (p:
       key: 'guest_name', label: 'Client', sortable: true,
       render: (row: DataRow) => {
         const r = row as ListRow;
+        const eid = r.proposal.enquiry_id;
+        const sibCount = eid ? (siblingCounts.get(eid) ?? 1) : 1;
         return (
           <div className="list-client-text">
             <span className="list-client-name" title={titleCase(r.guest_name)}>{titleCase(r.guest_name)}</span>
             {r.guest_email && <span className="list-client-meta" title={r.guest_email}>{r.guest_email.toLowerCase()}</span>}
+            {eid && sibCount > 1 && (
+              <button
+                type="button"
+                className="ops-board-card-tag ops-board-card-tag--clickable"
+                style={{ marginTop: 2, alignSelf: 'flex-start' }}
+                onClick={(e) => { e.stopPropagation(); onFocusEnquiry(eid); }}
+                title="Show only this deal's proposals"
+              >
+                📎 {sibCount} in this deal →
+              </button>
+            )}
           </div>
         );
       },

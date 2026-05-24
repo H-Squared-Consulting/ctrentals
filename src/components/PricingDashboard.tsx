@@ -40,6 +40,7 @@ export interface SnapshotAgent {
   pct: number;
   name: string;
   email: string | null;
+  phone: string | null;
   company: string | null;
 }
 
@@ -48,7 +49,7 @@ export interface PricingSnapshot {
   scenarioType: ScenarioType;
   agentId: string | null;
   agents: SnapshotAgent[];
-  agentContact: { name: string; email: string | null; company: string | null } | null;
+  agentContact: { name: string; email: string | null; phone: string | null; company: string | null } | null;
   channelId: string | null;
   baseline: number;
   seasonTag: string | null;
@@ -89,6 +90,10 @@ interface Props {
   nights?: number;
   /** Edit-mode: existing pricing_proposal whose state hydrates the form. */
   initialSnapshot?: PricingProposal | null;
+  /** Pre-select this agent in the agent dropdown when the user picks the
+   *  agent scenario. Used when raising a proposal from an agent enquiry —
+   *  the agent's already known, no need for the user to re-pick. */
+  initialAgentId?: string | null;
   onCreateProposal?: (snapshot: PricingSnapshot) => void;
   actionLabel?: string;
   saving?: boolean;
@@ -201,6 +206,7 @@ export default function PricingDashboard({
   initialScenario,
   nights: _nights, // reserved for total-stay display in a future iteration
   initialSnapshot,
+  initialAgentId,
   onCreateProposal,
   actionLabel = 'Create proposal from this',
   saving = false,
@@ -231,8 +237,12 @@ export default function PricingDashboard({
    *  useEffect below that runs once seasonTags has loaded. */
   const [selectedSeason, setSelectedSeason] = useState<string>('normal');
   const [selectedAgentId, setSelectedAgentId] = useState<string>(
+    // Priority: edit-mode hydration > enquiry-prefill > blank. The
+    // initialAgentId comes from the parent enquiry on create-mode and
+    // is null otherwise, so it never overrides a saved snapshot.
     (hydrate?.agents && hydrate.agents.length > 0 && hydrate.agents[0]?.id)
       || hydrate?.agent_id
+      || initialAgentId
       || '',
   );
   const [selectedChannelId, setSelectedChannelId] = useState<string>(hydrate?.channel_profile_id || '');
@@ -396,6 +406,7 @@ export default function PricingDashboard({
           pct: effAgentPct,
           name: selectedAgent.name,
           email: selectedAgent.email ?? null,
+          phone: (selectedAgent as any).phone ?? null,
           company: (selectedAgent as any).company ?? null,
         }]
       : [];
@@ -405,7 +416,7 @@ export default function PricingDashboard({
       agentId: snapshotAgents[0]?.id ?? null,
       agents: snapshotAgents,
       agentContact: snapshotAgents[0]
-        ? { name: snapshotAgents[0].name, email: snapshotAgents[0].email, company: snapshotAgents[0].company }
+        ? { name: snapshotAgents[0].name, email: snapshotAgents[0].email, phone: snapshotAgents[0].phone, company: snapshotAgents[0].company }
         : null,
       channelId: scenario === 'platform' ? selectedChannelId || null : null,
       baseline: baseRate,
