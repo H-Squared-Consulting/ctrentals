@@ -19,6 +19,15 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import type { Agent } from '../types/pricing';
+import AgentPropertyPicker from '../components/AgentPropertyPicker';
+import AgentPortalShareMenu from '../components/AgentPortalShareMenu';
+import {
+  enablePortal,
+  getPropertyIdsForAgent,
+  getTokenForAgent,
+  isPortalEnabled,
+  useAgentPortalMockState,
+} from '../lib/mockAdminStore';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -46,6 +55,46 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [form, setForm] = useState(EMPTY_FORM);
   const [initialForm, setInitialForm] = useState(EMPTY_FORM);
+
+  // Agent-portal mock state (Phase 1 -- localStorage-backed). Two
+  // companion modals: pick which properties the agent(s) can sell,
+  // and share the portal URL with a single agent.
+  const [pickerConfig, setPickerConfig] = useState<{
+    agentIds: string[];
+    title: string;
+    subtitle?: string;
+    initialPropertyIds: string[];
+  } | null>(null);
+  const [shareAgent, setShareAgent] = useState<Agent | null>(null);
+
+  // View mode: 'grouped' stacks one card per company with a bulk
+  // assign button; 'list' shows the existing flat table.
+  const [viewMode, setViewMode] = useState<'grouped' | 'list'>('grouped');
+
+  function openPickerForAgent(a: Agent) {
+    setPickerConfig({
+      agentIds: [a.id],
+      title: `Properties for ${titleCase(a.name)}`,
+      subtitle: 'Pick which houses this agent can see in their portal',
+      initialPropertyIds: getPropertyIdsForAgent(a.id),
+    });
+  }
+
+  function openBulkPicker(company: string, agentsInGroup: Agent[]) {
+    setPickerConfig({
+      agentIds: agentsInGroup.map(a => a.id),
+      title: `Properties for ${titleCase(company)}`,
+      subtitle: `Assigning to ${agentsInGroup.length} ${agentsInGroup.length === 1 ? 'agent' : 'agents'} in this company`,
+      initialPropertyIds: [],
+    });
+  }
+
+  function openShareFor(a: Agent) {
+    // Enabling the portal if it's currently off mints a token and
+    // immediately opens the share menu so the next click is "send".
+    if (!isPortalEnabled(a.id)) enablePortal(a.id);
+    setShareAgent(a);
+  }
 
   useEffect(() => { if (!embedded) setPageTitle('Agents'); }, [setPageTitle, embedded]);
 
@@ -173,8 +222,34 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
 
   return (
     <div>
-      {/* Toolbar — baseline order: filters -> search -> count -> + New */}
+      {/* Toolbar — view-mode row on top, filters / search / count below.
+          Pattern follows PropertiesPage and the platform-wide convention
+          (see feedback_toolbar_view_modes_separate). */}
       <div className="card" style={{ marginBottom: 16 }}>
+        <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 12 }}>
+          <div className="list-toolbar-left">
+            <div className="view-toggle">
+              <button
+                type="button"
+                className={`view-toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`}
+                onClick={() => setViewMode('grouped')}
+              >
+                By company
+              </button>
+              <button
+                type="button"
+                className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`}
+                onClick={() => setViewMode('list')}
+              >
+                All agents
+              </button>
+            </div>
+          </div>
+          <div className="list-toolbar-right">
+            <button className="btn btn-primary" onClick={openAdd}>+ New Agent</button>
+          </div>
+        </div>
+
         <div className="list-toolbar">
           <div className="list-toolbar-left">
             <select
@@ -210,22 +285,37 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
               {filtered.length} of {agents.length}
             </span>
           </div>
-          <div className="list-toolbar-right">
-            <button className="btn btn-primary" onClick={openAdd}>+ New Agent</button>
-          </div>
         </div>
       </div>
 
-      <AgentsTable
-        agents={filtered}
-        onView={openView}
-        onEdit={openEditRow}
-        emptyMessage={
-          agents.length === 0
-            ? 'No agents yet. Click + New Agent to add one.'
-            : 'No agents match your filters.'
-        }
-      />
+      {viewMode === 'list' ? (
+        <AgentsTable
+          agents={filtered}
+          onView={openView}
+          onEdit={openEditRow}
+          onOpenPicker={openPickerForAgent}
+          onOpenShare={openShareFor}
+          emptyMessage={
+            agents.length === 0
+              ? 'No agents yet. Click + New Agent to add one.'
+              : 'No agents match your filters.'
+          }
+        />
+      ) : (
+        <AgentsGrouped
+          agents={filtered}
+          onView={openView}
+          onEdit={openEditRow}
+          onOpenPicker={openPickerForAgent}
+          onOpenShare={openShareFor}
+          onBulkAssign={openBulkPicker}
+          emptyMessage={
+            agents.length === 0
+              ? 'No agents yet. Click + New Agent to add one.'
+              : 'No agents match your filters.'
+          }
+        />
+      )}
 
       {editing && (
         <DetailModal
@@ -305,6 +395,217 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
           </DetailModalSection>
         </DetailModal>
       )}
+
+      {pickerConfig && (
+        <AgentPropertyPicker
+          agentIds={pickerConfig.agentIds}
+          title={pickerConfig.title}
+          subtitle={pickerConfig.subtitle}
+          initialPropertyIds={pickerConfig.initialPropertyIds}
+          onClose={() => setPickerConfig(null)}
+        />
+      )}
+
+      {shareAgent && getTokenForAgent(shareAgent.id) && (
+        <AgentPortalShareMenu
+          agent={shareAgent}
+          onClose={() => setShareAgent(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Grouped view (one card per company) ──────────────────────────────
+
+function AgentsGrouped({
+  agents, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign, emptyMessage,
+}: {
+  agents: Agent[];
+  onView: (a: Agent) => void;
+  onEdit: (a: Agent) => void;
+  onOpenPicker: (a: Agent) => void;
+  onOpenShare: (a: Agent) => void;
+  onBulkAssign: (company: string, agentsInGroup: Agent[]) => void;
+  emptyMessage: string;
+}) {
+  useAgentPortalMockState();
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Agent[]>();
+    for (const a of agents) {
+      const company = (a.company || '').trim() || 'Independent';
+      if (!map.has(company)) map.set(company, []);
+      map.get(company)!.push(a);
+    }
+    // Stable sort by company name; agents inside each group by name.
+    const entries = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+    for (const [, list] of entries) list.sort((x, y) => (x.name || '').localeCompare(y.name || ''));
+    return entries;
+  }, [agents]);
+
+  if (agents.length === 0) {
+    return (
+      <div className="card" style={{ padding: 'var(--s-5)', textAlign: 'center', color: 'var(--text-secondary)' }}>
+        {emptyMessage}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {groups.map(([company, list]) => (
+        <GroupCard
+          key={company}
+          company={company}
+          agents={list}
+          onView={onView}
+          onEdit={onEdit}
+          onOpenPicker={onOpenPicker}
+          onOpenShare={onOpenShare}
+          onBulkAssign={() => onBulkAssign(company, list)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function GroupCard({
+  company, agents, onView, onEdit, onOpenPicker, onOpenShare, onBulkAssign,
+}: {
+  company: string;
+  agents: Agent[];
+  onView: (a: Agent) => void;
+  onEdit: (a: Agent) => void;
+  onOpenPicker: (a: Agent) => void;
+  onOpenShare: (a: Agent) => void;
+  onBulkAssign: () => void;
+}) {
+  return (
+    <div className="card">
+      <div className="list-toolbar" style={{ borderBottom: '1px solid var(--border-light)', paddingBottom: 12, marginBottom: 0 }}>
+        <div className="list-toolbar-left">
+          <strong style={{ fontSize: '0.9375rem', color: 'var(--text)' }}>{titleCase(company)}</strong>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+            {agents.length} {agents.length === 1 ? 'agent' : 'agents'}
+          </span>
+        </div>
+        <div className="list-toolbar-right">
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={onBulkAssign}
+            title="Assign the same property list to every agent in this company"
+          >
+            Assign properties to all
+          </button>
+        </div>
+      </div>
+
+      <div>
+        {agents.map(a => (
+          <AgentGroupRow
+            key={a.id}
+            agent={a}
+            onView={onView}
+            onEdit={onEdit}
+            onOpenPicker={onOpenPicker}
+            onOpenShare={onOpenShare}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentGroupRow({
+  agent, onView, onEdit, onOpenPicker, onOpenShare,
+}: {
+  agent: Agent;
+  onView: (a: Agent) => void;
+  onEdit: (a: Agent) => void;
+  onOpenPicker: (a: Agent) => void;
+  onOpenShare: (a: Agent) => void;
+}) {
+  const isActive = agent.is_active !== false;
+  const propertyCount = getPropertyIdsForAgent(agent.id).length;
+  const portalEnabled = isPortalEnabled(agent.id);
+
+  return (
+    <div
+      onClick={() => onView(agent)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--s-4)',
+        padding: '10px 16px',
+        borderTop: '1px solid var(--border-light)',
+        cursor: 'pointer',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, color: 'var(--text)' }}>{titleCase(agent.name)}</div>
+        {agent.email && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{agent.email.toLowerCase()}</div>
+        )}
+      </div>
+
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+        {Number(agent.default_commission_pct) || 0}%
+      </span>
+
+      <span className={`ops-status-pill ops-status-pill--${isActive ? 'active' : 'inactive'}`}>
+        <span className="ops-status-pill-dot" />
+        {isActive ? 'Active' : 'Inactive'}
+      </span>
+
+      <button
+        type="button"
+        className="btn btn-ghost"
+        style={{ fontSize: '0.8125rem', padding: '4px 10px' }}
+        onClick={(e) => { e.stopPropagation(); onOpenPicker(agent); }}
+        title="Pick which properties this agent can sell"
+      >
+        {propertyCount} props
+      </button>
+
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span className={`ops-status-pill ops-status-pill--${portalEnabled ? 'active' : 'inactive'}`}>
+          <span className="ops-status-pill-dot" />
+          {portalEnabled ? 'Active' : 'Off'}
+        </span>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+          onClick={() => onOpenShare(agent)}
+          title={portalEnabled ? 'Share portal link' : 'Enable portal and share link'}
+        >
+          {portalEnabled ? 'Share' : 'Enable'}
+        </button>
+      </div>
+
+      <div className="list-actions" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="list-action-icon"
+          title="View agent"
+          onClick={() => onView(agent)}
+        >
+          👁
+        </button>
+        <button
+          type="button"
+          className="list-action-icon"
+          title="Edit agent"
+          onClick={() => onEdit(agent)}
+        >
+          ✏️
+        </button>
+      </div>
     </div>
   );
 }
@@ -319,17 +620,25 @@ interface AgentRow extends DataRow {
   commission: number;
   status: string;
   is_active: boolean;
+  property_count: number;
+  portal_enabled: boolean;
   agent: Agent;
 }
 
 function AgentsTable({
-  agents, onView, onEdit, emptyMessage,
+  agents, onView, onEdit, onOpenPicker, onOpenShare, emptyMessage,
 }: {
   agents: Agent[];
   onView: (a: Agent) => void;
   onEdit: (a: Agent) => void;
+  onOpenPicker: (a: Agent) => void;
+  onOpenShare: (a: Agent) => void;
   emptyMessage: string;
 }) {
+  // Subscribe so the Properties / Portal cells refresh whenever the
+  // mock admin store changes (in this tab or another).
+  useAgentPortalMockState();
+
   const rows: AgentRow[] = agents.map(a => {
     const isActive = a.is_active !== false;
     return {
@@ -340,6 +649,8 @@ function AgentsTable({
       commission: Number(a.default_commission_pct) || 0,
       status: isActive ? 'Active' : 'Inactive',
       is_active: isActive,
+      property_count: getPropertyIdsForAgent(a.id).length,
+      portal_enabled: isPortalEnabled(a.id),
       agent: a,
     };
   });
@@ -370,6 +681,49 @@ function AgentsTable({
             <span className="ops-status-pill-dot" />
             {r.status}
           </span>
+        );
+      },
+    },
+    {
+      key: 'property_count', label: 'Properties', sortable: true, align: 'center' as const, width: '120px',
+      render: (row: DataRow) => {
+        const r = row as AgentRow;
+        return (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ fontSize: '0.8125rem', padding: '4px 10px' }}
+            onClick={(e) => { e.stopPropagation(); onOpenPicker(r.agent); }}
+            title="Pick which properties this agent can sell"
+          >
+            {r.property_count}
+          </button>
+        );
+      },
+    },
+    {
+      key: 'portal_enabled', label: 'Portal', sortable: true, align: 'center' as const, width: '170px',
+      render: (row: DataRow) => {
+        const r = row as AgentRow;
+        return (
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className={`ops-status-pill ops-status-pill--${r.portal_enabled ? 'active' : 'inactive'}`}>
+              <span className="ops-status-pill-dot" />
+              {r.portal_enabled ? 'Active' : 'Off'}
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+              onClick={() => onOpenShare(r.agent)}
+              title={r.portal_enabled ? 'Share portal link' : 'Enable portal and share link'}
+            >
+              {r.portal_enabled ? 'Share' : 'Enable'}
+            </button>
+          </div>
         );
       },
     },

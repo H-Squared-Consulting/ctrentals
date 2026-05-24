@@ -258,27 +258,42 @@ function PropertyCard({ property }: { property: AgentProperty }) {
       <div className="property-card__body">
         <div className="property-card__name-row">
           <h3 className="property-card__name">{titleCase(property.name)}</h3>
-          <span className="property-card__uid" title="Unique ID">{property.slug}</span>
+          {property.slug && (
+            <span className="property-card__uid" title="Unique ID">{property.slug}</span>
+          )}
         </div>
-        <p className="property-card__location">{titleCase(property.suburb)}</p>
+        {property.suburb && (
+          <p className="property-card__location">{titleCase(property.suburb)}</p>
+        )}
         <div className="property-card__stats">
-          <span className="property-card__stat">🛏 {property.bedrooms} bed{property.bedrooms !== 1 ? 's' : ''}</span>
-          <span className="property-card__stat">👤 {property.sleeps} guests</span>
+          {property.bedrooms > 0 && (
+            <span className="property-card__stat">🛏 {property.bedrooms} bed{property.bedrooms !== 1 ? 's' : ''}</span>
+          )}
+          {property.sleeps > 0 && (
+            <span className="property-card__stat">👤 {property.sleeps} guests</span>
+          )}
         </div>
         <div className="property-card__price">
-          ZAR {property.baselineRate.toLocaleString('en-ZA')}
-          <span className="property-card__price-label"> / night</span>
+          {property.baselineRate > 0
+            ? <>
+                ZAR {property.baselineRate.toLocaleString('en-ZA')}
+                <span className="property-card__price-label"> / night</span>
+              </>
+            : <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Pricing on request</span>
+          }
         </div>
       </div>
       <div className="property-card__footer" style={{ gap: 8 }}>
-        <a
-          className="btn btn-ghost"
-          href={`/brochures/${encodeURIComponent(property.slug)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View brochure
-        </a>
+        {property.slug && (
+          <a
+            className="btn btn-ghost"
+            href={`/brochures/${encodeURIComponent(property.slug)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View brochure
+          </a>
+        )}
         <button
           type="button"
           className="btn btn-primary"
