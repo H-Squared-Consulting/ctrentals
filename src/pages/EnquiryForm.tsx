@@ -46,6 +46,11 @@ export function EnquiryForm() {
   const [saving, setSaving] = useState(false);
   const [savedEnquiry, setSavedEnquiry] = useState<EnquiryPrefill | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  /** Set once the user creates at least one proposal from the launcher.
+   *  Swaps the success screen from "Enquiry saved" → "Proposal created"
+   *  so the next-step CTA reads "+ Another proposal for this enquiry"
+   *  rather than "Create Proposal" (which would now be misleading). */
+  const [proposalsCreatedCount, setProposalsCreatedCount] = useState(0);
 
   // ── Agent-vs-direct enquiry mode ──────────────────────────────────────
   // Off by default — most enquiries come from the guest directly. When ON,
@@ -205,6 +210,7 @@ export function EnquiryForm() {
 
   function startAnother() {
     setSavedEnquiry(null);
+    setProposalsCreatedCount(0);
     setForm(EMPTY_FORM);
     setIsAgent(false);
     setAgentId('');
@@ -216,10 +222,13 @@ export function EnquiryForm() {
 
   // ── Post-save success state ──
   if (savedEnquiry) {
+    const hasProposals = proposalsCreatedCount > 0;
     return (
       <>
         <ActionModal
-          title="Enquiry saved"
+          title={hasProposals
+            ? `${proposalsCreatedCount} proposal${proposalsCreatedCount === 1 ? '' : 's'} created`
+            : 'Enquiry saved'}
           subtitle={
             <>
               <strong>{savedEnquiry.client_name}</strong> · {savedEnquiry.check_in} to {savedEnquiry.check_out}<NightCount checkIn={savedEnquiry.check_in} checkOut={savedEnquiry.check_out} />
@@ -230,13 +239,13 @@ export function EnquiryForm() {
           hideCancel
           primaryAction={
             <button className="btn btn-primary" onClick={() => setLauncherOpen(true)}>
-              📝 Create Proposal
+              {hasProposals ? '+ Another proposal for this enquiry' : '📝 Create Proposal'}
             </button>
           }
           secondaryActions={
             <>
-              <button className="btn btn-ghost" onClick={startAnother}>+ Add another</button>
-              <button className="btn btn-ghost" onClick={close}>View all</button>
+              <button className="btn btn-ghost" onClick={startAnother}>+ New enquiry</button>
+              <button className="btn btn-ghost" onClick={close}>Done</button>
             </>
           }
           onClose={close}
@@ -244,7 +253,9 @@ export function EnquiryForm() {
           <div style={{ textAlign: 'center', padding: '20px 8px' }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 8, color: 'var(--success)' }}>✓</div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
-              The enquiry is saved. Open the next step below, or come back later from the Enquiries board.
+              {hasProposals
+                ? 'Proposal saved against this enquiry. Raise another for the same client, start a new enquiry, or click Done to leave.'
+                : 'The enquiry is saved. Create a proposal now, or come back later from the Enquiries board.'}
             </p>
           </div>
         </ActionModal>
@@ -253,6 +264,7 @@ export function EnquiryForm() {
           <NewProposalLauncher
             enquiryPrefill={savedEnquiry}
             onClose={() => setLauncherOpen(false)}
+            onCreated={() => setProposalsCreatedCount(c => c + 1)}
           />
         )}
       </>

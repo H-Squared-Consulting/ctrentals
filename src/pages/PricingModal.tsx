@@ -27,6 +27,11 @@ function titleCase(s: string | null | undefined): string {
 interface PricingModalProps {
   property: { id: string; property_name: string };
   onClose: () => void;
+  /** Fires when a proposal is actually saved (distinct from onClose,
+   *  which also fires on cancel). Hosts use this to swap their success
+   *  state from "enquiry saved" → "proposal created" with the right
+   *  next-step CTAs. */
+  onCreated?: () => void;
   supabase: any;
   /** Edit mode pre-fills the dashboard with an existing pricing snapshot
    *  and changes the primary action to "Save pricing" (in-place UPDATE). */
@@ -41,6 +46,7 @@ interface PricingModalProps {
 export default function PricingModal({
   property,
   onClose,
+  onCreated,
   supabase,
   editPricingProposal,
   onPricingSaved,
@@ -132,6 +138,12 @@ export default function PricingModal({
           property={property}
           supabase={supabase}
           initialSnapshot={editPricingProposal ?? null}
+          // Pre-select scenario from the enquiry: agent enquiries skip
+          // straight to the agent pricing surface; everything else lands
+          // on direct. Users can still flip if they want. Without this
+          // the dashboard's State A asks the user to pick — wasted click
+          // when we already know from the enquiry context.
+          initialScenario={enquiryPrefill ? (enquiryPrefill.is_agent ? 'agent' : 'direct') : undefined}
           // Pre-select the agent who made the enquiry. Only fires when
           // the enquiry is_agent and the user picks the 'agent' scenario
           // in the dashboard. Without this the dropdown defaults to
@@ -150,7 +162,7 @@ export default function PricingModal({
           supabase={supabase}
           enquiryPrefill={enquiryPrefill}
           onClose={() => setCreatingFromSnapshot(null)}
-          onCreated={() => { setCreatingFromSnapshot(null); onClose(); }}
+          onCreated={() => { setCreatingFromSnapshot(null); onCreated?.(); onClose(); }}
         />
       )}
     </>
