@@ -150,7 +150,7 @@ function BreakdownRow({
       <span style={{ fontSize: '0.9375rem' }}>
         {label}
         {pct != null && (
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>{pct}%</span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>{pct.toFixed(1)}%</span>
         )}
       </span>
       <strong style={{ fontSize: '0.9375rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -213,7 +213,11 @@ function BreakdownRows({
       {scenario === 'agent' && (
         <BreakdownRow
           label={agentLabel}
-          pct={agentPct}
+          /* Derive from the breakdown so the displayed % always matches the
+           * displayed R-amount, even when no specific agent is selected. */
+          pct={breakdown.clientPriceExclVat > 0
+            ? (breakdown.agentTake / breakdown.clientPriceExclVat) * 100
+            : agentPct}
           value={breakdown.agentTake}
           delta={compareTo ? breakdown.agentTake - compareTo.agentTake : null}
         />
@@ -221,6 +225,9 @@ function BreakdownRows({
       {scenario === 'platform' && (
         <BreakdownRow
           label="Platform fee"
+          pct={breakdown.clientPriceExclVat > 0
+            ? (breakdown.platformFees / breakdown.clientPriceExclVat) * 100
+            : undefined}
           value={breakdown.platformFees}
           delta={compareTo ? breakdown.platformFees - compareTo.platformFees : null}
         />
@@ -374,6 +381,12 @@ export default function PricingDashboard({
     if (pricingMode !== 'fixed' || !selectedSeasonRow) return null;
     return fixedRates.find(r => r.season_id === selectedSeasonRow.id) || null;
   }, [pricingMode, fixedRates, selectedSeasonRow]);
+  // Per-quote overrides for Fixed mode. Default empty (= use DB rate);
+  // typing a number overrides just this proposal without touching the
+  // canonical /settings/pricing values. Agent split % defaults to 50.
+  const [fixedGuestOverride, setFixedGuestOverride] = useState('');
+  const [fixedOwnerOverride, setFixedOwnerOverride] = useState('');
+  const [agentSplitPct, setAgentSplitPct] = useState('50');
 
   // Edit-mode hydration for selectedSeason. Snapshots store the season
   // name (e.g. "Peak"); the dropdown now uses SeasonKey ('peak' etc.).
@@ -452,8 +465,111 @@ export default function PricingDashboard({
 
   const overridesActive = targetGuest !== '' || overrideCtr !== '' || overrideAgent !== '';
 
+  /** Fixed-mode breakdown. Built directly from the property's stored Guest
+   *  + Owner rates (with per-quote overrides), not from the standard
+   *  baseline × multiplier × margin engine. Per-scenario splits:
+   *    Direct   — CTR takes the full margin, no agent, no channel.
+   *    Agent    — Split margin per agentSplitPct (default 50/50).
+   *    Platform — Channel takes its fee off the guest rate first;
+   *               CTR takes whatever's left after channel + owner.
+   *  Returns the same PricingBreakdown shape so the snapshot and downstream
+   *  consumers stay compatible. */
+  const fixedBreakdown = useMemo<PricingBreakdown | null>(() => {
+    if (pricingMode !== 'fixed') return null;
+    const dbGuest = fixedSlot?.guest_rate != null ? Number(fixedSlot.guest_rate) : null;
+    const dbOwner = fixedSlot?.owner_rate != null ? Number(fixedSlot.owner_rate) : null;
+    const guest = fixedGuestOverride !== '' ? Number(fixedGuestOverride) : dbGuest;
+    const owner = fixedOwnerOverride !== '' ? Number(fixedOwnerOverride) : dbOwner;
+    if (guest == null || owner == null || guest <= 0) return null;
+    const grossMargin = Math.max(0, guest - owner);
+
+    let ctrTake = 0;
+    let agentTake = 0;
+    let platformFees = 0;
+
+    if (scenario === 'agent') {
+      const splitPct = Math.max(0, Math.min(100, Number(agentSplitPct) || 0));
+      agentTake = Math.round(grossMargin * (splitPct / 100));
+      ctrTake = grossMargin - agentTake;
+    } else if (scenario === 'platform' && activeChannel) {
+      // Markup model — matches the System engine's interpretation of
+      // `channel_defaults.fee_pct`. The pinned guest rate already includes
+      // the channel's mark-up; we back into what the channel takes by
+      // dividing by (1 + fee%). Fixed fee comes off the top first, then
+      // the percentage. Same 4% means the same R-amount across modes.
+      const pctFactor = 1 + (Number(activeChannel.platform_fee_pct) / 100);
+      const fixedFee = Number(activeChannel.platform_fixed_fee || 0);
+      const hostNet = pctFactor > 0 ? (guest - fixedFee) / pctFactor : guest - fixedFee;
+      platformFees = Math.round(guest - hostNet);
+      ctrTake = Math.max(0, guest - platformFees - owner);
+    } else {
+      // Direct (or platform with no channel selected) — CTR takes all.
+      ctrTake = grossMargin;
+    }
+
+    return {
+      ownerNet: owner,
+      companyTake: ctrTake,
+      ctrTake,
+      agentTake,
+      platformFees,
+      clientPriceExclVat: guest,
+      vatAmount: 0,
+      clientPriceInclVat: guest,
+      adjustedBaseline: owner,
+      totalMarginPct: guest > 0 ? (grossMargin / guest) * 100 : 0,
+      effectiveCtrMarginPct: guest > 0 ? (ctrTake / guest) * 100 : 0,
+      effectiveTotalMarkupPct: owner > 0 ? (grossMargin / owner) * 100 : 0,
+    };
+  }, [pricingMode, fixedSlot, fixedGuestOverride, fixedOwnerOverride, agentSplitPct, scenario, activeChannel]);
+
   const snapshot = useMemo<PricingSnapshot | null>(() => {
-    if (!scenario || !negotiated) return null;
+    if (!scenario) return null;
+    // Fixed mode: build the snapshot from the Fixed breakdown so the
+    // saved proposal reflects Guest/Owner rates instead of margin maths.
+    if (pricingMode === 'fixed') {
+      if (!fixedBreakdown) return null;
+      const snapshotAgents: SnapshotAgent[] = scenario === 'agent' && selectedAgent
+        ? [{
+            id: selectedAgent.id,
+            pct: fixedBreakdown.clientPriceExclVat > 0
+              ? (fixedBreakdown.agentTake / fixedBreakdown.clientPriceExclVat) * 100
+              : 0,
+            name: selectedAgent.name,
+            email: selectedAgent.email ?? null,
+            phone: (selectedAgent as any).phone ?? null,
+            company: (selectedAgent as any).company ?? null,
+          }]
+        : [];
+      const ctrPct = fixedBreakdown.clientPriceExclVat > 0
+        ? (fixedBreakdown.ctrTake / fixedBreakdown.clientPriceExclVat) * 100
+        : 0;
+      const agentPct = snapshotAgents[0]?.pct ?? 0;
+      return {
+        propertyId: property.id,
+        scenarioType: scenario,
+        agentId: snapshotAgents[0]?.id ?? null,
+        agents: snapshotAgents,
+        agentContact: snapshotAgents[0]
+          ? { name: snapshotAgents[0].name, email: snapshotAgents[0].email, phone: snapshotAgents[0].phone, company: snapshotAgents[0].company }
+          : null,
+        channelId: null,
+        baseline: fixedBreakdown.ownerNet,
+        seasonTag: selectedSeasonRow?.name ?? null,
+        seasonMultiplier: 1,
+        ctrPct,
+        agentPct,
+        platformFeePct: 0,
+        platformFixedFee: 0,
+        reducedBaseline: null,
+        reducedCtrPct: null,
+        reducedAgentPct: null,
+        totalMarginPct: fixedBreakdown.totalMarginPct,
+        breakdown: fixedBreakdown,
+      };
+    }
+    // System mode (unchanged from before).
+    if (!negotiated) return null;
     const snapshotAgents: SnapshotAgent[] = scenario === 'agent' && selectedAgent
       ? [{
           id: selectedAgent.id,
@@ -495,6 +611,9 @@ export default function PricingDashboard({
     setTargetGuest('');
     setOverrideCtr('');
     setOverrideAgent('');
+    setFixedGuestOverride('');
+    setFixedOwnerOverride('');
+    setAgentSplitPct('50');
   }
 
   if (loading) {
@@ -559,13 +678,8 @@ export default function PricingDashboard({
   return (
     <>
       {pricingMode === 'fixed' && (
-        <div className="pricing-banner pricing-banner--peak" style={{ marginBottom: 12 }}>
-          <strong>This property uses Fixed pricing</strong> — guest rate is set by a 3rd party and the owner rate is pre-agreed.
-          {fixedSlot && (fixedSlot.guest_rate != null || fixedSlot.owner_rate != null) && (
-            <span> For {selectedSeasonRow?.name}: Guest <strong>R {Math.round(Number(fixedSlot.guest_rate ?? 0)).toLocaleString('en-US')}</strong> / Owner <strong>R {Math.round(Number(fixedSlot.owner_rate ?? 0)).toLocaleString('en-US')}</strong> / night. Platform earn = (Guest − Owner) ÷ 2.</span>
-          )}
-          <br />
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>The calculator below still applies standard margin maths — for Fixed properties, quote manually using the rates above until Phase 2 of this feature ships.</span>
+        <div className="pricing-banner pricing-banner--high" style={{ marginBottom: 12 }}>
+          <strong>Fixed pricing.</strong> Guest rate is set by a 3rd party and the owner rate is pre-agreed. The calculator uses the values from Settings → Pricing; override below for this proposal only.
         </div>
       )}
       {/* Context bar — channel pill + season selector */}
@@ -601,6 +715,101 @@ export default function PricingDashboard({
         </div>
       </div>
 
+      {pricingMode === 'fixed' ? (
+        /* Fixed-mode panel — Guest + Owner read from property_fixed_rates
+           for the selected season, with per-quote overrides. Agent scenario
+           splits the margin (default 50/50) — direct + platform scenarios
+           give the full margin to the platform. */
+        <div className="detail-modal-section">
+          <div className="detail-modal-section-heading">
+            Fixed pricing · {channelLabel} · {selectedSeasonRow?.name ?? 'Peak'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Guest pays (set by 3rd party)</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                className="form-input"
+                value={fixedGuestOverride}
+                onChange={(e) => setFixedGuestOverride(e.target.value)}
+                placeholder={fixedSlot?.guest_rate != null ? `R ${Math.round(Number(fixedSlot.guest_rate)).toLocaleString()}` : 'Not set'}
+                min={0}
+                step="100"
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Owner gets (pre-agreed)</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                className="form-input"
+                value={fixedOwnerOverride}
+                onChange={(e) => setFixedOwnerOverride(e.target.value)}
+                placeholder={fixedSlot?.owner_rate != null ? `R ${Math.round(Number(fixedSlot.owner_rate)).toLocaleString()}` : 'Not set'}
+                min={0}
+                step="100"
+              />
+            </div>
+            {scenario === 'agent' && (
+              <>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Agent share of margin %</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    className="form-input"
+                    value={agentSplitPct}
+                    onChange={(e) => setAgentSplitPct(e.target.value)}
+                    placeholder="50"
+                    min={0}
+                    max={100}
+                    step="1"
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Specific agent</label>
+                  <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
+                    <option value="">Generic agent</option>
+                    {agents.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            {scenario === 'platform' && channels.length > 0 && (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Platform</label>
+                <select className="form-input" value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)}>
+                  {channels.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.platform_name} ({c.platform_fee_pct}%{c.platform_fixed_fee > 0 ? ` + ${fmtRand(c.platform_fixed_fee)}` : ''})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          {fixedBreakdown ? (
+            <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+              <BreakdownRows
+                scenario={scenario}
+                breakdown={fixedBreakdown}
+                ctrPct={snapshot?.ctrPct ?? 0}
+                agentPct={snapshot?.agentPct ?? 0}
+                agentLabel={agentLabel}
+              />
+            </div>
+          ) : (
+            <div style={{ marginTop: '14px', padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+              No Fixed rates set for {selectedSeasonRow?.name ?? 'this season'}. Set them on Settings → Pricing first.
+            </div>
+          )}
+        </div>
+      ) : (
+      /* System-mode panels (Benchmark + Negotiate) unchanged. */
+      <>
       {/* Benchmark — read-only default for this channel + season */}
       <div className="detail-modal-section">
         <div className="detail-modal-section-heading">
@@ -702,27 +911,32 @@ export default function PricingDashboard({
             />
           </div>
         )}
+      </div>
+      </>
+      )}
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', gap: '10px', flexWrap: 'wrap' }}>
+      {/* Action row — shared across both Fixed and System modes. */}
+      <div className="detail-modal-section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={resetOverrides}
+          disabled={pricingMode === 'fixed'
+            ? (fixedGuestOverride === '' && fixedOwnerOverride === '' && agentSplitPct === '50')
+            : !overridesActive}
+        >
+          ↺ Reset to defaults
+        </button>
+        {onCreateProposal && (
           <button
             type="button"
-            className="btn btn-ghost"
-            onClick={resetOverrides}
-            disabled={!overridesActive}
+            className="btn btn-primary"
+            onClick={() => snapshot && onCreateProposal(snapshot)}
+            disabled={saving || !snapshot}
           >
-            ↺ Reset to defaults
+            {saving ? 'Saving…' : actionLabel}
           </button>
-          {onCreateProposal && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => snapshot && onCreateProposal(snapshot)}
-              disabled={saving || !snapshot}
-            >
-              {saving ? 'Saving…' : actionLabel}
-            </button>
-          )}
-        </div>
+        )}
       </div>
     </>
   );
