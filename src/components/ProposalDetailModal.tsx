@@ -166,7 +166,7 @@ export default function ProposalDetailModal({
   function sendWhatsApp() {
     const url = proposalUrl(proposal.ref_code);
     const msg = encodeURIComponent(
-      `Hi ${proposal.guest_name},\n\nHere is your property proposal from CT Rentals:\n${url}\n\nLet us know if you have any questions!`
+      `Hi ${proposal.guest_name},\n\nHere is your property proposal from Southern Escapes:\n${url}\n\nLet us know if you have any questions!`
     );
     let phone = (proposal.guest_phone || '').replace(/[^0-9]/g, '');
     if (phone.startsWith('0')) phone = '27' + phone.slice(1);
@@ -176,9 +176,9 @@ export default function ProposalDetailModal({
 
   function sendEmail() {
     const url = proposalUrl(proposal.ref_code);
-    const subject = encodeURIComponent(`CT Rentals — Property Proposal: ${proposal.property_name || 'Property'}`);
+    const subject = encodeURIComponent(`Southern Escapes: Property Proposal for ${proposal.property_name || 'Property'}`);
     const body = encodeURIComponent(
-      `Hi ${proposal.guest_name},\n\nHere is your property proposal from CT Rentals:\n${url}\n\nLet us know if you have any questions!\n\nBest regards,\nCT Rentals`
+      `Hi ${proposal.guest_name},\n\nHere is your property proposal from Southern Escapes:\n${url}\n\nLet us know if you have any questions!\n\nBest regards,\nSouthern Escapes`
     );
     window.open(`mailto:${proposal.guest_email || ''}?subject=${subject}&body=${body}`, '_blank');
     markSentIfDraft();

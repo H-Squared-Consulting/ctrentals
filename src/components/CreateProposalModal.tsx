@@ -471,7 +471,7 @@ export default function CreateProposalModal({
           <div className="form-group">
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', cursor: 'pointer', fontWeight: 500 }}>
               <input type="checkbox" checked={isAgent} onChange={(e) => setIsAgent(e.target.checked)} />
-              Sending to an agent (removes CT Rentals branding)
+              Sending to an agent (removes Southern Escapes branding)
             </label>
           </div>
 
