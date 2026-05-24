@@ -1,22 +1,21 @@
 /**
  * AgentPortalPage -- public agent portal at /q/:token
  *
- * Two-tab portal. Properties tab shows the curated list of houses
- * this agent can sell, each with photo, key info, baseline pricing,
- * a "View brochure" link and a "Submit enquiry" button. My Enquiries
- * tab shows the agent's submitted enquiries with status updates.
+ * Three-tab portal:
+ *   - Properties: curated houses this agent can sell, each with a
+ *     photo, key info, baseline pricing, View brochure link and
+ *     + Enquire button.
+ *   - My Enquiries: status of every enquiry this agent has submitted.
+ *   - About: Southern Escapes bio + contact cards for Nicki and Hayley.
+ *
+ * Data comes from the agent-portal-read edge function (one round-trip
+ * for agent + properties + enquiries). Enquiry submission goes through
+ * agent-portal-enquire. See src/lib/agentPortal.ts for the wire format.
  *
  * Uses the existing admin design system as-is (see
  * docs/DESIGN-SYSTEM.md): .property-card and .property-grid for the
- * property list, .view-toggle for the tab switcher, .card for the
- * enquiry rows, .ops-status-pill for status badges, .btn-* for
- * buttons. No new CSS classes are introduced.
- *
- * For now the data comes from a mock service module
- * (src/lib/agentPortal.ts) returning fixture data so the UX can be
- * reviewed by Hayley before any backend is built. When she signs off,
- * the three service functions get swapped for real Supabase edge
- * function calls and this component does not need to change.
+ * property list, .subnav for the top nav, .card for the enquiry rows,
+ * .ops-status-pill for status badges, .btn-* for buttons.
  */
 
 import { useEffect, useState } from 'react';
