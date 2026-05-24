@@ -10,8 +10,16 @@
  * Click toggles a popover with one checkbox per option. Click outside
  * or press Escape to close. Selected = none → no filter applied
  * upstream.
+ *
+ * Optional props:
+ *   - searchable: shows a search input pinned to the top of the popover
+ *     that filters options by their formatted string. Useful when there
+ *     are many options (e.g. picking from 50+ home owners).
+ *   - footer: arbitrary node rendered below the option list inside the
+ *     popover. Used by the owner picker to surface a "+ New owner"
+ *     inline-add affordance without leaving the picker.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export default function MultiPicker({
   label,
@@ -19,14 +27,21 @@ export default function MultiPicker({
   selected,
   onChange,
   format,
+  searchable,
+  searchPlaceholder,
+  footer,
 }: {
   label: string;
   options: (number | string)[];
   selected: (number | string)[];
   onChange: (next: (number | string)[]) => void;
   format?: (v: number | string) => string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  footer?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,8 +58,12 @@ export default function MultiPicker({
     };
   }, [open]);
 
+  // Reset the search filter every time the popover closes so the next
+  // open starts fresh.
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
+
   function toggle(v: number | string) {
-    onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v].sort((a, b) => Number(a) - Number(b)));
+    onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]);
   }
 
   const fmt = format || ((v) => String(v));
@@ -53,6 +72,11 @@ export default function MultiPicker({
     : selected.length <= 3
       ? selected.map(fmt).join(', ')
       : `${selected.length} selected`;
+
+  // Filter options by formatted string when search is on and a query is set.
+  const visibleOptions = searchable && query.trim()
+    ? options.filter(v => fmt(v).toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
 
   return (
     <div className="multi-picker" ref={rootRef}>
@@ -66,7 +90,20 @@ export default function MultiPicker({
       </button>
       {open && (
         <div className="multi-picker-menu">
-          {options.map(v => {
+          {searchable && (
+            <input
+              type="text"
+              className="multi-picker-search"
+              autoFocus
+              placeholder={searchPlaceholder || 'Search...'}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          )}
+          {visibleOptions.length === 0 && (
+            <div className="multi-picker-empty">No matches</div>
+          )}
+          {visibleOptions.map(v => {
             const on = selected.includes(v);
             return (
               <label key={String(v)} className={`multi-picker-item ${on ? 'is-on' : ''}`}>
@@ -80,6 +117,7 @@ export default function MultiPicker({
               Clear
             </button>
           )}
+          {footer && <div className="multi-picker-footer">{footer}</div>}
         </div>
       )}
     </div>

@@ -3531,6 +3531,61 @@ select.form-input { cursor: pointer; }
 }
 .multi-picker-clear:hover { color: var(--color-primary); }
 
+/* MultiPicker search + footer slots (opt-in). The search input is pinned
+ * to the top of the popover so it doesn't scroll away with long lists. */
+.multi-picker-search {
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  font-size: 0.8125rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.multi-picker-search:focus { border-color: var(--color-primary); }
+.multi-picker-empty {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+}
+.multi-picker-footer {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* PropertyEditModal: list of people linked to the property. Sits below
+ * the People MultiPicker. Each row reads as a contact card line. */
+.property-people-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.property-people-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+.property-people-name { font-weight: 600; color: var(--text); }
+.property-people-primary {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap;
+  cursor: pointer;
+}
+.property-people-primary input { margin: 0; cursor: pointer; }
+.property-people-primary input:disabled { cursor: not-allowed; }
+
 
 /* Status pill — clickable active/inactive toggle with clear colour
  * coding so the current state is obvious at a glance. */
