@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import DetailModal from '../components/DetailModal';
+import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import MultiPicker from '../components/MultiPicker';
 import BrochureShareMenu from '../components/BrochureShareMenu';
 import NightCount from '../components/NightCount';
@@ -25,6 +25,25 @@ import { notifyPipelineChanged } from '../lib/pipelineEvents';
 export default function PropertyEditModal({ property, partnerId, onClose, onSave, supabase, user, initialMode = 'edit' }) {
   const toast = useToast();
   const isNew = !property.id;
+
+  // Viewed-person state — populated when a user clicks a person's
+  // name in view mode. Rendered as a lightweight modal on top of the
+  // property editor so the user can read contact details without
+  // leaving their property context.
+  const [viewingPerson, setViewingPerson] = useState<any | null>(null);
+  const [viewingPersonLoading, setViewingPersonLoading] = useState(false);
+  async function openPersonDetail(ownerId: string) {
+    if (!ownerId) return;
+    setViewingPerson({ id: ownerId });
+    setViewingPersonLoading(true);
+    const { data } = await supabase
+      .from('home_owners')
+      .select('id, name, role, company, vat_number, email, phone, payment_notes, notes')
+      .eq('id', ownerId)
+      .maybeSingle();
+    setViewingPersonLoading(false);
+    if (data) setViewingPerson(data);
+  }
 
   // Two operating modes:
   //   - 'view' opens the editor read-only — every input is disabled and
@@ -978,44 +997,50 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               };
               const selectedIds = ownerLinks.map(r => r.ownerId).filter(Boolean);
               return (
-                <MultiPicker
-                  label="Add people"
-                  searchable
-                  searchPlaceholder="Type to find a person..."
-                  options={owners.map((o: any) => o.id)}
-                  selected={selectedIds}
-                  format={fmtOwner}
-                  onChange={(nextIds: (number | string)[]) => {
-                    const set = new Set(nextIds.map(String));
-                    // Keep existing rows that are still selected (preserves
-                    // pct + isPrimary). Append any new ones with defaults.
-                    const existing = ownerLinks.filter(r => r.ownerId && set.has(r.ownerId));
-                    const existingIds = new Set(existing.map(r => r.ownerId));
-                    const added = nextIds
-                      .filter(id => !existingIds.has(String(id)))
-                      .map(id => ({ ownerId: String(id), pct: '', isPrimary: false }));
-                    const merged = [...existing, ...added];
-                    // Ensure exactly one Primary among owner-role people.
-                    const firstOwnerIdx = merged.findIndex(r => {
-                      const owner = owners.find((x: any) => x.id === r.ownerId);
-                      return (owner?.role || 'owner') === 'owner';
-                    });
-                    if (firstOwnerIdx >= 0 && !merged.some(r => r.isPrimary)) {
-                      merged[firstOwnerIdx] = { ...merged[firstOwnerIdx], isPrimary: true };
-                    }
-                    setOwnerLinks(merged.length ? merged : [{ ownerId: '', pct: '', isPrimary: true }]);
-                  }}
-                  footer={
+                <>
+                  {/* + New person sits ABOVE the picker so the user
+                      never scrolls past the selected-people list to
+                      reach it when the property already has several
+                      people linked. */}
+                  {!viewOnly && (
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      style={{ fontSize: '0.75rem', width: '100%' }}
+                      style={{ fontSize: '0.75rem', marginBottom: 'var(--s-2)' }}
                       onClick={() => setShowOwnerCreate(true)}
                     >
                       + New person
                     </button>
-                  }
-                />
+                  )}
+                  <MultiPicker
+                    label="Add people"
+                    searchable
+                    searchPlaceholder="Type to find a person..."
+                    options={owners.map((o: any) => o.id)}
+                    selected={selectedIds}
+                    format={fmtOwner}
+                    onChange={(nextIds: (number | string)[]) => {
+                      const set = new Set(nextIds.map(String));
+                      // Keep existing rows that are still selected (preserves
+                      // pct + isPrimary). Append any new ones with defaults.
+                      const existing = ownerLinks.filter(r => r.ownerId && set.has(r.ownerId));
+                      const existingIds = new Set(existing.map(r => r.ownerId));
+                      const added = nextIds
+                        .filter(id => !existingIds.has(String(id)))
+                        .map(id => ({ ownerId: String(id), pct: '', isPrimary: false }));
+                      const merged = [...existing, ...added];
+                      // Ensure exactly one Primary among owner-role people.
+                      const firstOwnerIdx = merged.findIndex(r => {
+                        const owner = owners.find((x: any) => x.id === r.ownerId);
+                        return (owner?.role || 'owner') === 'owner';
+                      });
+                      if (firstOwnerIdx >= 0 && !merged.some(r => r.isPrimary)) {
+                        merged[firstOwnerIdx] = { ...merged[firstOwnerIdx], isPrimary: true };
+                      }
+                      setOwnerLinks(merged.length ? merged : [{ ownerId: '', pct: '', isPrimary: true }]);
+                    }}
+                  />
+                </>
               );
             })()}
 
@@ -1032,7 +1057,25 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
                   };
                   return (
                     <div key={row.ownerId} className="property-people-row">
-                      <span className="property-people-name">{owner.name}{owner.company ? ` (${owner.company})` : ''}</span>
+                      {/* Name pops a lightweight contact modal in-place.
+                          Rendered as a <span role="button"> rather than
+                          a <button> because the surrounding <fieldset
+                          disabled={viewOnly}> would otherwise disable
+                          a real button in view mode, killing the click. */}
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="property-people-name"
+                        style={{
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          color: 'var(--color-primary)',
+                        }}
+                        onClick={() => openPersonDetail(row.ownerId)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPersonDetail(row.ownerId); } }}
+                      >
+                        {owner.name}{owner.company ? ` (${owner.company})` : ''}
+                      </span>
                       <span className="ops-status-pill ops-status-pill--drafting"><span className="ops-status-pill-dot" />{ROLE_LABELS[role]}</span>
                       <label className="property-people-primary" title={isOwnerRole ? 'Make this the primary owner contact' : 'Only owners can be the primary contact'}>
                         <input
@@ -1454,7 +1497,47 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           onClose={() => setSharingBrochure(false)}
         />
       )}
+
+      {viewingPerson && (() => {
+        const ROLE_LABELS: Record<string, string> = {
+          owner: 'Owner', manager: 'House manager', domestic: 'Domestic', gardener: 'Gardener', other: 'Other',
+        };
+        const p = viewingPerson;
+        const roleLabel = ROLE_LABELS[p.role || 'owner'] || 'Owner';
+        return (
+          <DetailModal
+            title={p.name || 'Person'}
+            subtitle={p.company ? <>{p.company} · {roleLabel}</> : roleLabel}
+            mode="view"
+            onClose={() => setViewingPerson(null)}
+          >
+            {viewingPersonLoading ? (
+              <div style={{ padding: 'var(--s-4)', color: 'var(--text-secondary)' }}>Loading…</div>
+            ) : (
+              <DetailModalSection heading="Contact details">
+                <PersonField label="Email" value={p.email} />
+                <PersonField label="Phone" value={p.phone} />
+                <PersonField label="Company" value={p.company} />
+                <PersonField label="VAT No." value={p.vat_number} />
+                <PersonField label="Payment notes" value={p.payment_notes} multiline />
+                <PersonField label="Notes" value={p.notes} multiline />
+              </DetailModalSection>
+            )}
+          </DetailModal>
+        );
+      })()}
     </>
+  );
+}
+
+function PersonField({ label, value, multiline = false }: { label: string; value: string | null | undefined; multiline?: boolean }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 'var(--s-2)', padding: '6px 0', borderBottom: '1px solid var(--border-light)' }}>
+      <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{label}</span>
+      <span style={{ fontSize: '0.875rem', whiteSpace: multiline ? 'pre-wrap' : 'normal' }}>
+        {value || <span style={{ color: 'var(--text-secondary)' }}>—</span>}
+      </span>
+    </div>
   );
 }
 
