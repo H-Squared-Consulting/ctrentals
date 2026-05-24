@@ -187,31 +187,32 @@ export default function BookingCalendarPage() {
     return Array.from(s).sort((a, b) => b - a);
   }, [properties]);
 
-  // Single source of truth for "does this property pass the property-side
-  // filters in the toolbar?" — used by both the Board view (filters the
-  // property list directly) and the List view (filters bookings via their
-  // property_id). Without this, the List view silently ignored every
-  // property filter — status, suburb, beds, search — because the
-  // filter-bar state was only wired into filteredProperties.
-  const propertyMatchesFilters = useMemo(() => {
-    const terms = searchQuery.trim()
-      ? searchQuery.toLowerCase().split(/\s+/).filter(Boolean)
-      : [];
+  // Non-search property attribute filters (status / suburb / beds). Search
+  // is separated out so List view can apply it as an OR across guest +
+  // property fields without double-narrowing. Used by both views.
+  const propertyAttrMatches = useMemo(() => {
     return (p: Property): boolean => {
       if (propertyStatusFilter === 'active'   && !p.is_published) return false;
       if (propertyStatusFilter === 'inactive' &&  p.is_published) return false;
       if (filterSuburb.length > 0 && (p.suburb == null || !filterSuburb.includes(p.suburb))) return false;
       if (filterBedrooms.length > 0 && (p.bedrooms == null || !filterBedrooms.includes(p.bedrooms))) return false;
-      if (terms.length > 0) {
-        const hay = [p.property_name, p.suburb, p.slug].filter(Boolean).join(' ').toLowerCase();
-        if (!terms.every(t => hay.includes(t))) return false;
-      }
       return true;
     };
-  }, [propertyStatusFilter, filterSuburb, filterBedrooms, searchQuery]);
+  }, [propertyStatusFilter, filterSuburb, filterBedrooms]);
+
+  // Search term matcher against property fields only — used by Board.
+  // List uses an OR'd version that also checks guest fields, see below.
+  const propertyTextMatches = useMemo(() => {
+    const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return (p: Property): boolean => {
+      if (terms.length === 0) return true;
+      const hay = [p.property_name, p.suburb, p.slug].filter(Boolean).join(' ').toLowerCase();
+      return terms.every(t => hay.includes(t));
+    };
+  }, [searchQuery]);
 
   const filteredProperties = useMemo(() => {
-    let result = properties.filter(propertyMatchesFilters);
+    let result = properties.filter(p => propertyAttrMatches(p) && propertyTextMatches(p));
     // Date range filter, mode-aware:
     //   Occupancy   → show only properties booked/blocked in the window
     //   Availability → show only properties free in the window
@@ -233,7 +234,7 @@ export default function BookingCalendarPage() {
       }
     }
     return result;
-  }, [properties, propertyMatchesFilters, searchCheckIn, searchCheckOut, searchFlex, bookings, boardMode]);
+  }, [properties, propertyAttrMatches, propertyTextMatches, searchCheckIn, searchCheckOut, searchFlex, bookings, boardMode]);
 
   const propertyById = useMemo(() => {
     const m = new Map<string, Property>();
@@ -241,27 +242,37 @@ export default function BookingCalendarPage() {
     return m;
   }, [properties]);
 
-  // List view literally consumes Board's filteredProperties as the
-  // property-side gate — same source of truth, the two views can never
-  // disagree on which properties are "in". Cancelled bookings always
-  // drop entirely (those dates are Available again). The Booked/Blocked
-  // status pill partitions the remainder via the localStorage flag.
-  // Date range narrows to bookings overlapping the window — applied
-  // directly to bookings because the Board's mode-aware overlap logic
-  // (Occupancy vs Availability) only makes sense for the property list.
+  // Property-side filters (status/suburb/beds) gate List view via the
+  // booking's property — same propertyAttrMatches Board uses, so the
+  // two surfaces can't disagree. Search is OR'd across guest fields AND
+  // property fields so the toolbar's "Search by guest, property, suburb"
+  // placeholder is honest: typing a property name narrows to that
+  // property's bookings; typing a guest narrows to that guest's. Date
+  // range narrows to bookings overlapping the window directly — the
+  // Board's mode-aware overlap is a property-list concept.
   const filteredBookings = useMemo(() => {
-    const allowedPropertyIds = new Set(filteredProperties.map(p => p.id));
     let result = bookings.filter(b => b.status !== 'cancelled');
     if (statusFilter === 'booked')  result = result.filter(b => !isBlocked(b.id));
     if (statusFilter === 'blocked') result = result.filter(b => isBlocked(b.id));
-    result = result.filter(b => allowedPropertyIds.has(b.property_id));
+
+    result = result.filter(b => {
+      const prop = propertyById.get(b.property_id);
+      return prop ? propertyAttrMatches(prop) : false;
+    });
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(b =>
-        (b.guest_name || '').toLowerCase().includes(q) ||
-        (b.guest_email || '').toLowerCase().includes(q)
-      );
+      result = result.filter(b => {
+        if ((b.guest_name || '').toLowerCase().includes(q)) return true;
+        if ((b.guest_email || '').toLowerCase().includes(q)) return true;
+        const prop = propertyById.get(b.property_id);
+        if (prop) {
+          if ((prop.property_name || '').toLowerCase().includes(q)) return true;
+          if ((prop.suburb || '').toLowerCase().includes(q)) return true;
+          if ((prop.slug || '').toLowerCase().includes(q)) return true;
+        }
+        return false;
+      });
     }
 
     if (searchCheckIn && searchCheckOut) {
@@ -278,7 +289,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, statusFilter, searchQuery, blockedIds, filteredProperties, searchCheckIn, searchCheckOut, searchFlex]);
+  }, [bookings, statusFilter, searchQuery, blockedIds, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
