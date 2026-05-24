@@ -2911,6 +2911,32 @@ button.ops-board-card-tag--clickable:active {
   .property-url-input-row { flex-wrap: wrap; }
   .property-url-input-row .form-input { flex-basis: 100%; }
 }
+
+/* Multi-platform listing URLs: one labelled row per platform, stacked. */
+.property-listing-urls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.property-listing-url-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.property-listing-url-label {
+  flex: 0 0 110px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.property-listing-url-row .property-url-input-row {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 540px) {
+  .property-listing-url-row { flex-direction: column; align-items: stretch; gap: 4px; }
+  .property-listing-url-label { flex: none; }
+}
 .property-link-pending {
   display: inline-flex;
   align-items: center;

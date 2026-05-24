@@ -90,6 +90,17 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     gallery_sections: Array.isArray(property.gallery_sections) ? property.gallery_sections : [],
     amenity_tags: parseAmenityTags(property.amenity_tags),
     booking_url: property.booking_url || '',
+    // Multi-platform listing URLs (jsonb column). Falls back to the legacy
+    // single booking_url under booking_com when listing_urls is empty so
+    // pre-migration data isn't invisible in the new UI.
+    listing_urls: (() => {
+      const raw = property.listing_urls;
+      if (raw && typeof raw === 'object' && Object.keys(raw).length > 0) {
+        return raw as Record<string, string>;
+      }
+      if (property.booking_url) return { booking_com: property.booking_url } as Record<string, string>;
+      return {} as Record<string, string>;
+    })(),
     listing_links: stringifyJSON(property.listing_links),
     contact_email: property.contact_email || '',
     contact_phone: property.contact_phone || '',
@@ -589,7 +600,16 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         gallery_sections: form.gallery_sections,
         ...deriveFlatColumns(form.gallery_sections),
         amenity_tags: parseAmenityTagsInput(form.amenity_tags),
-        booking_url: form.booking_url.trim() || null,
+        // Trim each URL; drop empty entries so the jsonb doesn't accumulate
+        // blank keys over time. Also keep booking_url synced to the new
+        // booking_com slot so legacy readers still get a value during the
+        // transition period.
+        listing_urls: Object.fromEntries(
+          Object.entries(form.listing_urls)
+            .map(([k, v]) => [k, (v || '').trim()])
+            .filter(([, v]) => v)
+        ),
+        booking_url: (form.listing_urls.booking_com || form.booking_url || '').trim() || null,
         listing_links: safeParseJSON(form.listing_links),
         contact_email: form.contact_email.trim() || null,
         contact_phone: form.contact_phone.trim() || null,
@@ -886,7 +906,10 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
             isNew={isNew}
             viewOnly={viewOnly}
             onPublishChange={(checked) => setForm({ ...form, is_published: checked })}
-            onBookingUrlChange={(v) => setForm({ ...form, booking_url: v })}
+            onListingUrlChange={(platform, v) => setForm({
+              ...form,
+              listing_urls: { ...form.listing_urls, [platform]: v },
+            })}
             onShare={() => setSharingBrochure(true)}
           />
 
@@ -1540,15 +1563,25 @@ function LinkRow({ label, hint, url, disabled }: { label: string; hint?: string;
   );
 }
 
+/** Labelled set of external listing platforms. Order = render order in the
+ *  editor. Keys match the keys stored in partner_properties.listing_urls. */
+const LISTING_PLATFORMS: Array<{ key: string; label: string }> = [
+  { key: 'airbnb',      label: 'Airbnb' },
+  { key: 'booking_com', label: 'Booking.com' },
+  { key: 'vrbo',        label: 'VRBO' },
+  { key: 'direct',      label: 'Direct' },
+  { key: 'other',       label: 'Other' },
+];
+
 function PropertyLinksSection({
-  property, form, isNew, viewOnly, onPublishChange, onBookingUrlChange, onShare,
+  property, form, isNew, viewOnly, onPublishChange, onListingUrlChange, onShare,
 }: {
   property: any;
   form: any;
   isNew: boolean;
   viewOnly: boolean;
   onPublishChange: (checked: boolean) => void;
-  onBookingUrlChange: (value: string) => void;
+  onListingUrlChange: (platform: string, value: string) => void;
   onShare: () => void;
 }) {
   const canShare = !isNew && !form.is_archived;
@@ -1597,14 +1630,21 @@ function PropertyLinksSection({
       )}
 
       <div className="form-group" style={{ marginTop: '14px', marginBottom: 0 }}>
-        <label className="form-label">External listing URL</label>
-        <ExternalUrlInput
-          value={form.booking_url}
-          disabled={viewOnly}
-          onChange={onBookingUrlChange}
-        />
-        <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-          Where this property is listed externally (Airbnb, Booking.com, etc). One link for now — multi-platform support is coming.
+        <label className="form-label">External listing URLs</label>
+        <div className="property-listing-urls">
+          {LISTING_PLATFORMS.map(({ key, label }) => (
+            <div key={key} className="property-listing-url-row">
+              <span className="property-listing-url-label">{label}</span>
+              <ExternalUrlInput
+                value={(form.listing_urls && form.listing_urls[key]) || ''}
+                disabled={viewOnly}
+                onChange={(v) => onListingUrlChange(key, v)}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="form-hint" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+          Where this property is listed externally. Leave blank for platforms you don't use.
         </div>
       </div>
     </div>
