@@ -2221,12 +2221,25 @@ button.ops-board-card-tag--clickable:active {
    timeline; property column sticks to the left edge as you scroll.
    ================================================================ */
 /* Pricing page: Fixed-mode rate cell holds two BaselineCell inputs
- * (Guest / Owner) side by side. Pure layout wrapper, no visual styling. */
+ * (Guest / Owner) side by side, each with its own label so the user
+ * doesn't have to guess which is which. */
 .pricing-fixed-cell {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   justify-content: flex-end;
+}
+.pricing-fixed-cell-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pricing-fixed-cell-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .pricing-fixed-cell-sep {
   color: var(--text-light);
@@ -2252,6 +2265,13 @@ button.ops-board-card-tag--clickable:active {
  * matches the Guest Rates group's right edge so the split is visible all
  * the way down the table. */
 .pricing-col-ctr-margin { border-left: 2px solid var(--border); }
+
+/* Fixed-mode rows on the Pricing page: warm amber tint across the whole
+ * row plus a thick left stripe on the first cell so the outliers are
+ * impossible to miss. Cell-level tints (season accent, Guest Rates
+ * group, CTR margin) overlay cleanly on top. */
+.pricing-row-fixed > td { background: rgba(217, 119, 6, 0.18); }
+.pricing-row-fixed > td:first-child { box-shadow: inset 4px 0 0 0 #D97706; }
 
 /* Seasons page: inline editor for the JSONB date_ranges array. Each row
  * is one {start, end} pair with a remove button; "+ Add range" appends. */

@@ -162,6 +162,7 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
   const [season, setSeason] = useState<SeasonKey>('peak');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
+  const [modeFilter, setModeFilter] = useState<'all' | 'system' | 'fixed'>('all');
 
   const [unlocked, setUnlocked] = useState(false);
   /** Pending edits keyed by `${propertyId}:${year}` → new daily rate.
@@ -478,6 +479,8 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
     let result = properties;
     if (statusFilter === 'active')   result = result.filter(p => p.is_published);
     if (statusFilter === 'inactive') result = result.filter(p => !p.is_published);
+    if (modeFilter === 'system') result = result.filter(p => (p.pricing_mode || 'system') === 'system');
+    if (modeFilter === 'fixed')  result = result.filter(p => p.pricing_mode === 'fixed');
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(p =>
@@ -486,7 +489,7 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
       );
     }
     return result;
-  }, [properties, statusFilter, search]);
+  }, [properties, statusFilter, modeFilter, search]);
 
   async function copyToClipboard(value: number, label: string) {
     try {
@@ -589,6 +592,16 @@ export default function FinancePricingPage({ embedded = false }: { embedded?: bo
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="all">All</option>
+            </select>
+            <select
+              className="list-filter-select"
+              value={modeFilter}
+              onChange={(e) => setModeFilter(e.target.value as any)}
+              title="Filter by pricing mode"
+            >
+              <option value="all">All modes</option>
+              <option value="system">System only</option>
+              <option value="fixed">Fixed only</option>
             </select>
             <div className="list-search">
               <span className="list-search-icon">🔍</span>
@@ -694,8 +707,12 @@ function PricingTable({
     const fixedSlotEffective = fixedSlotPending ?? fixedSlotCommitted;
     const guestRate = fixedSlotEffective.guest ?? null;
     const ownerRate = fixedSlotEffective.owner ?? null;
-    const fixedMargin = isFixed && guestRate != null && ownerRate != null ? guestRate - ownerRate : null;
-    const platformShare = fixedMargin != null ? Math.round(fixedMargin / 2) : null;
+    // Full margin available between guest + owner. The Pricing page shows
+    // this as the entire pie; agent splitting is a booking-time concern
+    // handled in the Pricing modal, not here.
+    const fixedMargin = isFixed && guestRate != null && ownerRate != null
+      ? Math.round(guestRate - ownerRate)
+      : null;
 
     // Effective season rate (System mode). On Peak this IS the baseline.
     // On other seasons, override wins; otherwise auto-suggest = peak × mult.
@@ -718,7 +735,7 @@ function PricingTable({
       name: titleCase(prop.property_name),
       is_published: prop.is_published ? 1 : 0,
       base_rate: effectiveRate ?? 0,
-      ctr_margin: isFixed ? (platformShare ?? 0) : (ctr ?? 0),
+      ctr_margin: isFixed ? (fixedMargin ?? 0) : (ctr ?? 0),
       direct_rate: direct ?? 0,
       ...platformPrices,
       prop,
@@ -798,24 +815,17 @@ function PricingTable({
       render: (row: DataRow) => {
         const r = row as any;
         if (r.isFixed) {
+          // Fixed mode: Owner Rate column edits ONLY the owner rate, same
+          // shape as a System row. The matching Guest rate is editable
+          // in the Direct column below so the table layout stays familiar.
           return (
-            <div className="pricing-fixed-cell">
-              <BaselineCell
-                year={year}
-                saved={r.guestCommitted}
-                pending={r.guestPending}
-                locked={!unlocked}
-                onChange={(v) => stageFixedSlot(r.id, { guest: v })}
-              />
-              <span className="pricing-fixed-cell-sep">/</span>
-              <BaselineCell
-                year={year}
-                saved={r.ownerCommitted}
-                pending={r.ownerPending}
-                locked={!unlocked}
-                onChange={(v) => stageFixedSlot(r.id, { owner: v })}
-              />
-            </div>
+            <BaselineCell
+              year={year}
+              saved={r.ownerCommitted}
+              pending={r.ownerPending}
+              locked={!unlocked}
+              onChange={(v) => stageFixedSlot(r.id, { owner: v })}
+            />
           );
         }
         if (season === 'peak') {
@@ -849,7 +859,21 @@ function PricingTable({
       cellClassName: 'pricing-col-guest-rate pricing-col-guest-rate--first',
       group: 'Guest rates',
       render: (row: DataRow) => {
-        const v = (row as any).direct_rate as number;
+        const r = row as any;
+        // Fixed mode: Direct cell is the editable Guest rate (3rd-party set).
+        if (r.isFixed) {
+          return (
+            <BaselineCell
+              year={year}
+              saved={r.guestCommitted}
+              pending={r.guestPending}
+              locked={!unlocked}
+              onChange={(v) => stageFixedSlot(r.id, { guest: v })}
+            />
+          );
+        }
+        // System mode: read-only computed direct rate, click to copy.
+        const v = r.direct_rate as number;
         if (v <= 0) return <span style={{ color: 'var(--text-light)' }}>—</span>;
         return (
           <button
@@ -910,6 +934,7 @@ function PricingTable({
         searchable={false}
         resultsBarContent={null}
         defaultSort={{ key: 'name', direction: 'asc' }}
+        rowClassName={(row: any) => row.isFixed ? 'pricing-row-fixed' : ''}
       />
     </div>
   );
