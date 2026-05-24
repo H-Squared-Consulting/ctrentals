@@ -51,17 +51,6 @@ export const PRICING_PROPOSAL_STATUS_CONFIG: Record<string, { label: string; col
   archived: { label: 'Archived', color: '#6B7280', bg: '#F3F4F6' },
 };
 
-// "Normal" is the 1.0× default — no seasonal adjustment. Listed first so
-// it sits as the calculator's resting state; the named seasons multiply
-// from there.
-export const SEASON_TAG_OPTIONS = [
-  { value: 'Normal', label: 'Normal' },
-  { value: 'Peak',   label: 'Peak' },
-  { value: 'High',   label: 'High' },
-  { value: 'Mid',    label: 'Mid' },
-  { value: 'Low',    label: 'Low' },
-];
-
 export const CALC_METHOD_OPTIONS = [
   { value: 'margin', label: 'Margin' },
   { value: 'markup', label: 'Markup' },

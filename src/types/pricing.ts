@@ -11,16 +11,6 @@ export interface Baseline {
   updated_at: string;
 }
 
-export interface SeasonTag {
-  id: string;
-  property_id: string | null;
-  name: string;
-  start_date: string;
-  end_date: string;
-  multiplier: number;
-  created_at: string;
-}
-
 export interface Agent {
   id: string;
   name: string;
