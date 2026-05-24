@@ -229,11 +229,17 @@ export default function HomeOwnersPage() {
 
   /** Detach `ownerId` from a single property: delete the link, promote
    *  another surviving owner to primary if needed, sync the legacy
-   *  owner_id column. Used by save() drops and by the delete flow. */
+   *  owner_id column. Used by save() drops and by the delete flow.
+   *  Reads is_primary live from the DB so a stale propertyOwners
+   *  snapshot can't make us skip the promote step. */
   async function detachOwnerFromProperty(propertyId: string, ownerId: string) {
-    const wasPrimary = propertyOwners.some(
-      l => l.property_id === propertyId && l.owner_id === ownerId && l.is_primary,
-    );
+    const { data: thisLink } = await supabase
+      .from('property_owners')
+      .select('is_primary')
+      .eq('property_id', propertyId)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+    const wasPrimary = !!thisLink?.is_primary;
     await supabase
       .from('property_owners')
       .delete()
@@ -294,13 +300,26 @@ export default function HomeOwnersPage() {
       for (const id of originalIds) if (!selectedPropertyIds.has(id)) toDrop.push(id);
 
       for (const propId of toAdd) {
-        // Add a link. Mark primary only if the property currently has
-        // no other owners. Surfaces as the contact for that property.
-        const existing = propertyOwners.filter(l => l.property_id === propId);
-        const isPrimary = existing.length === 0;
+        // Live DB check, not state. propertyOwners is a page-mount
+        // snapshot — if it's stale (another tab wrote, or the user
+        // edited a property via PropertyEditModal in the same session)
+        // a state-based is_primary decision can collide with the partial
+        // unique index on (property_id WHERE is_primary=true) → 409.
+        // We also upsert with ignoreDuplicates so re-running over an
+        // already-linked (property, owner) pair doesn't 409 either.
+        const { data: liveLinks } = await supabase
+          .from('property_owners')
+          .select('id, owner_id, is_primary')
+          .eq('property_id', propId);
+        const alreadyLinked = (liveLinks || []).some(l => l.owner_id === ownerId);
+        const hasPrimary    = (liveLinks || []).some(l => l.is_primary);
+        const isPrimary     = !alreadyLinked && !hasPrimary;
         const { error } = await supabase
           .from('property_owners')
-          .insert({ property_id: propId, owner_id: ownerId, is_primary: isPrimary });
+          .upsert(
+            { property_id: propId, owner_id: ownerId, is_primary: isPrimary },
+            { onConflict: 'property_id,owner_id', ignoreDuplicates: true },
+          );
         if (error) throw error;
         if (isPrimary) await syncLegacyOwnerId(propId, ownerId);
       }
@@ -308,34 +327,9 @@ export default function HomeOwnersPage() {
       for (const propId of toDrop) {
         // Remove this owner's link to the property. If they were the
         // primary, promote any remaining owner (oldest first) to
-        // primary so the property still has a contact.
-        const wasPrimary = propertyOwners.some(
-          l => l.property_id === propId && l.owner_id === ownerId && l.is_primary,
-        );
-        const delRes = await supabase
-          .from('property_owners')
-          .delete()
-          .eq('property_id', propId)
-          .eq('owner_id', ownerId);
-        if (delRes.error) throw delRes.error;
-        if (wasPrimary) {
-          const survivors = await supabase
-            .from('property_owners')
-            .select('id, owner_id, created_at')
-            .eq('property_id', propId)
-            .order('created_at', { ascending: true })
-            .limit(1);
-          const nextPrimary = survivors.data?.[0];
-          if (nextPrimary) {
-            await supabase
-              .from('property_owners')
-              .update({ is_primary: true })
-              .eq('id', nextPrimary.id);
-            await syncLegacyOwnerId(propId, nextPrimary.owner_id);
-          } else {
-            await syncLegacyOwnerId(propId, null);
-          }
-        }
+        // primary so the property still has a contact. Reads live, not
+        // from state, for the same reason as the toAdd loop above.
+        await detachOwnerFromProperty(propId, ownerId);
       }
 
       toast.success(editing.id ? 'Owner updated' : 'Owner added');
