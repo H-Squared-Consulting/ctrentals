@@ -3474,6 +3474,7 @@ button.ops-board-card-tag--clickable:active {
 }
 .page-editor-tabs .subnav {
   overflow-x: auto;
+  overflow-y: hidden;
   flex-wrap: nowrap;
   -webkit-overflow-scrolling: touch;
   gap: var(--s-6);
