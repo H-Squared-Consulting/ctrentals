@@ -16,9 +16,11 @@ import { useLayout } from '../contexts/LayoutContext';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import NewProposalLauncher from '../components/NewProposalLauncher';
+import NightCount from '../components/NightCount';
 import ProposalDetailModal, { type ProposalForDetail } from '../components/ProposalDetailModal';
 import PricingModal from './PricingModal';
 import { CT_RENTALS_PARTNER_ID } from './constants';
+import { nightsBetween } from '../lib/nights';
 
 interface ProposalRow extends ProposalForDetail {
   property_name: string;
@@ -80,11 +82,6 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
-function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
-  if (!checkIn || !checkOut) return null;
-  const ms = new Date(checkOut).getTime() - new Date(checkIn).getTime();
-  return ms > 0 ? Math.round(ms / (1000 * 60 * 60 * 24)) : null;
-}
 
 function fmtRelative(iso: string): string {
   const days = daysSince(iso);
@@ -447,7 +444,7 @@ function ProposalCard({ p, onOpen }: { p: ProposalRow; onOpen: (p: ProposalRow) 
       <div className="ops-board-card-property" title={propertyName}>{propertyName}</div>
       <div className="ops-board-card-meta">
         {p.check_in && p.check_out
-          ? <span>{fmtDate(p.check_in)} to {fmtDate(p.check_out)}</span>
+          ? <span>{fmtDate(p.check_in)} to {fmtDate(p.check_out)}<NightCount checkIn={p.check_in} checkOut={p.check_out} /></span>
           : <span style={{ fontStyle: 'italic' }}>No dates</span>}
         <span style={{ flex: 1 }} />
         {days >= 1 && <span className={`ops-board-card-days ${daysCls}`}>{days}d</span>}

@@ -20,6 +20,7 @@ import type { DataRow } from '../components/DataTable';
 import MultiPicker from '../components/MultiPicker';
 import BookingModal from './BookingModal';
 import { CT_RENTALS_PARTNER_ID, BOOKING_STATUS_OPTIONS } from './constants';
+import { nightsBetween } from '../lib/nights';
 
 interface Property {
   id: string;
@@ -57,10 +58,8 @@ function fmtShort(d: string | null): string {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 }
-function nightsBetween(checkIn: string | null, checkOut: string | null): number {
-  if (!checkIn || !checkOut) return 0;
-  return daysBetween(new Date(checkIn), new Date(checkOut));
-}
+// nightsBetween used to live here. Consolidated into src/lib/nights.ts.
+// Call sites that previously expected `number` (not nullable) now use `?? 0`.
 
 // Continuous-scroll timeline: one fixed range (today ± months below),
 // zoom controls cell width only (px per day = density). Three tiers.
@@ -809,7 +808,7 @@ function BookingsList({
       email: b.guest_email ? b.guest_email.toLowerCase() : '',
       check_in: b.check_in,
       check_out: b.check_out,
-      nights: nightsBetween(b.check_in, b.check_out),
+      nights: nightsBetween(b.check_in, b.check_out) ?? 0,
       total: Number(b.total_amount) || 0,
       status: b.status,
       ref: (b.id || '').slice(0, 8),
