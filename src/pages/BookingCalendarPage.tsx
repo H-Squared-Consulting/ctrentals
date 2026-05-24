@@ -241,23 +241,20 @@ export default function BookingCalendarPage() {
     return m;
   }, [properties]);
 
-  // Cancelled bookings are dropped entirely (if it was cancelled it never
-  // happened — those dates are Available again). Remaining bookings are
-  // partitioned by the localStorage-backed Blocked flag into Booked vs Blocked.
-  // Property-side filters (status, suburb, beds, search) are applied via
-  // each booking's property — keeps the toolbar honest in List view, not
-  // just Board view. Date range narrows to bookings overlapping the
-  // window (mode-agnostic — the Board's Occupancy/Availability toggle
-  // only makes sense for the property list, not for individual bookings).
+  // List view literally consumes Board's filteredProperties as the
+  // property-side gate — same source of truth, the two views can never
+  // disagree on which properties are "in". Cancelled bookings always
+  // drop entirely (those dates are Available again). The Booked/Blocked
+  // status pill partitions the remainder via the localStorage flag.
+  // Date range narrows to bookings overlapping the window — applied
+  // directly to bookings because the Board's mode-aware overlap logic
+  // (Occupancy vs Availability) only makes sense for the property list.
   const filteredBookings = useMemo(() => {
+    const allowedPropertyIds = new Set(filteredProperties.map(p => p.id));
     let result = bookings.filter(b => b.status !== 'cancelled');
     if (statusFilter === 'booked')  result = result.filter(b => !isBlocked(b.id));
     if (statusFilter === 'blocked') result = result.filter(b => isBlocked(b.id));
-
-    result = result.filter(b => {
-      const prop = propertyById.get(b.property_id);
-      return prop ? propertyMatchesFilters(prop) : false;
-    });
+    result = result.filter(b => allowedPropertyIds.has(b.property_id));
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -281,7 +278,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, statusFilter, searchQuery, blockedIds, propertyMatchesFilters, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
+  }, [bookings, statusFilter, searchQuery, blockedIds, filteredProperties, searchCheckIn, searchCheckOut, searchFlex]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
