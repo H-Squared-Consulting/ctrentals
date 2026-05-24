@@ -23,6 +23,18 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
+type PersonRole = 'owner' | 'manager' | 'domestic' | 'gardener' | 'other';
+const ROLE_OPTIONS: Array<{ value: PersonRole; label: string }> = [
+  { value: 'owner',    label: 'Owner' },
+  { value: 'manager',  label: 'House manager' },
+  { value: 'domestic', label: 'Domestic' },
+  { value: 'gardener', label: 'Gardener' },
+  { value: 'other',    label: 'Other' },
+];
+function roleLabel(r: string | null | undefined): string {
+  return ROLE_OPTIONS.find(o => o.value === r)?.label || 'Owner';
+}
+
 interface HomeOwner {
   id: string;
   partner_id: string;
@@ -33,6 +45,7 @@ interface HomeOwner {
   vat_number: string | null;
   payment_notes: string | null;
   notes: string | null;
+  role: PersonRole;
   created_at: string;
 }
 
@@ -52,7 +65,7 @@ interface PropertyOwnerLink {
   is_primary: boolean;
 }
 
-const EMPTY_FORM = { name: '', email: '', phone: '', company: '', vat_number: '', payment_notes: '', notes: '' };
+const EMPTY_FORM = { name: '', email: '', phone: '', company: '', vat_number: '', payment_notes: '', notes: '', role: 'owner' as PersonRole };
 
 export default function HomeOwnersPage() {
   const { supabase } = useAuth();
@@ -82,7 +95,11 @@ export default function HomeOwnersPage() {
   const [propertyPickerSearch, setPropertyPickerSearch] = useState('');
   const [propertyPickerOpen, setPropertyPickerOpen] = useState(false);
 
-  useEffect(() => { setPageTitle('Home Owners'); }, [setPageTitle]);
+  useEffect(() => { setPageTitle('People'); }, [setPageTitle]);
+
+  // Filter by role. Defaults to 'owner' so the page opens to the
+  // most-common subset (matches how the page worked pre-roles).
+  const [roleFilter, setRoleFilter] = useState<'all' | PersonRole>('owner');
 
   async function load() {
     setLoading(true);
@@ -152,6 +169,7 @@ export default function HomeOwnersPage() {
 
   const filtered = useMemo(() => {
     return owners.filter(o => {
+      if (roleFilter !== 'all' && (o.role || 'owner') !== roleFilter) return false;
       if (companyFilter && o.company !== companyFilter) return false;
       if (portfolioFilter) {
         const has = (portfolioByOwner[o.id] || []).length > 0;
@@ -163,7 +181,7 @@ export default function HomeOwnersPage() {
       const text = [o.name, o.company, o.email, o.phone].filter(Boolean).join(' ').toLowerCase();
       return terms.every(t => text.includes(t));
     });
-  }, [owners, searchQuery, companyFilter, portfolioFilter, portfolioByOwner]);
+  }, [owners, searchQuery, roleFilter, companyFilter, portfolioFilter, portfolioByOwner]);
 
   function openAdd() {
     setEditing({ id: '', partner_id: CT_RENTALS_PARTNER_ID } as HomeOwner);
@@ -183,6 +201,7 @@ export default function HomeOwnersPage() {
       vat_number: o.vat_number || '',
       payment_notes: o.payment_notes || '',
       notes: o.notes || '',
+      role: (o.role || 'owner') as PersonRole,
     };
     const ownedIds = new Set((portfolioByOwner[o.id] || []).map(p => p.id));
     setEditing(o);
@@ -252,6 +271,7 @@ export default function HomeOwnersPage() {
         vat_number: form.vat_number.trim() || null,
         payment_notes: form.payment_notes.trim() || null,
         notes: form.notes.trim() || null,
+        role: form.role || 'owner',
         updated_at: new Date().toISOString(),
       };
       let ownerId = editing.id;
@@ -380,6 +400,11 @@ export default function HomeOwnersPage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="list-toolbar">
           <div className="list-toolbar-left">
+            <select className="list-filter-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} title="Filter by role">
+              <option value="owner">Owners</option>
+              {ROLE_OPTIONS.filter(r => r.value !== 'owner').map(r => <option key={r.value} value={r.value}>{r.label}s</option>)}
+              <option value="all">All people</option>
+            </select>
             <select className="list-filter-select" value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)} title="Filter by company">
               <option value="">All companies</option>
               {companies.map(c => <option key={c} value={c}>{c}</option>)}
@@ -432,7 +457,7 @@ export default function HomeOwnersPage() {
           [...selectedPropertyIds].sort().join(',') !== [...initialSelectedIds].sort().join(',');
         return (
           <DetailModal
-            title={editing.id ? (titleCase(form.name) || 'Owner') : 'Add owner'}
+            title={editing.id ? (titleCase(form.name) || roleLabel(form.role)) : `Add ${roleLabel(form.role).toLowerCase()}`}
             subtitle={editing.id ? (
               <>
                 {form.company && <span>{titleCase(form.company)}</span>}
@@ -457,11 +482,19 @@ export default function HomeOwnersPage() {
             ) : null}
             onClose={() => setEditing(null)}
           >
-            <DetailModalSection heading="Owner details">
+            <DetailModalSection heading="Contact details">
               <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
-                <div className="form-group">
-                  <label className="form-label">Name *</label>
-                  <input className="form-input" autoFocus={mode === 'edit'} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Name *</label>
+                    <input className="form-input" autoFocus={mode === 'edit'} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Role</label>
+                    <select className="form-input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as PersonRole })}>
+                      {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Company</label>
@@ -519,6 +552,7 @@ export default function HomeOwnersPage() {
 interface OwnerRow extends DataRow {
   id: string;
   name: string;
+  role: PersonRole;
   company: string;
   vat_number: string;
   email: string;
@@ -538,6 +572,7 @@ function OwnersTable({
   const rows: OwnerRow[] = owners.map(o => ({
     id: o.id,
     name: titleCase(o.name),
+    role: (o.role || 'owner') as PersonRole,
     company: titleCase(o.company || ''),
     vat_number: o.vat_number || '',
     email: o.email ? o.email.toLowerCase() : '',
@@ -548,6 +583,13 @@ function OwnersTable({
 
   const columns = [
     { key: 'name', label: 'Name', sortable: true, render: (row: DataRow) => <strong>{(row as OwnerRow).name || <span className="text-light">-</span>}</strong> },
+    {
+      key: 'role', label: 'Role', sortable: true, width: '130px',
+      render: (row: DataRow) => {
+        const r = (row as OwnerRow).role;
+        return <span className="ops-status-pill ops-status-pill--drafting"><span className="ops-status-pill-dot" />{roleLabel(r)}</span>;
+      },
+    },
     { key: 'company', label: 'Company', sortable: true, render: (row: DataRow) => (row as OwnerRow).company || <span className="text-light">-</span> },
     { key: 'vat_number', label: 'VAT No.', sortable: true, render: (row: DataRow) => (row as OwnerRow).vat_number || <span className="text-light">-</span> },
     { key: 'email', label: 'Email', sortable: true, hideOnMobile: true, render: (row: DataRow) => (row as OwnerRow).email || <span className="text-light">-</span> },
