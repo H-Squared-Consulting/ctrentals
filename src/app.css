@@ -1918,7 +1918,9 @@ button.ops-board-card-tag--clickable:active {
 .ops-status-pill--peak       { background: var(--error-bg);   color: #991B1B; border-color: #FECACA; }
 .ops-status-pill--high       { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
 .ops-status-pill--mid        { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--shoulder   { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
 .ops-status-pill--low        { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+.ops-status-pill--winter     { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
 
 /* ================================================================
    Action modal — the standard Tier B shell used by all one-shot
@@ -2198,6 +2200,95 @@ button.ops-board-card-tag--clickable:active {
    booked dates on each property's row. Horizontal scroll for the
    timeline; property column sticks to the left edge as you scroll.
    ================================================================ */
+/* Pricing page: Fixed-mode rate cell holds two BaselineCell inputs
+ * (Guest / Owner) side by side. Pure layout wrapper, no visual styling. */
+.pricing-fixed-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.pricing-fixed-cell-sep {
+  color: var(--text-light);
+  font-size: 0.75rem;
+}
+
+/* Pricing page: Owner Rate column gets a per-season accent on the header
+ * (and a faint matching tint on each body cell) so the active season is
+ * unmissable beyond the toggle. Tints intentionally soft — older eyes,
+ * never light grey for content. */
+.pricing-col-season-peak     { background: rgba(220, 38, 38, 0.06); }
+.pricing-col-season-high     { background: rgba(217, 119, 6, 0.06); }
+.pricing-col-season-shoulder { background: rgba(5, 150, 105, 0.06); }
+.pricing-col-season-winter   { background: rgba(37, 99, 235, 0.06); }
+
+/* Pricing page: Direct + each external platform list-price column belong
+ * to the "Guest rates" visual group — same neutral tint, a left border
+ * on the first column to mark the group boundary. */
+.pricing-col-guest-rate         { background: rgba(0, 0, 0, 0.02); }
+.pricing-col-guest-rate--first  { border-left: 2px solid var(--border); }
+
+/* CTR Margin: own column group, distinct from Guest Rates. Left border
+ * matches the Guest Rates group's right edge so the split is visible all
+ * the way down the table. */
+.pricing-col-ctr-margin { border-left: 2px solid var(--border); }
+
+/* Seasons page: inline editor for the JSONB date_ranges array. Each row
+ * is one {start, end} pair with a remove button; "+ Add range" appends. */
+.seasons-ranges-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.seasons-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seasons-range-row .form-input {
+  width: 80px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+.seasons-range-arrow {
+  color: var(--text-light);
+  font-size: 0.75rem;
+}
+
+/* DataTable group header row — sits above the regular column headers,
+ * colspan-merges columns sharing the same `group` label. Small caps text
+ * with a subtle bottom rule so it reads as a section title. */
+.datatable-group-row > th {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: transparent;
+}
+.datatable-group-row > th.datatable-group-label { text-align: center; }
+
+/* Pricing page banners — one calm definition banner on Peak, one tinted
+ * "you're in [season] override" notice on every other season. Sits above
+ * the toolbar so it's the first thing the user reads. */
+.pricing-banner {
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  border-left: 4px solid var(--border);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+}
+.pricing-banner strong { color: var(--text); }
+.pricing-banner--peak     { background: rgba(220, 38, 38, 0.08);  border-left-color: rgba(220, 38, 38, 0.7); }
+.pricing-banner--high     { background: rgba(217, 119, 6, 0.08);  border-left-color: rgba(217, 119, 6, 0.7); }
+.pricing-banner--shoulder { background: rgba(5, 150, 105, 0.08);  border-left-color: rgba(5, 150, 105, 0.7); }
+.pricing-banner--winter   { background: rgba(37, 99, 235, 0.08);  border-left-color: rgba(37, 99, 235, 0.7); }
+
 /* Two-pane layout: left = property column (no horizontal scroll, ever),
  * right = timeline (horizontal scroll). Vertical scroll lives on the right
  * pane; JS mirrors its scrollTop to the left so rows stay aligned. The
