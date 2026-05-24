@@ -20,6 +20,7 @@ import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 import FinancePricingPage from './pages/FinancePricingPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
+import AgentPortalPage from './pages/AgentPortalPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -119,9 +120,14 @@ export function App() {
 
   if (loading) return <LoadingSpinner fullScreen />;
 
-  // Gate the entire portal to the admin host(s). Static public pages
-  // (brochure.html, proposal.html) live outside React and are unaffected.
-  if (!isAdminHost()) {
+  // Gate the entire admin portal to the admin host(s). Static public
+  // pages (brochure.html, proposal.html) live outside React and are
+  // unaffected. The agent self-service portal at /q/:token is a React
+  // route that must also render on the public domain, so allow it
+  // through regardless of host.
+  const isAgentPortalRoute = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/q/');
+  if (!isAdminHost() && !isAgentPortalRoute) {
     return <ComingSoon />;
   }
 
@@ -130,6 +136,10 @@ export function App() {
       <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
       {/* Invite acceptance — must be reachable without an existing session. */}
       <Route path="/accept-invite" element={<AcceptInvitePage />} />
+
+      {/* Public agent self-service portal. Token-gated, no admin
+          chrome, renders on any host (e.g. southernescapes.co.za/q/...). */}
+      <Route path="/q/:token" element={<AgentPortalPage />} />
 
       {/* Home */}
       <Route path="/dashboard" element={<Page><HomePage /></Page>} />
