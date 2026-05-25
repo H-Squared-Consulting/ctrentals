@@ -41,6 +41,19 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
+/** Per-tier colour for the season pill on each property row. Falls
+ *  back to a neutral grey for unknown tags. Matches the kanban's
+ *  "obvious at a glance" vibe — Peak red because it's the anchor /
+ *  top rate, Winter blue because it's coldest / cheapest. */
+function seasonPillColour(tag: string): { bg: string; fg: string } {
+  const t = tag.toLowerCase();
+  if (t.includes('peak'))     return { bg: '#FEE2E2', fg: '#991B1B' };
+  if (t.includes('high'))     return { bg: '#FEF3C7', fg: '#92400E' };
+  if (t.includes('shoulder')) return { bg: '#E0F2FE', fg: '#075985' };
+  if (t.includes('winter'))   return { bg: '#DBEAFE', fg: '#1E40AF' };
+  return { bg: '#F3F4F6', fg: '#6B7280' };
+}
+
 interface PropertyRow {
   id: string;
   property_name: string;
@@ -130,7 +143,14 @@ function seasonForDate(seasons: SeasonRow[], checkIn: string | null): SeasonRow 
  *  The match modal batch-loads baselines + seasons once on mount;
  *  this function then runs synchronously per property in-memory.
  *  Removes the previous "50 properties × 2 queries each" fan-out
- *  that caused slow + flaky loads in the picker. */
+ *  that caused slow + flaky loads in the picker.
+ *
+ *  Defaults the season to PEAK (the anchor / highest tier) so the
+ *  team always starts from the top of the rate card and discounts
+ *  down via Edit pricing when they want a different season. Auto-
+ *  picking by stay date was confusing — a December enquiry might
+ *  silently land on Peak while a June one defaulted to Winter, even
+ *  though the team always wants Peak as the negotiating anchor. */
 function buildDefaultDirectSnapshot(
   baselineRow: BaselineRow | null,
   seasons: SeasonRow[],
@@ -140,7 +160,7 @@ function buildDefaultDirectSnapshot(
   const baseline = Number(baselineRow.daily_rate) || 0;
   if (baseline <= 0) return null;
 
-  const seasonRow = seasonForDate(seasons, args.checkIn);
+  const seasonRow = seasons.find(s => s.key === 'peak') || seasons[0] || null;
   const seasonMultiplier = seasonRow ? Number(seasonRow.multiplier) : 1;
 
   const breakdown = calculatePricing({
@@ -196,6 +216,12 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
   const { user } = useAuth();
   const [properties, setProperties] = useState<PropertyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Set if any of the 4 startup queries blow up. Surfaces an inline
+   *  error + Retry button instead of leaving the user stuck on a
+   *  spinner forever, which is what we used to do before. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Bump to force the startup effect to re-run on Retry. */
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** Per-property snapshot map. Populated lazily — properties with
@@ -223,6 +249,8 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setLoadError(null);
+      try {
       const year = new Date().getFullYear();
       // Property filter — bedrooms exact-match against the multi-
       // select array, plus availability on the requested dates.
@@ -286,10 +314,19 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
         });
       }
       setDefaults(out);
+      } catch (err: any) {
+        if (cancelled) return;
+        console.error('EnquiryPropertyMatchModal load failed:', err);
+        setLoadError(err?.message || 'Failed to load properties');
+        setLoading(false);
+      }
     })();
     return () => { cancelled = true; };
+    // Re-fetch when the enquiry's filter inputs change OR the user
+    // hits Retry (loadAttempt bump). bedrooms_options included so
+    // multi-select changes on the host don't get stale results.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out]);
+  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out, JSON.stringify(enquiry.bedrooms_options ?? []), loadAttempt]);
 
   // Search filter (name + suburb) applied on the matched set.
   const filtered = useMemo(() => {
@@ -540,9 +577,13 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             type="button"
             className="btn btn-primary"
             onClick={handleSaveAll}
-            disabled={saving}
+            // Block Save while the property list is still loading or
+            // failed to load — saving against a half-rendered list
+            // would persist proposals against stale property data.
+            disabled={saving || loading || !!loadError}
+            title={loading ? 'Wait for the property list to finish loading' : undefined}
           >
-            {saving ? 'Saving…' : primaryLabel}
+            {saving ? 'Saving…' : loading ? 'Loading…' : primaryLabel}
           </button>
         }
         // Replace "Cancel" with "Back" — this is step 2 of a two-step
@@ -560,7 +601,29 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
           style={{ marginBottom: 12 }}
         />
 
-        {loading ? (
+        {loadError ? (
+          <div style={{
+            padding: 16,
+            border: '1px dashed var(--color-danger, #DC2626)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-danger, #DC2626)',
+            fontSize: '0.8125rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}>
+            <span>Couldn't load properties: {loadError}</span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem' }}
+              onClick={() => setLoadAttempt(n => n + 1)}
+            >
+              ↻ Retry
+            </button>
+          </div>
+        ) : loading ? (
           <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading properties…</div>
         ) : filtered.length === 0 ? (
           <div style={{
@@ -627,8 +690,34 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
                       </div>
                     ) : (
                       <>
-                        <div style={{ fontSize: '0.875rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-                          {fmtRand(dailyRate!)} <span style={{ fontSize: '0.6875rem', fontWeight: 400, color: 'var(--text-light)' }}>/ night</span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                          <div style={{ fontSize: '0.875rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                            {fmtRand(dailyRate!)} <span style={{ fontSize: '0.6875rem', fontWeight: 400, color: 'var(--text-light)' }}>/ night</span>
+                          </div>
+                          {/* Tiny season pill so users can see at a
+                              glance what tier the default snapshot is
+                              priced at. Reads from the snapshot's
+                              seasonTag so per-row Edit pricing
+                              overrides are reflected. */}
+                          {snap?.seasonTag && (
+                            <span
+                              title={`Pricing tier · ${snap.seasonTag}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '1px 6px',
+                                borderRadius: 4,
+                                background: seasonPillColour(snap.seasonTag).bg,
+                                color: seasonPillColour(snap.seasonTag).fg,
+                                fontSize: '0.625rem',
+                                fontWeight: 700,
+                                letterSpacing: '0.04em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              {snap.seasonTag}
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
                           {fmtRand(totalStay!)} <span style={{ color: 'var(--text-light)' }}>· {nights}n total</span>
