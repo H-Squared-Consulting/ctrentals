@@ -32,7 +32,10 @@ type NavItem = {
 const NAV: NavItem[] = [
   { to: '/dashboard',              label: 'Home',       icon: '🏠' },
   { to: '/operations/enquiries',   label: 'Enquiries',  icon: '📩', aliases: ['/enquiry', '/operations/pipeline'] },
-  { to: '/operations/proposals',   label: 'Proposals',  icon: '📄' },
+  // Proposals page retired — every proposal action now lives inline
+  // on the Enquiries deal modal (Send, Accept, Decline, Send all
+  // drafts). The /operations/proposals route still exists as a
+  // redirect so stale bookmarks don't 404.
   { to: '/operations/bookings',    label: 'Bookings',   icon: '📅' },
   { to: '/properties',             label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
   { to: '/crm/people',             label: 'People',     icon: '👥', aliases: ['/crm/home-owners'] },

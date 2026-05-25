@@ -1,9 +1,10 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { useLayout } from './contexts/LayoutContext';
 import { LoginPage } from './pages/LoginPage';
 import PropertiesPage from './pages/PropertiesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
+import EnquiryMatchPage from './pages/EnquiryMatchPage';
 import BookingCalendarPage from './pages/BookingCalendarPage';
 import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -11,7 +12,10 @@ import Fab from './components/Fab';
 import Sidebar from './components/Sidebar';
 import SectionPlaceholder from './pages/SectionPlaceholder';
 import PipelinePage from './pages/PipelinePage';
-import ProposalsPage from './pages/ProposalsPage';
+// ProposalsPage no longer imported — the /operations/proposals route
+// is now a redirect to /operations/enquiries (see ProposalsRedirect
+// below). The page file itself stays in src/pages for a release or
+// two while we watch usage, then gets deleted in a follow-up.
 import AgentsPage from './pages/AgentsPage';
 import GuestsPage from './pages/GuestsPage';
 import HomeOwnersPage from './pages/HomeOwnersPage';
@@ -115,6 +119,18 @@ function ComingSoon() {
   );
 }
 
+/** Stale-bookmark catcher for the retired /operations/proposals route.
+ *  Forwards ?enquiry=<id> as ?deal=<id> on /operations/enquiries so the
+ *  PipelinePage can auto-open that deal's modal on arrival. */
+function ProposalsRedirect() {
+  const [params] = useSearchParams();
+  const enq = params.get('enquiry');
+  const target = enq
+    ? `/operations/enquiries?deal=${encodeURIComponent(enq)}`
+    : '/operations/enquiries';
+  return <Navigate to={target} replace />;
+}
+
 export function App() {
   const { user, loading } = useAuth();
 
@@ -157,7 +173,12 @@ export function App() {
           a 5-column proposal-status kanban. Bookings is the calendar. */}
       <Route path="/operations" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/enquiries" element={<Page><PipelinePage /></Page>} />
-      <Route path="/operations/proposals" element={<Page><ProposalsPage /></Page>} />
+      {/* /operations/proposals retired — every proposal action now lives
+          inline on the Enquiries deal modal. Keep the path as a
+          redirect so stale bookmarks (and old ?enquiry=<id> deep links)
+          land on Enquiries instead of 404'ing. PipelinePage reads
+          ?deal=<id> from the URL to auto-open that deal modal. */}
+      <Route path="/operations/proposals" element={<ProposalsRedirect />} />
       <Route path="/operations/pipeline" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/bookings" element={<Page><BookingCalendarPage /></Page>} />
 
@@ -192,6 +213,7 @@ export function App() {
 
       {/* Standalone form */}
       <Route path="/enquiry/new" element={<Page><EnquiryForm /></Page>} />
+      <Route path="/enquiry/new/match" element={<Page><EnquiryMatchPage /></Page>} />
 
       {/* Legacy URL redirects */}
       <Route path="/enquiries" element={<Navigate to="/operations/enquiries" replace />} />

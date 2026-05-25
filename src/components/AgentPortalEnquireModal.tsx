@@ -22,6 +22,7 @@ function titleCase(s: string | null | undefined): string {
 }
 
 const EMPTY_FORM = {
+  subject: '',
   guestName: '',
   guestEmail: '',
   guestPhone: '',
@@ -55,6 +56,7 @@ export default function AgentPortalEnquireModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return;
+    if (!form.subject.trim())            { toast.warning('Subject is required — a short summary of the trip'); return; }
     if (!form.checkIn || !form.checkOut) { toast.warning('Check-in and check-out dates are required'); return; }
     if (form.checkIn >= form.checkOut)   { toast.warning('Check-out must be after check-in'); return; }
 
@@ -63,6 +65,7 @@ export default function AgentPortalEnquireModal({
       const result = await submitAgentEnquiry({
         token,
         propertyId: property.id,
+        subject: form.subject.trim(),
         guestName: form.guestName.trim(),
         guestEmail: form.guestEmail.trim(),
         guestPhone: form.guestPhone.trim(),
@@ -96,6 +99,22 @@ export default function AgentPortalEnquireModal({
         }
         onClose={onClose}
       >
+        <div className="form-group" style={{ marginBottom: 'var(--s-3)' }}>
+          <label className="form-label">Subject *</label>
+          <input
+            className="form-input"
+            value={form.subject}
+            onChange={(e) => setField('subject', e.target.value)}
+            placeholder="A short summary of the trip"
+            maxLength={120}
+            autoFocus
+            required
+          />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+            e.g. “Family of 6 for Easter” or “Couple weekend in Boulderwood”. Helps the Southern Escapes team spot your enquiry quickly.
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
           <div className="form-group">
             <label className="form-label">Check-in *</label>

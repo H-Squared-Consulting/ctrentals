@@ -12,6 +12,7 @@
 // original seed) so we keep its id, slug, partner_id stable.
 
 import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'node:crypto';
 
 const SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -95,14 +96,18 @@ if (locStr) {
   if (parts.length >= 2) province = parts[1];
 }
 
-// Amenities — flatten all "available" amenities across groups.
-const amenSection = sectionByType('AmenitiesSection');
-const amenityNames = [];
-for (const grp of amenSection?.seeAllAmenitiesGroups ?? []) {
+// Amenities — Airbnb moved these out of AmenitiesSection (now empty
+// post-revamp) into node.pdpPresentation.amenities.seeAllAmenitiesGroups.
+// Flatten all "available" amenities across groups; dedupe to keep the
+// tag list tidy when the same item is repeated across groups.
+const amenityGroups = node?.pdpPresentation?.amenities?.seeAllAmenitiesGroups ?? [];
+const amenitySet = new Set();
+for (const grp of amenityGroups) {
   for (const a of grp.amenities ?? []) {
-    if (a.available && a.title) amenityNames.push(a.title);
+    if (a.available && a.title) amenitySet.add(a.title);
   }
 }
+const amenityNames = [...amenitySet];
 
 // Hero + gallery — PhotoTourModal has full set; HERO_DEFAULT is fallback.
 const photoModal = sectionByType('PhotoTourModalSection');
@@ -151,6 +156,30 @@ console.log('rating:       ', externalRating);
 console.log('booking_url:  ', cleanBookingUrl);
 console.log('description:  ', description ? `${description.slice(0,140)}…` : null);
 
+// gallery_sections is the structured source-of-truth the Gallery
+// editor reads from. We seed a single Untitled section containing
+// every scraped photo, hero flagged. The user can rename / split
+// the section later. Without this, scraped properties show their
+// old gallery_sections rows in the Gallery tab even though the
+// flat gallery_images column is fresh.
+const allPhotos = [
+  ...(heroImageUrl ? [{ url: heroImageUrl, is_hero: true }] : []),
+  ...galleryImages.map(u => ({ url: u, is_hero: false })),
+];
+const gallerySections = allPhotos.length > 0 ? [{
+  id: randomUUID(),
+  name: '',
+  sort_order: 0,
+  photos: allPhotos.map((p, i) => ({
+    id: randomUUID(),
+    url: p.url,
+    caption: '',
+    is_hero: p.is_hero,
+    is_visible: true,
+    sort_order: i,
+  })),
+}] : [];
+
 const update = {
   tagline: title,
   description,
@@ -159,6 +188,7 @@ const update = {
   bathrooms: bathrooms || undefined,
   hero_image_url: heroImageUrl,
   gallery_images: galleryImages,
+  gallery_sections: gallerySections,
   amenity_tags: amenityNames,
   booking_url: cleanBookingUrl,
   listing_links: [{ url: cleanBookingUrl, label: 'View on Airbnb', platform: 'Airbnb' }],

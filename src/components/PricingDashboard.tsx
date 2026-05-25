@@ -136,12 +136,16 @@ interface Props {
  * so they align vertically.
  */
 function BreakdownRow({
-  label, pct, value, delta,
+  label, pct, value, delta, nights,
 }: {
   label: string;
   pct?: number;
   value: number;
   delta?: number | null;
+  /** When set, render a secondary "× N nights = R total" line beneath
+   *  the per-night currency so the user can size against a stay
+   *  budget without doing the arithmetic in their head. */
+  nights?: number;
 }) {
   const hasDelta = delta != null && Math.abs(delta) >= 1;
   const negative = (delta ?? 0) < 0;
@@ -153,9 +157,21 @@ function BreakdownRow({
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>{pct.toFixed(1)}%</span>
         )}
       </span>
-      <strong style={{ fontSize: '0.9375rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-        {fmtRand(value)}
-      </strong>
+      <div style={{ textAlign: 'right' }}>
+        <strong style={{ fontSize: '0.9375rem', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtRand(value)}
+        </strong>
+        {nights && nights > 0 && (
+          <div style={{
+            fontSize: '0.75rem',
+            color: 'var(--text-secondary)',
+            fontVariantNumeric: 'tabular-nums',
+            marginTop: 1,
+          }}>
+            {fmtRand(value * nights)} <span style={{ color: 'var(--text-light)' }}>· {nights}n total</span>
+          </div>
+        )}
+      </div>
       <span style={{
         fontSize: '0.8125rem',
         color: hasDelta ? (negative ? 'var(--error)' : 'var(--success)') : 'transparent',
@@ -176,6 +192,7 @@ function BreakdownRows({
   agentPct,
   agentLabel,
   compareTo,
+  nights,
 }: {
   scenario: ScenarioType;
   breakdown: PricingBreakdown;
@@ -183,6 +200,11 @@ function BreakdownRows({
   agentPct: number;
   agentLabel: string;
   compareTo?: PricingBreakdown | null;
+  /** Stay length in nights — when set, every R-amount row shows a
+   *  "total for the stay" sub-line so the user can sanity-check
+   *  against a budget like "R100k–R120k for our week" without
+   *  reaching the final confirmation step. */
+  nights?: number;
 }) {
   return (
     <div style={{
@@ -198,17 +220,20 @@ function BreakdownRows({
         label="Guest pays"
         value={breakdown.clientPriceExclVat}
         delta={compareTo ? breakdown.clientPriceExclVat - compareTo.clientPriceExclVat : null}
+        nights={nights}
       />
       <BreakdownRow
         label="Owner net"
         value={breakdown.ownerNet}
         delta={compareTo ? breakdown.ownerNet - compareTo.ownerNet : null}
+        nights={nights}
       />
       <BreakdownRow
         label="CTR earns"
         pct={ctrPct}
         value={breakdown.ctrTake}
         delta={compareTo ? breakdown.ctrTake - compareTo.ctrTake : null}
+        nights={nights}
       />
       {scenario === 'agent' && (
         <BreakdownRow
@@ -220,6 +245,7 @@ function BreakdownRows({
             : agentPct}
           value={breakdown.agentTake}
           delta={compareTo ? breakdown.agentTake - compareTo.agentTake : null}
+          nights={nights}
         />
       )}
       {scenario === 'platform' && (
@@ -230,6 +256,7 @@ function BreakdownRows({
             : undefined}
           value={breakdown.platformFees}
           delta={compareTo ? breakdown.platformFees - compareTo.platformFees : null}
+          nights={nights}
         />
       )}
     </div>
@@ -240,7 +267,7 @@ export default function PricingDashboard({
   property,
   supabase,
   initialScenario,
-  nights: _nights, // reserved for total-stay display in a future iteration
+  nights, // stay length, forwarded to BreakdownRows for total-stay sub-lines
   initialSnapshot,
   initialAgentId,
   onCreateProposal,
@@ -799,6 +826,7 @@ export default function PricingDashboard({
                 ctrPct={snapshot?.ctrPct ?? 0}
                 agentPct={snapshot?.agentPct ?? 0}
                 agentLabel={agentLabel}
+                nights={nights}
               />
             </div>
           ) : (
@@ -822,6 +850,7 @@ export default function PricingDashboard({
             ctrPct={defaultCtrPct}
             agentPct={defaultAgentPct}
             agentLabel={agentLabel}
+            nights={nights}
           />
         )}
       </div>
@@ -908,6 +937,7 @@ export default function PricingDashboard({
               agentPct={effAgentPct}
               agentLabel={agentLabel}
               compareTo={overridesActive ? benchmark : null}
+              nights={nights}
             />
           </div>
         )}

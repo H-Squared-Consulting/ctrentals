@@ -1596,6 +1596,12 @@ select.form-input { cursor: pointer; }
   border-top: 4px solid var(--text-light);
   border-radius: 8px 8px 0 0;
   box-shadow: var(--shadow-sm);
+  /* Fixed height so cards in every column start at the same y even
+     when the description text wraps differently or empty messages
+     change. Without this the first-card top edges drift out of
+     alignment across columns. */
+  min-height: 82px;
+  justify-content: space-between;
 }
 .ops-board-column-header-top,
 .ops-board-column-header-bottom {
@@ -1674,6 +1680,54 @@ select.form-input { cursor: pointer; }
 }
 .ops-board-card--stale {
   border-left: 3px solid var(--warning);
+}
+/* Brief flash when the user lands on the board with
+   ?deal=<id>&highlight=1 — gives the just-created enquiry a 2.5s
+   pulse so the eye finds it without an extra modal pop. Outlines
+   in the primary blue and softly cycles to draw attention without
+   being jarring. */
+@keyframes ops-board-card-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(30, 64, 175, 0); }
+  20%      { box-shadow: 0 0 0 4px rgba(30, 64, 175, 0.35); }
+  80%      { box-shadow: 0 0 0 4px rgba(30, 64, 175, 0.15); }
+}
+.ops-board-card--flash {
+  animation: ops-board-card-flash 2.5s ease-in-out;
+  position: relative;
+  z-index: 1;
+}
+/* Deal type accents — 4px left stripe so the agent/direct split reads
+   even when scanning a packed column. Pairs with the tag below to
+   work for colour-blind users too (colour AND text). */
+.ops-board-card--agent {
+  border-left: 4px solid #6366F1; /* indigo, matches Agent tag */
+  background: linear-gradient(to right, rgba(99, 102, 241, 0.04), transparent 80px);
+}
+.ops-board-card--direct {
+  border-left: 4px solid #14B8A6; /* teal, distinct from agent indigo */
+  /* Full-card subtle green wash so direct cards are unmissable at
+     a glance even on a packed board. Tinted enough to read as
+     "different" but not so much that it competes with the status
+     pills + tags inside the card. */
+  background: rgba(20, 184, 166, 0.08);
+}
+/* Deal state accents — applied alongside type for sent-but-stalled,
+   won, lost. State accent takes the right side so type stripe stays
+   readable on the left. */
+.ops-board-card--stalled {
+  border-right: 3px solid #F59E0B;
+}
+.ops-board-card--won {
+  border-right: 3px solid var(--success);
+}
+.ops-board-card--lost {
+  border-right: 3px solid var(--text-light);
+  /* Stronger faded green wash so Closed cards visibly differ from
+     active columns — Direct cards already carry a soft teal wash
+     from --direct, so the Closed override has to push past that
+     to read as distinct. Lower opacity gives the "settled" feel. */
+  background: rgba(16, 185, 129, 0.18) !important;
+  opacity: 0.65;
 }
 .ops-board-card-head {
   display: flex;
@@ -1765,8 +1819,12 @@ select.form-input { cursor: pointer; }
   background: var(--info-bg);
   color: var(--info);
 }
-.ops-board-card-tag--agent { background: #E0E7FF; color: #3730A3; }
-.ops-board-card-tag--viewed { background: var(--info-bg); color: var(--info); }
+.ops-board-card-tag--agent   { background: #E0E7FF; color: #3730A3; }
+.ops-board-card-tag--direct  { background: #CCFBF1; color: #115E59; }
+.ops-board-card-tag--viewed  { background: var(--info-bg); color: var(--info); }
+.ops-board-card-tag--stalled { background: #FED7AA; color: #9A3412; }
+.ops-board-card-tag--won     { background: var(--success-bg); color: #065F46; }
+.ops-board-card-tag--lost    { background: var(--bg); color: var(--text-light); }
 /* Clickable variant — used when a tag drives a navigation/filter action.
  * Adds cursor + a subtle hover so the user sees it's pressable rather
  * than just a label. Border-none keeps the tag's flat look in the row. */
@@ -1912,6 +1970,13 @@ button.ops-board-card-tag--clickable:active {
 
 /* Semantic variants — backgrounds tinted, dots and text match accent. */
 .ops-status-pill--new        { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }
+/* 6-column deal kanban variants. New splits agent/direct (same tint,
+   different label). Quoting is warning amber. Sent is the primary
+   blue. Negotiating is success green (one step from won). Closed is
+   neutral grey. */
+.ops-status-pill--quoting    { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
+.ops-status-pill--booked     { background: var(--success-bg); color: #065F46; border-color: #A7F3D0; }
+.ops-status-pill--closed     { background: var(--bg);         color: var(--text-light); border-color: var(--border); }
 .ops-status-pill--drafting   { background: var(--bg);         color: var(--text-secondary); }
 .ops-status-pill--ready      { background: var(--warning-bg); color: #92400E; border-color: #FCD34D; }
 .ops-status-pill--sent       { background: var(--info-bg);    color: #1E40AF; border-color: #BFDBFE; }

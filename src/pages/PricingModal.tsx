@@ -41,6 +41,20 @@ interface PricingModalProps {
   /** Optional enquiry — passed through to CreateProposalModal so the
    *  recipient form pre-fills + the saved proposal links to the enquiry. */
   enquiryPrefill?: EnquiryPrefill | null;
+  /** Snapshot-only mode. When set, the primary action button just
+   *  returns the in-memory snapshot via this callback (and closes)
+   *  rather than persisting anything. Used by the new
+   *  EnquiryPropertyMatchModal so the user can adjust per-property
+   *  pricing during enquiry capture; the actual DB writes happen
+   *  later when the user clicks "Save enquiry + N proposals". */
+  onSnapshotReady?: (snap: PricingSnapshot) => void;
+  /** Optional starting snapshot for snapshot-only mode — lets the
+   *  user re-open the modal and resume editing where they left off
+   *  on a previous adjustment. */
+  initialSnapshot?: PricingSnapshot | null;
+  /** Number of nights — forwarded to PricingDashboard for total-stay
+   *  sub-lines on every R-amount row. */
+  nights?: number;
 }
 
 export default function PricingModal({
@@ -51,6 +65,9 @@ export default function PricingModal({
   editPricingProposal,
   onPricingSaved,
   enquiryPrefill,
+  onSnapshotReady,
+  initialSnapshot,
+  nights,
 }: PricingModalProps) {
   const toast = useToast();
   const [creatingFromSnapshot, setCreatingFromSnapshot] = useState<PricingSnapshot | null>(null);
@@ -137,7 +154,19 @@ export default function PricingModal({
         <PricingDashboard
           property={property}
           supabase={supabase}
-          initialSnapshot={editPricingProposal ?? null}
+          // Forward the enquiry's stay length so the dashboard can
+          // show a running total ("R 70 000 for the week") next to
+          // every per-night figure. Without this the user only sees
+          // per-night until the very end of the flow, which is
+          // frustrating when a guest gave a budget for the whole stay.
+          nights={nights ?? (() => {
+            const ci = enquiryPrefill?.check_in;
+            const co = enquiryPrefill?.check_out;
+            if (!ci || !co) return undefined;
+            const n = Math.round((new Date(co).getTime() - new Date(ci).getTime()) / (1000 * 60 * 60 * 24));
+            return n > 0 ? n : undefined;
+          })()}
+          initialSnapshot={editPricingProposal ?? (initialSnapshot as any) ?? null}
           // Pre-select scenario from the enquiry: agent enquiries skip
           // straight to the agent pricing surface; everything else lands
           // on direct. Users can still flip if they want. Without this
@@ -149,8 +178,20 @@ export default function PricingModal({
           // in the dashboard. Without this the dropdown defaults to
           // "(any agent)" — frustrating when we already know who.
           initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
-          onCreateProposal={isEdit ? handleSavePricing : handleCreateProposal}
-          actionLabel={isEdit ? 'Save pricing' : 'Create proposal from this'}
+          // Three modes:
+          //   onSnapshotReady set → snapshot-only (return + close, no DB write)
+          //   isEdit              → in-place save (UPDATE existing pricing_proposal)
+          //   default             → hand off to CreateProposalModal for full create flow
+          onCreateProposal={
+            onSnapshotReady
+              ? (snap: PricingSnapshot) => { onSnapshotReady(snap); onClose(); }
+              : (isEdit ? handleSavePricing : handleCreateProposal)
+          }
+          actionLabel={
+            onSnapshotReady
+              ? 'Use this pricing'
+              : (isEdit ? 'Save pricing' : 'Create proposal from this')
+          }
           saving={saving}
         />
       </ActionModal>

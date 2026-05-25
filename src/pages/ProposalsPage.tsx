@@ -408,6 +408,27 @@ export default function ProposalsPage() {
 
   return (
     <div>
+      {/* Workspace explainer. The primary view of pipeline is on the
+          Enquiries board — every deal card there now lists its
+          proposals inline with status pills. This page exists for the
+          ops the kanban can't do gracefully: multi-select send across
+          deals, filter by property, search by recipient. The banner
+          says so once so the team knows where to look for what. */}
+      {!enquiryFilter && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 14px', marginBottom: 12,
+            background: 'var(--bg, #F9FAFB)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+            fontSize: '0.75rem', color: 'var(--text-secondary)',
+          }}
+        >
+          <span>
+            📄 <strong>Proposals workspace</strong> — for batch send, filtering by property, and recipient search. The day-to-day pipeline view is on the <strong>Enquiries</strong> board.
+          </span>
+        </div>
+      )}
+
       {/* Deep-link narrowing banner. Shown when ?enquiry=<id> is in the
           URL — typically arrived via a click on a Pipeline enquiry card.
           Clearing it strips the URL param and reveals all proposals. */}
