@@ -2273,6 +2273,38 @@ button.ops-board-card-tag--clickable:active {
 .pricing-row-fixed > td { background: rgba(217, 119, 6, 0.18); }
 .pricing-row-fixed > td:first-child { box-shadow: inset 4px 0 0 0 #D97706; }
 
+/* Price List: present the shared .data-table as a printed-style rate card —
+ * full cell grid, denser rows, bold dark prices, and clean alternating row
+ * shading across every column (no per-column tint), so it reads like a PDF
+ * rate sheet rather than a web table. Reuses .data-table wholesale. */
+.price-list-sheet .data-table th,
+.price-list-sheet .data-table td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  border-right: 1px solid var(--border-light);
+}
+.price-list-sheet .data-table th:last-child,
+.price-list-sheet .data-table td:last-child { border-right: none; }
+.price-list-sheet .data-table tbody tr:nth-child(even) > td { background: rgba(15, 23, 42, 0.045); }
+.price-list-sheet .data-table tbody tr:hover > td { background: var(--color-primary-bg); }
+/* Prices: dark and bold so they carry the page, like a real rate card. */
+.price-list-sheet .list-action-icon { color: var(--text); font-weight: 700; }
+
+/* Fixed-rate chip — amber, high contrast, matches the Pricing screen's
+ * fixed treatment. Dark text on a tinted ground; never grey-on-grey. */
+.chip-fixed {
+  display: inline-block;
+  padding: 2px 9px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #92400E;
+  background: var(--warning-bg);
+  border: 1px solid #FCD34D;
+  border-radius: 999px;
+}
+
 /* Seasons page: inline editor for the JSONB date_ranges array. Each row
  * is one {start, end} pair with a remove button; "+ Add range" appends. */
 .seasons-ranges-editor {

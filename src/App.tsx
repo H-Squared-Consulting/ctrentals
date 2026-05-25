@@ -18,6 +18,7 @@ import HomeOwnersPage from './pages/HomeOwnersPage';
 import SeasonTagsPage from './pages/SeasonTagsPage';
 import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 import FinancePricingPage from './pages/FinancePricingPage';
+import PriceListPage from './pages/PriceListPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import AgentPortalPage from './pages/AgentPortalPage';
@@ -143,6 +144,7 @@ export function App() {
 
       {/* Home */}
       <Route path="/dashboard" element={<Page><HomePage /></Page>} />
+      <Route path="/price-list" element={<Page><PriceListPage /></Page>} />
 
       {/* Properties + Brochures */}
       <Route path="/properties" element={<Page><PropertiesPage /></Page>} />

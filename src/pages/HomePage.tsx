@@ -73,6 +73,9 @@ export default function HomePage() {
           <button className="btn btn-outline" onClick={() => setBrochurePickerOpen(true)}>
             📄 Send brochure
           </button>
+          <button className="btn btn-outline" onClick={() => navigate('/price-list')}>
+            💷 Price list
+          </button>
         </div>
       </div>
 
