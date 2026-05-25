@@ -148,6 +148,30 @@ function platformListPrice(direct: number, fee_pct: number, fixed_fee: number): 
   return Math.round(direct * (1 + fee) + (fixed_fee || 0));
 }
 
+// ─── Agent scenario ─────────────────────────────────────────────────────
+// When a booking comes through an agent the total margin rises to CTR's
+// structural cut plus the agent's commission. Both default to 15% — matching
+// PricingDashboard, which uses CTR_DEFAULT.agent for CTR's share and a 15%
+// generic-agent default — so the guest pays base ÷ 0.7. CTR keeps its 15% of
+// that guest rate and the agent earns the matching 15%. Specific agents can
+// negotiate a different commission at booking time; this page shows the
+// standard 15/15 split.
+const AGENT_CTR_PCT = CTR_DEFAULT.agent;            // 15 — CTR's share, agent scenario
+const GENERIC_AGENT_PCT = 15;                       // generic agent commission default
+const AGENT_TOTAL_MARGIN_PCT = AGENT_CTR_PCT + GENERIC_AGENT_PCT; // 30
+
+/** What a guest pays per night when an agent is involved (base ÷ 0.7). */
+function agentGuestRate(base: number): number {
+  if (base <= 0) return 0;
+  return Math.round(base / (1 - AGENT_TOTAL_MARGIN_PCT / 100));
+}
+
+/** CTR's earnings per night in the agent scenario (its 15% share of the agent guest rate). */
+function agentCtrMargin(base: number): number {
+  if (base <= 0) return 0;
+  return Math.round(agentGuestRate(base) * (AGENT_CTR_PCT / 100));
+}
+
 export default function FinancePricingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
   const { setPageTitle } = useLayout();
@@ -723,6 +747,9 @@ function PricingTable({
     const effectiveRate = isFixed ? guestRate : systemRate;
     const direct = !isFixed && effectiveRate != null ? directGuestRate(effectiveRate) : null;
     const ctr = !isFixed && effectiveRate != null ? ctrMargin(effectiveRate) : null;
+    // Agent scenario (System mode only) — guest pays base ÷ 0.7, CTR keeps 15%.
+    const agentRate = !isFixed && effectiveRate != null ? agentGuestRate(effectiveRate) : null;
+    const agentCtr = !isFixed && effectiveRate != null ? agentCtrMargin(effectiveRate) : null;
     const platformPrices: Record<string, number | null> = {};
     for (const plat of platforms) {
       platformPrices[`platform_${plat.id}`] = direct != null
@@ -736,7 +763,9 @@ function PricingTable({
       is_published: prop.is_published ? 1 : 0,
       base_rate: effectiveRate ?? 0,
       ctr_margin: isFixed ? (fixedMargin ?? 0) : (ctr ?? 0),
+      agent_ctr_margin: agentCtr ?? 0,
       direct_rate: direct ?? 0,
+      agent_rate: agentRate ?? 0,
       ...platformPrices,
       prop,
       peakEffective,
@@ -888,6 +917,30 @@ function PricingTable({
         );
       },
     },
+    {
+      key: 'agent_rate', label: 'Agent', sortable: true, align: 'right' as const, width: '130px',
+      cellClassName: 'pricing-col-guest-rate',
+      group: 'Guest rates',
+      render: (row: DataRow) => {
+        const r = row as any;
+        // Agent pricing is a System-mode concept; Fixed rows carry their own
+        // negotiated guest/owner rates, so there's nothing to show here.
+        if (r.isFixed) return <span style={{ color: 'var(--text-light)' }}>—</span>;
+        const v = r.agent_rate as number;
+        if (v <= 0) return <span style={{ color: 'var(--text-light)' }}>—</span>;
+        return (
+          <button
+            type="button"
+            className="list-action-icon"
+            style={{ width: 'auto', padding: '4px 8px', fontWeight: 600, fontFamily: 'inherit', fontSize: '0.8125rem', fontVariantNumeric: 'tabular-nums' }}
+            onClick={() => copyToClipboard(v, 'Agent guest rate')}
+            title={`Guest rate via an agent (base ÷ 0.7). Click to copy R ${v.toLocaleString('en-US')}`}
+          >
+            R {v.toLocaleString('en-US')}
+          </button>
+        );
+      },
+    },
     ...platforms.map(plat => ({
       key: `platform_${plat.id}`,
       label: plat.platform_name,
@@ -920,6 +973,19 @@ function PricingTable({
         const v = (row as any).ctr_margin as number;
         return v > 0
           ? <span style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>R {v.toLocaleString('en-US')}</span>
+          : <span style={{ color: 'var(--text-light)' }}>—</span>;
+      },
+    },
+    {
+      key: 'agent_ctr_margin', label: 'CTR (agent)', sortable: true, align: 'right' as const, width: '130px',
+      cellClassName: 'pricing-col-ctr-margin',
+      group: 'CTR',
+      render: (row: DataRow) => {
+        const r = row as any;
+        if (r.isFixed) return <span style={{ color: 'var(--text-light)' }}>—</span>;
+        const v = r.agent_ctr_margin as number;
+        return v > 0
+          ? <span style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }} title="CTR's 15% margin when a booking comes via an agent">R {v.toLocaleString('en-US')}</span>
           : <span style={{ color: 'var(--text-light)' }}>—</span>;
       },
     },
