@@ -54,8 +54,23 @@ export type AgentEnquiryStatus =
 export interface AgentEnquiry {
   id: string;
   guestName: string;
+  /** Agent's own free-text label for this enquiry, captured on the
+   *  /q/:token form. Used as the headline on the "My Enquiries" tab
+   *  so the agent recognises their own submissions ("Sarah for
+   *  Easter", "Whitsun family of 6"). Distinct from the AHH/N code
+   *  the team uses on the kanban (which agents never see). Empty
+   *  on legacy rows submitted before the field was added. */
+  agentReference: string;
+  /** Legacy single-property fields — populated when the enquiry was
+   *  submitted with exactly one property (old portal flow OR the
+   *  current multi flow picking just one). Use requestedProperties
+   *  below for the canonical list when rendering. */
   propertyName: string;
   propertySlug: string;
+  /** Every property the agent ticked on the multi-property form.
+   *  Falls back to a 1-element array derived from propertyName/Slug
+   *  on legacy rows. */
+  requestedProperties: Array<{ name: string; slug: string }>;
   checkIn: string;
   checkOut: string;
   status: AgentEnquiryStatus;
@@ -103,12 +118,22 @@ export async function getPortalBundle(token: string): Promise<PortalBundle | nul
 
 export interface SubmitEnquiryInput {
   token: string;
-  propertyId: string;
-  /** Required — short summary of the trip the agent is enquiring
-   *  about. Becomes the headline on the kanban so the Southern
-   *  Escapes team can distinguish multiple enquiries from the same
-   *  agent at a glance. */
-  subject: string;
+  /** Properties the agent wants quoted on this single enquiry. 1..N.
+   *  Server-side: persisted on enquiries.requested_property_ids and
+   *  surfaced on the deal modal so the team can spin up proposals
+   *  (or drop suggestions that don't fit) from one place. */
+  propertyIds: string[];
+  /** Agent's own short label for the enquiry — required at the form
+   *  level. Surfaces back as the row title on "My Enquiries" so the
+   *  agent can find this submission later. Stored separately from
+   *  the AHH/N `subject` the team uses. */
+  agentReference: string;
+  /** Who on the Southern Escapes team the agent wants this enquiry
+   *  assigned to. Required at the form level (no default — agents
+   *  consciously pick the person they're working with). Server-side
+   *  this maps to created_by_initials so the kanban "users" filter
+   *  treats portal enquiries the same as internal creations. */
+  assignTo: 'NT' | 'HH';
   // Guest details are optional — agents often enquire before they've
   // disclosed the guest. Empty values land as NULL guest_* fields on
   // the enquiry and can be filled in later from the Pipeline.
@@ -125,6 +150,7 @@ export interface SubmitEnquiryInput {
 export interface SubmitEnquiryResult {
   ok: boolean;
   enquiryId?: string;
+  refCode?: string;
   reason?: string;
 }
 
@@ -143,7 +169,7 @@ export async function submitAgentEnquiry(input: SubmitEnquiryInput): Promise<Sub
   if (!res.ok || !body?.ok) {
     return { ok: false, reason: body?.reason || 'unknown' };
   }
-  return { ok: true, enquiryId: body.enquiryId };
+  return { ok: true, enquiryId: body.enquiryId, refCode: body.refCode };
 }
 
 // ── Display helpers ────────────────────────────────────────────────

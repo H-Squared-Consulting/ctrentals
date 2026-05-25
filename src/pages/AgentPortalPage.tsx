@@ -47,7 +47,14 @@ export default function AgentPortalPage() {
   const [loading, setLoading] = useState(true);
   const [tokenError, setTokenError] = useState(false);
   const [tab, setTab] = useState<Tab>('properties');
-  const [enquiringFor, setEnquiringFor] = useState<AgentProperty | null>(null);
+  /** Properties the agent has ticked on the Properties tab. Cleared
+   *  on successful submit. Single property = a 1-element set;
+   *  the modal handles both 1 and N identically. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Snapshot of the picked properties at the moment the modal
+   *  opens — so toggling checkboxes after the modal is open doesn't
+   *  reshape the in-flight enquiry. */
+  const [enquiringForProperties, setEnquiringForProperties] = useState<AgentProperty[] | null>(null);
 
   async function reload() {
     const bundle = await getPortalBundle(token);
@@ -110,19 +117,31 @@ export default function AgentPortalPage() {
       {tab === 'properties' && (
         <PropertiesTab
           properties={properties}
-          onEnquire={(p) => setEnquiringFor(p)}
+          selectedIds={selectedIds}
+          onToggle={(id) => setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+          })}
+          onClear={() => setSelectedIds(new Set())}
+          onEnquire={() => {
+            const picked = properties.filter(p => selectedIds.has(p.id));
+            if (picked.length === 0) return;
+            setEnquiringForProperties(picked);
+          }}
         />
       )}
       {tab === 'enquiries' && <EnquiriesTab enquiries={enquiries} />}
       {tab === 'about' && <AboutTab />}
 
-      {enquiringFor && (
+      {enquiringForProperties && (
         <AgentPortalEnquireModal
           token={token}
-          property={enquiringFor}
-          onClose={() => setEnquiringFor(null)}
+          properties={enquiringForProperties}
+          onClose={() => setEnquiringForProperties(null)}
           onSubmitted={async () => {
-            setEnquiringFor(null);
+            setEnquiringForProperties(null);
+            setSelectedIds(new Set());
             await reload();
             setTab('enquiries');
           }}
@@ -256,7 +275,15 @@ function ContactCard({ name, role, whatsappE164, whatsappDisplay, email }: {
 
 // ── Properties tab ──────────────────────────────────────────────────
 
-function PropertiesTab({ properties, onEnquire }: { properties: AgentProperty[]; onEnquire: (p: AgentProperty) => void }) {
+function PropertiesTab({
+  properties, selectedIds, onToggle, onClear, onEnquire,
+}: {
+  properties: AgentProperty[];
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onClear: () => void;
+  onEnquire: () => void;
+}) {
   if (properties.length === 0) {
     return (
       <div className="card" style={emptyStateStyle}>
@@ -264,16 +291,100 @@ function PropertiesTab({ properties, onEnquire }: { properties: AgentProperty[];
       </div>
     );
   }
+  const selectedCount = selectedIds.size;
   return (
-    <div className="property-grid">
-      {properties.map(p => <PropertyCard key={p.id} property={p} onEnquire={onEnquire} />)}
-    </div>
+    <>
+      {/* Sticky action bar at the top of the grid. Shows the running
+          tally + the single submit. Renders even at 0 selected (greyed
+          out) so the call-to-action is always visible — picking
+          properties feels like building a cart, not searching for a
+          hidden button. */}
+      <div style={selectionBarStyle}>
+        <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>
+          {selectedCount === 0
+            ? <span style={{ color: 'var(--text-secondary)' }}>Tick the properties you want quoted, then send one enquiry covering all of them.</span>
+            : <><strong>{selectedCount}</strong> propert{selectedCount === 1 ? 'y' : 'ies'} selected</>}
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--s-2)', alignItems: 'center' }}>
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.8125rem' }}
+              onClick={onClear}
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={selectedCount === 0}
+            onClick={onEnquire}
+            title={selectedCount === 0 ? 'Tick at least one property first' : `Send an enquiry covering ${selectedCount} propert${selectedCount === 1 ? 'y' : 'ies'}`}
+          >
+            {selectedCount === 0
+              ? '+ Enquire'
+              : selectedCount === 1
+                ? '+ Enquire about this property'
+                : `+ Enquire about ${selectedCount} properties →`}
+          </button>
+        </div>
+      </div>
+      <div className="property-grid">
+        {properties.map(p => (
+          <PropertyCard
+            key={p.id}
+            property={p}
+            selected={selectedIds.has(p.id)}
+            onToggle={() => onToggle(p.id)}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
-function PropertyCard({ property, onEnquire }: { property: AgentProperty; onEnquire: (p: AgentProperty) => void }) {
+function PropertyCard({
+  property, selected, onToggle,
+}: {
+  property: AgentProperty;
+  selected: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <article className="property-card" style={{ cursor: 'default' }}>
+    <article
+      className="property-card"
+      style={{
+        cursor: 'pointer',
+        position: 'relative',
+        // Selected-state ring so a packed grid still reads at a
+        // glance which properties are about to be enquired about.
+        outline: selected ? '2px solid var(--color-primary)' : 'none',
+        outlineOffset: selected ? -2 : 0,
+        background: selected ? 'var(--color-primary-bg)' : undefined,
+      }}
+      onClick={onToggle}
+      role="button"
+      aria-pressed={selected}
+      tabIndex={0}
+      onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggle(); } }}
+    >
+      {/* Floating checkbox overlay — visually unmistakable that the
+          card is tickable. Clicking the card body also toggles, so
+          the checkbox is mostly a visual affordance + a keyboard
+          target. stopPropagation prevents the row click + the
+          checkbox change firing twice. */}
+      <div style={checkboxBubbleStyle(selected)}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Include ${titleCase(property.name)} in the enquiry`}
+          style={{ width: 18, height: 18, cursor: 'pointer' }}
+        />
+      </div>
       <div className="property-card__image">
         {property.photoUrl
           ? <img src={property.photoUrl} alt={titleCase(property.name)} loading="lazy" />
@@ -318,17 +429,11 @@ function PropertyCard({ property, onEnquire }: { property: AgentProperty; onEnqu
             href={`/brochures/${encodeURIComponent(property.slug)}?brand=agent`}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
           >
             View brochure
           </a>
         )}
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => onEnquire(property)}
-        >
-          + Enquire
-        </button>
       </div>
     </article>
   );
@@ -340,7 +445,7 @@ function EnquiriesTab({ enquiries }: { enquiries: AgentEnquiry[] }) {
   if (enquiries.length === 0) {
     return (
       <div className="card" style={emptyStateStyle}>
-        You have not submitted any enquiries yet. Pick a property and tap <strong>+ Enquire</strong> to get started.
+        You have not submitted any enquiries yet. Tick one or more properties on the <strong>Properties</strong> tab and tap <strong>+ Enquire</strong> to get started.
       </div>
     );
   }
@@ -352,29 +457,101 @@ function EnquiriesTab({ enquiries }: { enquiries: AgentEnquiry[] }) {
 }
 
 function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
+  // Expand-to-show-details. Click the row body to toggle. Status
+  // pill + View proposal link have stopPropagation so they don't
+  // also toggle when clicked.
+  const [open, setOpen] = useState(false);
+  // Title priority: agent's own reference > legacy guest name >
+  // first property name > "Untitled" (shouldn't happen post-migration).
+  const title = enquiry.agentReference?.trim()
+    || titleCase(enquiry.guestName)
+    || (enquiry.requestedProperties[0] && titleCase(enquiry.requestedProperties[0].name))
+    || 'Untitled enquiry';
+  const propCount = enquiry.requestedProperties.length;
+  const propSummary = propCount === 0
+    ? '—'
+    : propCount === 1
+      ? titleCase(enquiry.requestedProperties[0].name)
+      : `${propCount} properties`;
+
   return (
-    <div className="card" style={enquiryRowStyle}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
-          {titleCase(enquiry.guestName)}
+    <div
+      className="card"
+      style={{
+        padding: 0,
+        cursor: 'pointer',
+      }}
+      onClick={() => setOpen(o => !o)}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
+    >
+      <div style={enquiryRowStyle}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
+            {title}
+          </div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+            {propSummary} · {enquiry.checkIn} to {enquiry.checkOut}
+          </div>
         </div>
-        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-          {titleCase(enquiry.propertyName)} · {enquiry.checkIn} to {enquiry.checkOut}
-        </div>
+        <span className={`ops-status-pill ops-status-pill--${pillVariantFor(enquiry.status)}`}>
+          <span className="ops-status-pill-dot" />
+          {statusLabel(enquiry.status)}
+        </span>
+        {enquiry.proposalShareUrl && (
+          <a
+            className="btn btn-ghost"
+            href={enquiry.proposalShareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            View proposal
+          </a>
+        )}
+        <span style={{
+          fontSize: '0.75rem',
+          color: 'var(--text-light)',
+          marginLeft: 4,
+        }} aria-hidden>
+          {open ? '▲' : '▼'}
+        </span>
       </div>
-      <span className={`ops-status-pill ops-status-pill--${pillVariantFor(enquiry.status)}`}>
-        <span className="ops-status-pill-dot" />
-        {statusLabel(enquiry.status)}
-      </span>
-      {enquiry.proposalShareUrl && (
-        <a
-          className="btn btn-ghost"
-          href={enquiry.proposalShareUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View proposal
-        </a>
+      {open && (
+        // Expanded body — read-only recap so the agent can confirm
+        // what they submitted without leaving the list. No edit
+        // surface here; changes need to go through Southern Escapes.
+        <div style={enquiryExpandedStyle}>
+          {propCount > 0 && (
+            <div style={{ marginBottom: 'var(--s-3)' }}>
+              <div style={enquiryExpandedLabelStyle}>Properties enquired about</div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.875rem', color: 'var(--text)' }}>
+                {enquiry.requestedProperties.map((p, i) => (
+                  <li key={p.slug || `${p.name}-${i}`} style={{ marginBottom: 2 }}>
+                    {titleCase(p.name)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
+            <div>
+              <div style={enquiryExpandedLabelStyle}>Dates</div>
+              <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>{enquiry.checkIn} → {enquiry.checkOut}</div>
+            </div>
+            <div>
+              <div style={enquiryExpandedLabelStyle}>Status</div>
+              <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>{statusLabel(enquiry.status)}</div>
+            </div>
+          </div>
+          {enquiry.lastUpdated && (
+            <div style={{ marginTop: 'var(--s-3)', fontSize: '0.75rem', color: 'var(--text-light)' }}>
+              Last updated {enquiry.lastUpdated}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -433,6 +610,42 @@ const greetingLineStyle: React.CSSProperties = {
   marginBottom: 'var(--s-5)',
 };
 
+const selectionBarStyle: React.CSSProperties = {
+  position: 'sticky',
+  top: 'var(--s-4)',
+  zIndex: 5,
+  marginBottom: 'var(--s-4)',
+  padding: 'var(--s-3) var(--s-4)',
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  boxShadow: 'var(--shadow-md, 0 4px 12px rgba(0,0,0,0.06))',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 'var(--s-3)',
+  flexWrap: 'wrap',
+};
+
+function checkboxBubbleStyle(selected: boolean): React.CSSProperties {
+  return {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    background: selected ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.92)',
+    border: selected ? '2px solid var(--color-primary)' : '1px solid var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+    transition: 'background 120ms, border-color 120ms',
+  };
+}
+
 const emptyStateStyle: React.CSSProperties = {
   padding: 'var(--s-8) var(--s-4)',
   textAlign: 'center',
@@ -444,6 +657,21 @@ const enquiryRowStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 'var(--s-4)',
+};
+
+const enquiryExpandedStyle: React.CSSProperties = {
+  padding: 'var(--s-3) var(--s-4) var(--s-4)',
+  borderTop: '1px solid var(--border-light)',
+  background: 'var(--bg)',
+};
+
+const enquiryExpandedLabelStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  fontWeight: 600,
+  color: 'var(--text-secondary)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  marginBottom: 4,
 };
 
 const fullScreenStyle: React.CSSProperties = {

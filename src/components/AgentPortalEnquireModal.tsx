@@ -1,13 +1,20 @@
 /**
  * AgentPortalEnquireModal -- public-facing enquiry submission modal.
  *
- * Mirrors the manual agent-enquiry flow in src/pages/EnquiryForm.tsx:
- * the agent is the recipient (their token authenticates the call), so
+ * Accepts 1..N properties — the agent ticks the houses they want
+ * quoted on the Properties tab, then submits one enquiry covering all
+ * of them. Server-side this creates ONE enquiry row tagged with
+ * source='agent_portal' and the picked IDs in
+ * enquiries.requested_property_ids; no proposals are auto-created
+ * (the team triages every agent enquiry in Arrived first, then opens
+ * the match modal pre-checked via the deal modal's "Generate
+ * proposals" CTA).
+ *
+ * The agent is the recipient (their token authenticates the call), so
  * the form only asks for the *stay* details up-front. Guest details
- * live in an optional "Guest details (if known)" section because the
- * agent often hasn't been given the guest yet — those fields land as
- * NULL guest_* on the enquiry and can be filled in later from the
- * Pipeline. The property is pre-filled / locked.
+ * are collapsible because the agent often hasn't been given the guest
+ * yet — those fields land as NULL guest_* on the enquiry and can be
+ * filled in later from the Pipeline.
  */
 
 import { useState } from 'react';
@@ -22,7 +29,10 @@ function titleCase(s: string | null | undefined): string {
 }
 
 const EMPTY_FORM = {
-  subject: '',
+  agentReference: '',
+  /** '' = nothing picked yet — forces the agent to make a conscious
+   *  choice on every submission rather than silently defaulting. */
+  assignTo: '' as '' | 'NT' | 'HH',
   guestName: '',
   guestEmail: '',
   guestPhone: '',
@@ -35,12 +45,14 @@ const EMPTY_FORM = {
 
 export default function AgentPortalEnquireModal({
   token,
-  property,
+  properties,
   onClose,
   onSubmitted,
 }: {
   token: string;
-  property: AgentProperty;
+  /** One or more properties the agent ticked. Order = display order
+   *  on the chip list. */
+  properties: AgentProperty[];
   onClose: () => void;
   onSubmitted: () => void | Promise<void>;
 }) {
@@ -56,7 +68,9 @@ export default function AgentPortalEnquireModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return;
-    if (!form.subject.trim())            { toast.warning('Subject is required — a short summary of the trip'); return; }
+    if (properties.length === 0)         { toast.warning('Pick at least one property first'); return; }
+    if (!form.agentReference.trim())     { toast.warning('Add a short reference so you can find this enquiry later'); return; }
+    if (!form.assignTo)                  { toast.warning('Pick who at Southern Escapes should handle this enquiry'); return; }
     if (!form.checkIn || !form.checkOut) { toast.warning('Check-in and check-out dates are required'); return; }
     if (form.checkIn >= form.checkOut)   { toast.warning('Check-out must be after check-in'); return; }
 
@@ -64,8 +78,9 @@ export default function AgentPortalEnquireModal({
     try {
       const result = await submitAgentEnquiry({
         token,
-        propertyId: property.id,
-        subject: form.subject.trim(),
+        propertyIds: properties.map(p => p.id),
+        agentReference: form.agentReference.trim(),
+        assignTo: form.assignTo as 'NT' | 'HH',
         guestName: form.guestName.trim(),
         guestEmail: form.guestEmail.trim(),
         guestPhone: form.guestPhone.trim(),
@@ -79,39 +94,116 @@ export default function AgentPortalEnquireModal({
         toast.error('Could not submit enquiry: ' + (result.reason || 'unknown error'));
         return;
       }
-      toast.success('Enquiry sent. The Southern Escapes team will be in touch shortly.');
+      toast.success(
+        properties.length === 1
+          ? 'Enquiry sent. The Southern Escapes team will be in touch shortly.'
+          : `Enquiry sent for ${properties.length} properties. The Southern Escapes team will be in touch shortly.`,
+      );
       await onSubmitted();
     } finally {
       setSubmitting(false);
     }
   }
 
+  const title = properties.length === 1
+    ? `Enquire about ${titleCase(properties[0].name)}`
+    : `Enquire about ${properties.length} properties`;
+  const subtitle = properties.length === 1
+    ? titleCase(properties[0].suburb)
+    : 'Send one enquiry covering all the ticked properties';
+
   return (
     <form id="agent-enquire-form" onSubmit={submit}>
       <ActionModal
-        title={`Enquire about ${titleCase(property.name)}`}
-        subtitle={titleCase(property.suburb)}
+        title={title}
+        subtitle={subtitle}
         width={620}
         primaryAction={
           <button type="submit" form="agent-enquire-form" className="btn btn-primary" disabled={submitting}>
-            {submitting ? 'Sending…' : 'Send enquiry'}
+            {submitting
+              ? 'Sending…'
+              : properties.length === 1
+                ? 'Send enquiry'
+                : `Send enquiry for ${properties.length} properties`}
           </button>
         }
         onClose={onClose}
       >
-        <div className="form-group" style={{ marginBottom: 'var(--s-3)' }}>
-          <label className="form-label">Subject *</label>
-          <input
-            className="form-input"
-            value={form.subject}
-            onChange={(e) => setField('subject', e.target.value)}
-            placeholder="A short summary of the trip"
-            maxLength={120}
-            autoFocus
-            required
-          />
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-            e.g. “Family of 6 for Easter” or “Couple weekend in Boulderwood”. Helps the Southern Escapes team spot your enquiry quickly.
+        {/* Read-only chip list of the ticked properties. Mirrors the
+            "you're about to enquire about these N" recap the agent
+            saw on the grid before opening this modal — no surprises
+            on what's actually being sent. */}
+        {properties.length > 1 && (
+          <div style={{
+            marginBottom: 'var(--s-4)',
+            padding: 'var(--s-3)',
+            background: 'var(--bg)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+          }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6, fontWeight: 600 }}>
+              Properties on this enquiry
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {properties.map(p => (
+                <span
+                  key={p.id}
+                  style={{
+                    fontSize: '0.8125rem',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 999,
+                    padding: '2px 10px',
+                    color: 'var(--text)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {titleCase(p.name)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Agent's own reference label — required, free text, shown
+            back as the row title on the "My Enquiries" tab so the
+            agent can recognise this submission later. Separate from
+            the AHH/N code the team uses internally. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--s-3)', marginBottom: 'var(--s-3)' }}>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Subject *</label>
+            <input
+              className="form-input"
+              value={form.agentReference}
+              onChange={(e) => setField('agentReference', e.target.value)}
+              placeholder="e.g. Sarah & Mark, Easter trip"
+              maxLength={120}
+              required
+              autoFocus
+            />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              For your own reference — appears on your My Enquiries list.
+            </div>
+          </div>
+          {/* Assign to — required, no default. Maps to NT / HH on the
+              enquiry's created_by_initials so the kanban "users"
+              filter on the team side treats portal enquiries the
+              same way as internal creations. */}
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Assign to *</label>
+            <select
+              className="form-input"
+              value={form.assignTo}
+              onChange={(e) => setForm(prev => ({ ...prev, assignTo: e.target.value as '' | 'NT' | 'HH' }))}
+              required
+            >
+              <option value="" disabled>— Pick —</option>
+              <option value="NT">Nicki Trent</option>
+              <option value="HH">Hayley Harrod</option>
+            </select>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Who you'd like to handle this.
+            </div>
           </div>
         </div>
 

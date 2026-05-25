@@ -21,7 +21,7 @@
  *     this); Cancel discards.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ActionModal from './ActionModal';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { syncEnquiryFromProposal } from '../lib/statusSync';
@@ -61,10 +61,16 @@ function proposalUrl(refCode: string): string {
 
 /** Build a formal subject/body for the batch. Single- vs multi-proposal
  *  templates branch only on count; tone stays consistent. The recipient's
- *  first name personalises the greeting without being overly familiar. */
-function buildTemplate(proposals: SendableProposal[]): { subject: string; body: string } {
+ *  first name personalises the greeting without being overly familiar.
+ *  `nameOverride` (used by the agent flow) lets the caller swap in a
+ *  different recipient name without mutating the underlying proposal. */
+function buildTemplate(
+  proposals: SendableProposal[],
+  nameOverride?: string | null,
+): { subject: string; body: string } {
   const recipient = proposals[0];
-  const firstName = (recipient.guest_name || '').split(' ')[0] || 'there';
+  const effectiveName = (nameOverride?.trim() || recipient.guest_name || '');
+  const firstName = effectiveName.split(' ')[0] || 'there';
   const greeting = `Dear ${firstName},`;
   const signoff = '\n\nKind regards,\nSouthern Escapes';
 
@@ -100,6 +106,24 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
   const [copied, setCopied] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
+  const recipient = proposals[0];
+  const isAgent = recipient.is_agent;
+  const hasPhone = !!recipient.guest_phone;
+  const hasEmail = !!recipient.guest_email;
+  const hasContact = hasPhone || hasEmail;
+  /** Agent-only recipient-name override. Agent enquiries often start
+   *  with a placeholder ("Valued Guest") or a half-known name — the
+   *  user wants to set the real one at send time so the proposal +
+   *  template greeting both reflect who actually receives it. Direct
+   *  enquiries already have the right guest_name set up-front, so
+   *  the field is hidden for them. Persisted to proposals.guest_name
+   *  on Mark Sent + on every share-channel click. */
+  const [nameOverride, setNameOverride] = useState<string>(recipient.guest_name || '');
+  const effectiveGuestName = isAgent
+    ? (nameOverride.trim() || recipient.guest_name || '')
+    : (recipient.guest_name || '');
+  const guestName = titleCase(effectiveGuestName);
+
   // Pre-fill subject/body from the template. The user can take over by
   // clicking ✎ Edit; their changes then drive what the share channels
   // open with. Recomputed only on first mount — once the user edits,
@@ -107,16 +131,33 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
   const initial = useMemo(() => buildTemplate(proposals), [proposals]);
   const [subject, setSubject] = useState(initial.subject);
   const [body, setBody] = useState(initial.body);
+  /** Re-derive the template greeting from the override while the user
+   *  hasn't manually edited the body. Once they click ✎ Edit and
+   *  touch the textarea their version wins (we don't want to clobber
+   *  custom wording on every keystroke of the name field). */
+  const [bodyTouched, setBodyTouched] = useState(false);
+  useEffect(() => {
+    if (!isAgent || bodyTouched) return;
+    const tmpl = buildTemplate(proposals, nameOverride);
+    setBody(tmpl.body);
+    setSubject(tmpl.subject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nameOverride]);
 
-  const recipient = proposals[0];
-  const isAgent = recipient.is_agent;
-  const hasPhone = !!recipient.guest_phone;
-  const hasEmail = !!recipient.guest_email;
-  const hasContact = hasPhone || hasEmail;
-  const guestName = titleCase(recipient.guest_name);
+  /** Persist the agent recipient-name override to every proposal in
+   *  the batch. Safe to call multiple times — the WHERE clause + the
+   *  no-op when the name hasn't changed keep it idempotent. */
+  async function persistNameOverride() {
+    if (!isAgent) return;
+    const newName = nameOverride.trim();
+    if (!newName || newName === recipient.guest_name) return;
+    const ids = proposals.map(p => p.id);
+    await supabase.from('proposals').update({ guest_name: newName }).in('id', ids);
+  }
 
   async function markSent() {
     setMarking(true);
+    await persistNameOverride();
     const now = new Date().toISOString();
     const ids = proposals.map(p => p.id);
     await supabase
@@ -134,6 +175,11 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
   }
 
   function sendWhatsApp() {
+    // Persist any agent-name override first so the share message and
+    // the proposal record agree on who the recipient is. Fire-and-
+    // forget — the user clicking WhatsApp shouldn't block on the DB
+    // round-trip; worst case the override flushes on Mark Sent.
+    void persistNameOverride();
     // WhatsApp wa.me takes a single message — bake the (possibly edited)
     // body in. Subject is irrelevant on WhatsApp so we prefix it inline
     // so any custom-edited subject still carries through.
@@ -170,9 +216,27 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
       width={620}
       summary={
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12 }}>
             <span className="form-label" style={{ margin: 0 }}>Recipient</span>
-            <span style={{ fontWeight: 500 }}>{guestName}</span>
+            {isAgent ? (
+              // Agent enquiries: the guest_name on the proposal often
+              // starts as a placeholder ("Valued Guest") or a half-
+              // known name. Let the user finalise it here so the
+              // template greeting + the proposal record both reflect
+              // who actually receives the email. Persists on Mark
+              // Sent + on every share-channel click.
+              <input
+                className="form-input"
+                value={nameOverride}
+                onChange={(ev) => setNameOverride(ev.target.value)}
+                onBlur={() => { void persistNameOverride(); }}
+                placeholder="e.g. Sarah Whitmore"
+                style={{ maxWidth: 260, fontWeight: 500 }}
+                title="Type the name the proposal should be addressed to. Saves automatically."
+              />
+            ) : (
+              <span style={{ fontWeight: 500 }}>{guestName}</span>
+            )}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span className="form-label" style={{ margin: 0 }}>{isMulti ? 'Proposals' : 'Property'}</span>
@@ -227,7 +291,7 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
         <input
           className="form-input"
           value={subject}
-          onChange={(e) => setSubject(e.target.value)}
+          onChange={(e) => { setSubject(e.target.value); setBodyTouched(true); }}
           placeholder="Subject"
           disabled={marking}
         />
@@ -242,7 +306,7 @@ export default function SendProposalDialog({ proposals, supabase, onClose, onSen
         <textarea
           className="form-input"
           value={body}
-          onChange={(e) => setBody(e.target.value)}
+          onChange={(e) => { setBody(e.target.value); setBodyTouched(true); }}
           rows={10}
           disabled={marking}
           style={{ fontFamily: 'inherit' }}

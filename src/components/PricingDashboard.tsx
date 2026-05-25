@@ -165,19 +165,31 @@ function BreakdownRow({
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>{pct.toFixed(1)}%</span>
         )}
       </span>
-      <div style={{ textAlign: 'right' }}>
+      <div style={{
+        textAlign: 'right',
+        // Keep the per-night R-amount AND the per-stay total on the
+        // SAME row so the breakdown collapses from N×2 lines down to
+        // N×1. Big win for the agent modal (4 breakdown rows) which
+        // used to need a scroll. flex-wrap means narrow widths can
+        // still drop the sub-line to a second row gracefully.
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'flex-end',
+        gap: 8,
+        flexWrap: 'wrap',
+      }}>
         <strong style={{ fontSize: '0.9375rem', fontVariantNumeric: 'tabular-nums' }}>
           {fmtRand(value)}
         </strong>
         {nights && nights > 0 && (
-          <div style={{
+          <span style={{
             fontSize: '0.75rem',
-            color: 'var(--text-secondary)',
+            color: 'var(--text-light)',
             fontVariantNumeric: 'tabular-nums',
-            marginTop: 1,
           }}>
-            {fmtRand(value * nights)} <span style={{ color: 'var(--text-light)' }}>· {nights}n total</span>
-          </div>
+            · {fmtRand(value * nights)} ({nights}n)
+          </span>
         )}
       </div>
       <span style={{
@@ -221,7 +233,10 @@ function BreakdownRows({
       // Delta column reserves at least 70px so toggling overrides on/off doesn't
       // shift the currency column.
       gridTemplateColumns: 'minmax(0, 1fr) auto minmax(70px, auto)',
-      gap: '8px 16px',
+      // Tightened row gap (was 8px) — combined with the inline
+      // per-stay total per row, this lets the 4-row agent breakdown
+      // fit alongside the negotiate inputs without scrolling.
+      gap: '4px 16px',
       alignItems: 'baseline',
     }}>
       <BreakdownRow
@@ -320,10 +335,18 @@ export default function PricingDashboard({
   const [selectedChannelId, setSelectedChannelId] = useState<string>(hydrate?.channel_profile_id || '');
 
   /** Primary negotiation lever — what the guest has said they'll pay.
-   *  Pre-filled in edit-mode from the saved client_price_excl_vat so
-   *  the user sees what was agreed and can adjust from there. */
+   *  Only pre-filled when the saved snapshot was actually negotiated
+   *  (reduced_baseline / reduced_commission_pct set). For default-
+   *  priced proposals the field stays blank so the benchmark price
+   *  shows as a placeholder — looks like a hint to fill in, not a
+   *  duplicate of the default that the user must clear before typing.
+   *  Avoids the "why is the negotiate field pre-filled with the same
+   *  number as the default?" confusion. */
+  const wasNegotiated = hydrate?.reduced_baseline != null || hydrate?.reduced_commission_pct != null;
   const [targetGuest, setTargetGuest] = useState(
-    hydrate?.client_price_excl_vat != null ? String(Math.round(Number(hydrate.client_price_excl_vat))) : '',
+    wasNegotiated && hydrate?.client_price_excl_vat != null
+      ? String(Math.round(Number(hydrate.client_price_excl_vat)))
+      : '',
   );
   /** Secondary levers — shave margins to protect owner net at the target.
    *  In edit-mode, pre-fill from the reduced fields if they were used. */

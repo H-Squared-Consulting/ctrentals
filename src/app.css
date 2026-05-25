@@ -1701,7 +1701,12 @@ select.form-input { cursor: pointer; }
    work for colour-blind users too (colour AND text). */
 .ops-board-card--agent {
   border-left: 4px solid #6366F1; /* indigo, matches Agent tag */
-  background: linear-gradient(to right, rgba(99, 102, 241, 0.04), transparent 80px);
+  /* Full-card lavender wash matching direct's intensity (was a
+     fading gradient that left the body looking near-white — agent
+     cards effectively blended with direct ones on a packed board).
+     Slightly stronger than direct's teal so the indigo reads through
+     the busier background. */
+  background: rgba(99, 102, 241, 0.11);
 }
 .ops-board-card--direct {
   border-left: 4px solid #14B8A6; /* teal, distinct from agent indigo */
