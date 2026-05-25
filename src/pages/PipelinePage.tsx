@@ -694,6 +694,27 @@ export default function PipelinePage() {
     };
   }, [supabase]);
 
+  // Keep an open deal modal in sync with the latest fetched data.
+  // The modal renders from a snapshot of the deal in openDeal state,
+  // not a live reference into the deals array, so a refetch (e.g.
+  // after deleting a proposal from inside the modal) wouldn't update
+  // the rows the user is looking at. Re-seat on every deals change so
+  // the body always reflects the freshest server state. Form state
+  // inside DealDetailModal is keyed by deal.key so this swap doesn't
+  // wipe in-progress edits.
+  useEffect(() => {
+    setOpenDeal(prev => {
+      if (!prev) return prev;
+      const targetKey = prev.deal.enquiry?.id ?? prev.deal.key;
+      const next = deals.find(d => (d.enquiry?.id ?? d.key) === targetKey);
+      if (!next) return prev;
+      // Reference equality short-circuit so React doesn't re-render
+      // the modal on every unrelated refetch.
+      if (next === prev.deal) return prev;
+      return { deal: next, mode: prev.mode };
+    });
+  }, [deals]);
+
   /** Card id flash-highlighted briefly when the user lands here
    *  from the New Enquiry flow (?deal=…&highlight=1). Set on URL
    *  read, cleared on a 2.8s timer so the card pulses then settles. */
@@ -903,6 +924,25 @@ export default function PipelinePage() {
     }
   }
 
+  /** Fill in a proposal's guest_name/email/phone from the latest
+   *  enquiry data — covers the race where the user just added contact
+   *  details to the enquiry and clicks Send before the cascade has
+   *  propagated to the proposal row. Falls back to whatever's on the
+   *  proposal when there's no live enquiry to read from (standalone
+   *  proposals). The merge prefers enquiry contact data because that
+   *  IS the canonical record once the team's been editing in the
+   *  deal modal — the proposal row is just a derived snapshot. */
+  function hydrateProposalContact(p: ProposalRow): ProposalRow {
+    if (!p.enquiry_id) return p;
+    const liveDeal = deals.find(d => d.enquiry?.id === p.enquiry_id);
+    const e = liveDeal?.enquiry;
+    if (!e) return p;
+    const liveName  = e.guest_name  || e.client_name || p.guest_name;
+    const liveEmail = e.guest_email || e.client_email || p.guest_email;
+    const livePhone = e.guest_phone || e.client_phone || p.guest_phone;
+    return { ...p, guest_name: liveName, guest_email: liveEmail, guest_phone: livePhone };
+  }
+
   /** Card-level Send action: if the deal has exactly one Draft proposal,
    *  open the quick Send dialog. If it has more, open the deal detail
    *  modal so the user picks which to send. */
@@ -913,7 +953,7 @@ export default function PipelinePage() {
     // would always land on the deal modal instead.
     const drafts = d.proposals.filter(p => p.status === 'draft' || p.status === 'drafting');
     if (drafts.length === 1) {
-      setSendingProposals([drafts[0]]);
+      setSendingProposals([hydrateProposalContact(drafts[0])]);
     } else {
       openDealInMode(d, 'view');
     }
@@ -1249,8 +1289,8 @@ export default function PipelinePage() {
             // direct without opening this modal.
             setOpenProposal(p);
           }}
-          onSendProposal={(p) => setSendingProposals([p])}
-          onSendDrafts={(drafts) => setSendingProposals(drafts)}
+          onSendProposal={(p) => setSendingProposals([hydrateProposalContact(p)])}
+          onSendDrafts={(drafts) => setSendingProposals(drafts.map(hydrateProposalContact))}
           onMarkProposalOutcome={(p, outcome) => {
             if (outcome === 'interested') {
               // Interested is a status-flip with no cascade, so use the
@@ -1325,7 +1365,7 @@ export default function PipelinePage() {
             }
           }}
           onSend={() => {
-            setSendingProposals([openProposal]);
+            setSendingProposals([hydrateProposalContact(openProposal)]);
             setOpenProposal(null);
           }}
           onAccept={() => markProposalOutcome(openProposal, 'accepted')}
@@ -1502,18 +1542,11 @@ function KanbanView({
             </div>
             <div className="ops-board-column-header-bottom">
               <span className="ops-board-column-sub">{col.description}</span>
-              <select
-                className="ops-board-column-sort"
-                value={columnSort[col.key] || 'smart'}
-                onChange={(e) => onColumnSortChange(col.key, e.target.value)}
-                title="Sort this column"
-              >
-                <option value="smart">Smart</option>
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-                <option value="check-in">Check-in</option>
-                <option value="client">Client A-Z</option>
-              </select>
+              {/* Per-column sort dropdown removed — the smart per-
+                  column defaults (FIFO triage for Arrived, upcoming
+                  check-in first for Quoting/Responded/Booked, most-
+                  recent for Closed) are what the team actually wants,
+                  and an unused control just added noise to the header. */}
             </div>
           </div>
           <KanbanColumnBody
@@ -2580,13 +2613,29 @@ function DealDetailModal({
         updated_at: new Date().toISOString(),
       }).eq('id', e.id);
 
-      // Cascade disclosed guest details to all linked proposals so the
-      // public proposal page personalises correctly ("Dear Sarah,"
-      // instead of "Dear Guest,"). Only fires when guest_name was
-      // changed from the initial form snapshot. For direct enquiries
-      // this is a no-op-ish (guest_name == client_name == what the
-      // proposal already has).
-      if (e.is_agent && guestName && guestName !== initialForm.guest_name) {
+      // Cascade guest details to all linked proposals so the public
+      // page personalises ("Dear Sarah,") and SendProposalDialog's
+      // WhatsApp / Email buttons appear once contact details land.
+      //
+      // Fires whenever guest_name, guest_email OR guest_phone changed
+      // — covers two real flows:
+      //   1. Agent enquiry: guest disclosed later → name + contact
+      //      cascade so "Dear Guest" flips to the real name.
+      //   2. Direct enquiry: ladies often save with just a name first,
+      //      then come back to add a phone or email. Without this
+      //      cascade the proposal rows kept the original null contact
+      //      and the Send dialog couldn't surface WhatsApp / Email.
+      const contactChanged =
+        guestName  !== initialForm.guest_name  ||
+        guestEmail !== (initialForm.guest_email || null) ||
+        guestPhone !== (initialForm.guest_phone || null) ||
+        // Direct: client_* IS the contact, so changes there also need
+        // to cascade. initialForm.client_email is a string '', not null.
+        (!e.is_agent && (
+          (form.client_email || null) !== (initialForm.client_email || null) ||
+          (form.client_phone || null) !== (initialForm.client_phone || null)
+        ));
+      if (contactChanged) {
         await supabase
           .from('proposals')
           .update({
