@@ -25,7 +25,13 @@ import { useToast } from '../components/ToastProvider';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import { CT_RENTALS_PARTNER_ID } from './constants';
-import { CTR_DEFAULT } from '../lib/pricingEngine';
+import {
+  directGuestRate,
+  ctrMargin,
+  agentGuestRate,
+  agentCtrMargin,
+  platformListPrice,
+} from '../lib/pricingEngine';
 import { useDirty } from '../lib/dirtyState';
 
 function titleCase(s: string | null | undefined): string {
@@ -114,63 +120,9 @@ function fmtDateRanges(ranges: Array<{ start: string; end: string }>): string {
   return (ranges || []).map(r => `${fmt(r.start)} → ${fmt(r.end)}`).join(' · ');
 }
 
-// ─── Terminology (matches src/lib/pricingEngine.ts) ────────────────────
-//   Base rate     — what the owner receives per night.
-//   CTR Margin    — CTR's share of the guest rate. 20% for direct + platform
-//                   scenarios (CTR_DEFAULT.platform). Technically a MARGIN,
-//                   not a markup: it's a % of the guest rate, not a % added
-//                   to the base. Marked-up equivalent would be 25% (375/1500).
-//   Direct rate   — what a direct guest pays per night (no platform involved).
-//                   Calculated: base ÷ (1 - CTR_MARGIN_PCT/100).
-//   Platform rate — what the channel needs to list so CTR + owner are paid
-//                   after the channel takes its cut. Calculated:
-//                   direct_rate × (1 + fee%/100) + fixed_fee.
-
-const CTR_MARGIN_PCT = CTR_DEFAULT.platform; // 20% — single source of truth.
-
-/** What a direct guest pays per night (CTR's margin baked in, no platform fee). */
-function directGuestRate(base: number): number {
-  if (base <= 0) return 0;
-  return Math.round(base / (1 - CTR_MARGIN_PCT / 100));
-}
-
-/** CTR's earnings per night for this base rate (direct - base). */
-function ctrMargin(base: number): number {
-  if (base <= 0) return 0;
-  return directGuestRate(base) - Math.round(base);
-}
-
-/** What a platform needs to list at, given the direct rate. Fee + fixed fee
- *  apply on top of the direct guest rate (not on the base). */
-function platformListPrice(direct: number, fee_pct: number, fixed_fee: number): number {
-  if (direct <= 0) return 0;
-  const fee = Math.max(0, fee_pct) / 100;
-  return Math.round(direct * (1 + fee) + (fixed_fee || 0));
-}
-
-// ─── Agent scenario ─────────────────────────────────────────────────────
-// When a booking comes through an agent the total margin rises to CTR's
-// structural cut plus the agent's commission. Both default to 15% — matching
-// PricingDashboard, which uses CTR_DEFAULT.agent for CTR's share and a 15%
-// generic-agent default — so the guest pays base ÷ 0.7. CTR keeps its 15% of
-// that guest rate and the agent earns the matching 15%. Specific agents can
-// negotiate a different commission at booking time; this page shows the
-// standard 15/15 split.
-const AGENT_CTR_PCT = CTR_DEFAULT.agent;            // 15 — CTR's share, agent scenario
-const GENERIC_AGENT_PCT = 15;                       // generic agent commission default
-const AGENT_TOTAL_MARGIN_PCT = AGENT_CTR_PCT + GENERIC_AGENT_PCT; // 30
-
-/** What a guest pays per night when an agent is involved (base ÷ 0.7). */
-function agentGuestRate(base: number): number {
-  if (base <= 0) return 0;
-  return Math.round(base / (1 - AGENT_TOTAL_MARGIN_PCT / 100));
-}
-
-/** CTR's earnings per night in the agent scenario (its 15% share of the agent guest rate). */
-function agentCtrMargin(base: number): number {
-  if (base <= 0) return 0;
-  return Math.round(agentGuestRate(base) * (AGENT_CTR_PCT / 100));
-}
+// Pricing terminology and the rate calculations (directGuestRate, agentGuestRate,
+// platformListPrice, etc.) now live in src/lib/pricingEngine.ts so this screen
+// and the read-only Price List share one source of truth.
 
 export default function FinancePricingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { supabase } = useAuth();
@@ -966,9 +918,9 @@ function PricingTable({
       },
     })),
     {
-      key: 'ctr_margin', label: 'CTR margin', sortable: true, align: 'right' as const, width: '120px',
+      key: 'ctr_margin', label: 'Direct', sortable: true, align: 'right' as const, width: '120px',
       cellClassName: 'pricing-col-ctr-margin',
-      group: 'CTR',
+      group: 'CTR Margin',
       render: (row: DataRow) => {
         const v = (row as any).ctr_margin as number;
         return v > 0
@@ -977,9 +929,9 @@ function PricingTable({
       },
     },
     {
-      key: 'agent_ctr_margin', label: 'CTR (agent)', sortable: true, align: 'right' as const, width: '130px',
+      key: 'agent_ctr_margin', label: 'Agent', sortable: true, align: 'right' as const, width: '130px',
       cellClassName: 'pricing-col-ctr-margin',
-      group: 'CTR',
+      group: 'CTR Margin',
       render: (row: DataRow) => {
         const r = row as any;
         if (r.isFixed) return <span style={{ color: 'var(--text-light)' }}>—</span>;
