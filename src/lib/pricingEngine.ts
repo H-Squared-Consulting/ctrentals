@@ -9,6 +9,54 @@ export const CTR_DEFAULT = {
   agent: 15,
 } as const;
 
+// ─── Display-rate helpers ───────────────────────────────────────────────
+// Shared by the Pricing settings screen and the read-only Price List so the
+// two surfaces can never disagree on a number. All pure: a base (or direct)
+// rate in, a rand-rounded rate out.
+//
+//   Direct rate   — what a direct guest pays: base ÷ (1 - CTR's 20% margin).
+//   Agent rate    — what a guest pays via an agent: base ÷ (1 - 30%), where
+//                   the 30% is CTR's 15% structural cut plus a 15% generic
+//                   agent commission (matches the quote flow's defaults).
+//   Platform rate — the direct rate grossed up for a channel's fee + fixed
+//                   fee, so CTR + owner are still paid after the channel's cut.
+export const CTR_MARGIN_PCT = CTR_DEFAULT.platform;       // 20 — CTR's direct/platform margin
+export const AGENT_CTR_PCT = CTR_DEFAULT.agent;            // 15 — CTR's share, agent scenario
+export const GENERIC_AGENT_PCT = 15;                       // generic agent commission default
+export const AGENT_TOTAL_MARGIN_PCT = AGENT_CTR_PCT + GENERIC_AGENT_PCT; // 30
+
+/** What a direct guest pays per night (CTR's margin baked in, no platform fee). */
+export function directGuestRate(base: number): number {
+  if (base <= 0) return 0;
+  return Math.round(base / (1 - CTR_MARGIN_PCT / 100));
+}
+
+/** CTR's earnings per night for this base rate (direct - base). */
+export function ctrMargin(base: number): number {
+  if (base <= 0) return 0;
+  return directGuestRate(base) - Math.round(base);
+}
+
+/** What a guest pays per night when an agent is involved (base ÷ 0.7). */
+export function agentGuestRate(base: number): number {
+  if (base <= 0) return 0;
+  return Math.round(base / (1 - AGENT_TOTAL_MARGIN_PCT / 100));
+}
+
+/** CTR's earnings per night in the agent scenario (its 15% share of the agent guest rate). */
+export function agentCtrMargin(base: number): number {
+  if (base <= 0) return 0;
+  return Math.round(agentGuestRate(base) * (AGENT_CTR_PCT / 100));
+}
+
+/** What a platform needs to list at, given the direct rate. Fee + fixed fee
+ *  apply on top of the direct guest rate (not on the base). */
+export function platformListPrice(direct: number, fee_pct: number, fixed_fee: number): number {
+  if (direct <= 0) return 0;
+  const fee = Math.max(0, fee_pct) / 100;
+  return Math.round(direct * (1 + fee) + (fixed_fee || 0));
+}
+
 /**
  * Pure pricing calculation — no side effects, no Supabase calls.
  *
