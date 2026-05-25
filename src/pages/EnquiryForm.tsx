@@ -20,19 +20,10 @@ import NightCount from '../components/NightCount';
 import { useToast } from '../components/ToastProvider';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
-import { buildAgentSnapshot } from '../lib/buildAgentSnapshot';
-import { syncEnquiryFromProposal } from '../lib/statusSync';
-import { nextDirectEnquiryRefCode } from '../lib/refCodes';
+import { nextDirectEnquiryRefCode, nextAgentEnquiryRefCode } from '../lib/refCodes';
 import { initialsForEmail } from '../lib/userInitials';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
-
-interface PropertyLite {
-  id: string;
-  property_name: string;
-  suburb: string | null;
-  bedrooms: number | null;
-}
 
 const EMPTY_FORM = {
   subject: '',
@@ -54,6 +45,7 @@ interface AgentOption {
   name: string;
   email: string | null;
   phone: string | null;
+  ref_code: string | null;
 }
 
 export function EnquiryForm() {
@@ -92,27 +84,17 @@ export function EnquiryForm() {
   const [agentId, setAgentId] = useState<string>('');
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [guestForm, setGuestForm] = useState({ guest_name: '', guest_email: '', guest_phone: '' });
-  /** Identifier toggle for agent enquiries. The card needs SOMETHING
-   *  distinctive on the kanban; the agent's own name is the same
-   *  across all their enquiries so it can't be the headline. Two
-   *  valid sources, user picks which to fill (or both — guest name
-   *  wins on the card). Defaults to 'guest' because that's what the
-   *  ladies want most of the time. */
-  const [identifierMode, setIdentifierMode] = useState<'guest' | 'subject'>('guest');
-  /** When the user fills the primary identifier they can optionally
-   *  expand the other field too — guest name AND a separate subject
-   *  is a valid bonus state. Card title still prefers guest name. */
-  const [identifierBothOpen, setIdentifierBothOpen] = useState(false);
-
-  // Agent enquiries often arrive scoped to specific houses (the agent
-  // emails "can you quote X, Y, Z for these dates?"). Ladies pick those
-  // here; on save we auto-create one drafting proposal per house using
-  // the same pricing engine + defaults as the manual flow, then the
-  // success screen jumps straight to Review proposals. Empty selection
-  // falls through to today's "save enquiry then + Create Proposal".
-  const [properties, setProperties] = useState<PropertyLite[]>([]);
-  const [selectedPropertyIds, setSelectedPropertyIds] = useState<Set<string>>(new Set());
-  const [propertySearch, setPropertySearch] = useState('');
+  /** Auto-generated agent-enquiry identifier in the form
+   *  `{agent.ref_code}/N`. Populated the moment an agent is picked
+   *  and used as the enquiry's subject on insert so the kanban
+   *  card always has SOMETHING distinctive (e.g. AHH/3) even when
+   *  the guest hasn't been disclosed yet. Read-only to the user. */
+  const [agentEnquiryRefCode, setAgentEnquiryRefCode] = useState<string>('');
+  /** Guest details for agent enquiries are collapsed by default —
+   *  the agent norm is "guest not disclosed yet" and we don't want
+   *  to push that empty-state section in the user's face. Click the
+   *  "+ Add guest details (optional)" CTA to expand it. */
+  const [agentGuestOpen, setAgentGuestOpen] = useState(false);
 
   useEffect(() => { setPageTitle('New Enquiry'); }, [setPageTitle]);
 
@@ -160,7 +142,7 @@ export function EnquiryForm() {
     // are paused contacts the user explicitly doesn't want surfaced here.
     supabase
       .from('agents')
-      .select('id, name, email, phone, is_active')
+      .select('id, name, email, phone, is_active, ref_code')
       .order('name')
       .then(({ data }: any) => {
         if (!cancelled && data) {
@@ -192,11 +174,32 @@ export function EnquiryForm() {
     if (isAgent) return;
     setAgentId('');
     setGuestForm({ guest_name: '', guest_email: '', guest_phone: '' });
-    setIdentifierMode('guest');
-    setIdentifierBothOpen(false);
-    setSelectedPropertyIds(new Set());
-    setPropertySearch('');
+    setAgentEnquiryRefCode('');
+    setAgentGuestOpen(false);
   }, [isAgent]);
+
+  // Auto-generate the enquiry identifier (`{agentRefCode}/N`) the
+  // moment the agent picker resolves to a real agent with a code.
+  // Clears when the user changes their mind so the next pick gets a
+  // fresh number. Falls back to a placeholder if the agent has no
+  // ref_code (shouldn't happen post-backfill, but keep the form
+  // working rather than crashing).
+  useEffect(() => {
+    if (!isAgent || !agentId || !supabase) {
+      setAgentEnquiryRefCode('');
+      return;
+    }
+    const agent = agents.find(a => a.id === agentId);
+    if (!agent?.ref_code) {
+      setAgentEnquiryRefCode('');
+      return;
+    }
+    let cancelled = false;
+    nextAgentEnquiryRefCode(supabase, agentId, agent.ref_code)
+      .then(code => { if (!cancelled) setAgentEnquiryRefCode(code); })
+      .catch(err => { console.error('Failed to compute agent enquiry ref code:', err); });
+    return () => { cancelled = true; };
+  }, [supabase, isAgent, agentId, agents]);
 
   // Clear the platform URL when leaving platform mode so the value
   // doesn't accidentally get persisted on a direct or agent save.
@@ -204,22 +207,6 @@ export function EnquiryForm() {
     if (isPlatform) return;
     setForm(prev => ({ ...prev, source_url: '' }));
   }, [isPlatform]);
-
-  // Lazy-load active properties the first time the user flips into
-  // agent mode (the picker only shows there). Cached for the lifetime
-  // of the form so toggling agent off/on doesn't refetch.
-  useEffect(() => {
-    if (!supabase || !isAgent || properties.length > 0) return;
-    let cancelled = false;
-    supabase
-      .from('partner_properties')
-      .select('id, property_name, suburb, bedrooms')
-      .eq('partner_id', CT_RENTALS_PARTNER_ID)
-      .eq('is_published', true)
-      .order('property_name')
-      .then(({ data }: any) => { if (!cancelled && data) setProperties(data); });
-    return () => { cancelled = true; };
-  }, [supabase, isAgent, properties.length]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
     const { name, value } = e.target;
@@ -305,19 +292,96 @@ export function EnquiryForm() {
     }
   }
 
+  /** "Save enquiry" path for AGENT enquiries — persists the row
+   *  without going through the property match step. Mirrors
+   *  handleDirectSaveOnly so the agent flow's "Save / close" CTA
+   *  behaves identically to direct (lands the deal in Arrived with
+   *  no proposals attached). The auto-generated AHH/N code is the
+   *  ref_code AND the subject — guest details are optional. */
+  async function handleAgentSaveOnly() {
+    if (saving) return;
+    if (!agentId) { toast.warning('Pick an agent'); return; }
+    if (!agentEnquiryRefCode) {
+      toast.warning('Hold on — still generating the enquiry code');
+      return;
+    }
+    // Dates sanity-check only when both filled (quick-entry like direct).
+    if (form.check_in && form.check_out && form.check_in >= form.check_out) {
+      toast.warning('Check-out must be after check-in');
+      return;
+    }
+    setSaving(true);
+    try {
+      const disclosedGuestName  = guestForm.guest_name.trim()  || null;
+      const disclosedGuestEmail = guestForm.guest_email.trim() || null;
+      const disclosedGuestPhone = guestForm.guest_phone.trim() || null;
+      const { data: enq, error: enqErr } = await supabase
+        .from('enquiries')
+        .insert({
+          partner_id: CT_RENTALS_PARTNER_ID,
+          // For agent enquiries the AHH/N code serves as both the
+          // tracking ref_code AND the kanban-card subject. Unique
+          // by construction (per-agent suffix counter).
+          ref_code: agentEnquiryRefCode,
+          subject: agentEnquiryRefCode,
+          is_agent: true,
+          agent_id: agentId,
+          client_name: form.client_name.trim(),
+          client_email: form.client_email.trim() || null,
+          client_phone: form.client_phone.trim() || null,
+          guest_name: disclosedGuestName,
+          guest_email: disclosedGuestEmail,
+          guest_phone: disclosedGuestPhone,
+          check_in: form.check_in || null,
+          check_out: form.check_out || null,
+          bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : null,
+          guests_total:    form.guests_total ? Number(form.guests_total) : null,
+          bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
+          guests_options:   null,
+          guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
+          guests_children: form.guests_children ? Number(form.guests_children) : null,
+          nationality: form.nationality.trim() || null,
+          budget_min: form.budget_min ? Number(form.budget_min) : null,
+          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          notes: form.notes.trim() || null,
+          source: null,
+          source_url: null,
+          created_by_initials: initialsForEmail(user?.email),
+        })
+        .select('id, ref_code')
+        .single();
+      if (enqErr) throw enqErr;
+      if (disclosedGuestName || disclosedGuestEmail) {
+        try {
+          await linkOrCreateGuestForEnquiry(supabase, {
+            enquiryId: enq.id,
+            partnerId: CT_RENTALS_PARTNER_ID,
+            guestName: disclosedGuestName,
+            guestEmail: disclosedGuestEmail,
+            guestPhone: disclosedGuestPhone,
+          });
+        } catch (err) { console.error('Guest CRM link failed (non-blocking):', err); }
+      }
+      notifyPipelineChanged();
+      toast.success(`Enquiry ${enq.ref_code} saved`);
+      navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
+    } catch (err: any) {
+      console.error('handleAgentSaveOnly failed:', err);
+      toast.error('Failed to save: ' + (err?.message || String(err)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (saving) return;
-    // Agent enquiries need ONE of: guest name OR subject. Both is a
-    // valid bonus (guest name wins on the card). Direct enquiries
-    // skip this — the recipient IS the guest, so client_name below
-    // already covers the headline.
     if (!hasSource) { toast.warning('Pick where the enquiry came from'); return; }
-    if (isAgent && !form.subject.trim() && !guestForm.guest_name.trim()) {
-      toast.warning('Add either a guest name or a subject — we need something distinctive to label this enquiry on the board');
+    if (isAgent && !agentId) { toast.warning('Pick an agent'); return; }
+    if (isAgent && !agentEnquiryRefCode) {
+      toast.warning('Hold on — still generating the enquiry code');
       return;
     }
-    if (isAgent && !agentId) { toast.warning('Pick an agent'); return; }
     if (isPlatform && !form.source_url.trim()) {
       toast.warning('Add the conversation URL from the platform');
       return;
@@ -328,17 +392,30 @@ export function EnquiryForm() {
     if (form.bedrooms_options.length === 0) { toast.warning('Pick at least one bedroom count'); return; }
     if (!form.guests_total || Number(form.guests_total) < 1) { toast.warning('Pick the guest count'); return; }
 
-    // Direct enquiry — navigate to step 2 (the property match page)
-    // with the form data in location.state. The match page is the
-    // one that actually persists the enquiry + proposals atomically.
-    if (!isAgent && !isPlatform) {
+    // Direct OR agent → step 2 (property match page) with the form
+    // data carried via location.state. Match page handles the
+    // atomic enquiry + proposals insert. Platform still uses the
+    // legacy inline-save path below (no match page for platform).
+    if (!isPlatform) {
+      const disclosedGuestName  = isAgent ? (guestForm.guest_name.trim()  || null) : form.client_name.trim();
+      const disclosedGuestEmail = isAgent ? (guestForm.guest_email.trim() || null) : (form.client_email.trim() || null);
+      const disclosedGuestPhone = isAgent ? (guestForm.guest_phone.trim() || null) : (form.client_phone.trim() || null);
       navigate('/enquiry/new/match', {
         state: {
           enquiry: {
-            subject: form.subject.trim() || null,
+            // Agent enquiries reuse the AHH/N code as both ref_code
+            // and subject; direct uses form.subject + generates a
+            // fresh D### ref_code inside the match modal.
+            ref_code: isAgent ? agentEnquiryRefCode : null,
+            subject: isAgent ? agentEnquiryRefCode : (form.subject.trim() || null),
+            is_agent: isAgent,
+            agent_id: isAgent ? agentId : null,
             client_name: form.client_name.trim(),
             client_email: form.client_email.trim() || null,
             client_phone: form.client_phone.trim() || null,
+            guest_name: disclosedGuestName,
+            guest_email: disclosedGuestEmail,
+            guest_phone: disclosedGuestPhone,
             check_in: form.check_in,
             check_out: form.check_out,
             bedrooms_needed: Math.min(...form.bedrooms_options),
@@ -359,11 +436,11 @@ export function EnquiryForm() {
       return;
     }
 
+    // Platform path: insert directly here, no match step (the link
+    // back to the conversation thread is the proposal-trigger, not
+    // a property match). Will migrate to the match-page flow when
+    // the platform stream gets its own ref-code scheme.
     setSaving(true);
-    // Ref code generation, by stream:
-    //   Direct   → D001, D002, … (sequential, padded to 3)
-    //   Agent    → legacy ENQ-YYYYMMDD-NAM-XX (will migrate next)
-    //   Platform → legacy ENQ-YYYYMMDD-NAM-XX (will migrate next)
     const legacyEnqRefCode = () => {
       const d = new Date();
       const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -372,42 +449,25 @@ export function EnquiryForm() {
       const tail = Math.floor(Math.random() * 0xff).toString(16).toUpperCase().padStart(2, '0');
       return `ENQ-${day}-${name}-${tail}`;
     };
-    const refCode = (!isAgent && !isPlatform)
-      ? await nextDirectEnquiryRefCode(supabase)
-      : legacyEnqRefCode();
     const clientName = form.client_name.trim();
     const clientEmail = form.client_email.trim() || null;
     const clientPhone = form.client_phone.trim() || null;
-    // For agent enquiries, guest_* is only populated when the user
-    // disclosed details in the "Guest details (if known)" sub-section. If
-    // empty, all three stay null and a "Valued Guest" placeholder takes
-    // over when a proposal is raised — see CreateProposalModal.
-    const disclosedGuestName  = isAgent ? (guestForm.guest_name.trim()  || null) : clientName;
-    const disclosedGuestEmail = isAgent ? (guestForm.guest_email.trim() || null) : clientEmail;
-    const disclosedGuestPhone = isAgent ? (guestForm.guest_phone.trim() || null) : clientPhone;
     const { data, error } = await supabase
       .from('enquiries')
       .insert({
         partner_id: CT_RENTALS_PARTNER_ID,
-        ref_code: refCode,
-        subject: isAgent ? (form.subject.trim() || null) : null,
-        is_agent: isAgent,
-        agent_id: isAgent ? agentId : null,
-        // Platform enquiries get tagged so the kanban's Platform lens
-        // can filter them out and so the deal modal can render the
-        // back-link to the conversation thread. Direct enquiries
-        // leave both fields null (legacy default).
-        source: isPlatform ? 'platform' : null,
-        source_url: isPlatform ? (form.source_url.trim() || null) : null,
+        ref_code: legacyEnqRefCode(),
+        subject: null,
+        is_agent: false,
+        agent_id: null,
+        source: 'platform',
+        source_url: form.source_url.trim() || null,
         client_name: clientName,
         client_email: clientEmail,
         client_phone: clientPhone,
-        // Direct: mirror client_* → guest_* (recipient is the guest).
-        // Agent: guest_* only if user disclosed; otherwise null + later
-        // disclosure on the enquiry detail modal will cascade to proposals.
-        guest_name: disclosedGuestName,
-        guest_email: disclosedGuestEmail,
-        guest_phone: disclosedGuestPhone,
+        guest_name: clientName,
+        guest_email: clientEmail,
+        guest_phone: clientPhone,
         check_in: form.check_in,
         check_out: form.check_out,
         bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : 1,
@@ -431,110 +491,23 @@ export function EnquiryForm() {
       toast.error('Failed to save: ' + error.message);
       return;
     }
-    // Auto-link / create the CRM guests row for direct enquiries (always
-    // — they have guest details up-front) and for agent enquiries when
-    // the user disclosed the guest in the optional sub-section. Silent
-    // failure: don't block the enquiry save flow on a CRM hiccup.
-    if (data?.id && (disclosedGuestName || disclosedGuestEmail)) {
+    if (data?.id && (clientName || clientEmail)) {
       try {
         await linkOrCreateGuestForEnquiry(supabase, {
           enquiryId: data.id,
           partnerId: CT_RENTALS_PARTNER_ID,
-          guestName: disclosedGuestName,
-          guestEmail: disclosedGuestEmail,
-          guestPhone: disclosedGuestPhone,
+          guestName: clientName,
+          guestEmail: clientEmail,
+          guestPhone: clientPhone,
         });
       } catch (err) {
         console.error('Guest CRM link failed (non-blocking):', err);
       }
     }
 
-    // Agent enquiry with specific properties selected → auto-create one
-    // drafting proposal per property using the same engine + defaults
-    // the manual flow lands on. Best-effort: failures are toasted but
-    // don't roll back the saved enquiry. The success screen swaps to
-    // the "proposals created" variant if any landed.
-    let autoProposalCount = 0;
-    if (isAgent && agentId && data?.id && selectedPropertyIds.size > 0) {
-      const propertyIds = [...selectedPropertyIds];
-      const results = await Promise.all(propertyIds.map(async (pid) => {
-        try {
-          const snap = await buildAgentSnapshot(supabase, {
-            propertyId: pid,
-            agentId,
-            checkIn: form.check_in || null,
-          });
-          if (!snap) return { ok: false, pid, reason: 'no-baseline' };
-          const b = snap.breakdown;
-          const pricingPayload = {
-            property_id: snap.propertyId,
-            scenario_type: snap.scenarioType,
-            agent_id: snap.agentId,
-            agents: snap.agents,
-            channel_profile_id: snap.channelId,
-            baseline_used: snap.baseline,
-            baseline_mode: 'daily' as const,
-            commission_pct: snap.totalMarginPct,
-            reduced_baseline: null,
-            reduced_commission_pct: null,
-            season_tag: snap.seasonTag,
-            season_multiplier: snap.seasonMultiplier,
-            calc_method: 'margin' as const,
-            owner_net: b.ownerNet,
-            company_take: b.ctrTake,
-            client_price_excl_vat: b.clientPriceExclVat,
-            vat_enabled: false,
-            vat_rate_pct: 0,
-            vat_amount: 0,
-            client_price_incl_vat: b.clientPriceExclVat,
-            status: 'draft' as const,
-            expiry_date: null,
-            notes: null,
-          };
-          const pricingRes = await supabase.from('pricing_proposals').insert(pricingPayload).select('id').single();
-          if (pricingRes.error) throw pricingRes.error;
-          // Per-proposal ref_code, same format as the manual flow.
-          const d = new Date();
-          const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-          const tail = Math.floor(Math.random() * 0xff).toString(16).toUpperCase().padStart(2, '0');
-          const propRefCode = `PROP-${day}-${tail}`;
-          const proposalPayload = {
-            ref_code: propRefCode,
-            partner_id: CT_RENTALS_PARTNER_ID,
-            enquiry_id: data.id,
-            property_id: pid,
-            pricing_proposal_id: pricingRes.data.id,
-            guest_id: null,
-            guest_name: disclosedGuestName || 'Valued Guest',
-            guest_email: disclosedGuestEmail,
-            guest_phone: disclosedGuestPhone,
-            guests_total: Number(form.guests_total) || null,
-            check_in: form.check_in || null,
-            check_out: form.check_out || null,
-            status: 'drafting' as const,
-            is_agent: true,
-            notes: null,
-          };
-          const propRes = await supabase.from('proposals').insert(proposalPayload).select('id').single();
-          if (propRes.error) throw propRes.error;
-          await syncEnquiryFromProposal(supabase, propRes.data.id, 'drafting');
-          return { ok: true, pid };
-        } catch (err: any) {
-          console.error('auto-proposal failed for', pid, err);
-          return { ok: false, pid, reason: err?.message || String(err) };
-        }
-      }));
-      autoProposalCount = results.filter(r => r.ok).length;
-      const failed = results.filter(r => !r.ok);
-      if (failed.length > 0) {
-        toast.warning(`${autoProposalCount} of ${propertyIds.length} draft proposals created; ${failed.length} failed (check console)`);
-      }
-    }
-
     notifyPipelineChanged();
     toast.success('Enquiry saved');
     setSavedEnquiry(data as EnquiryPrefill);
-    if (autoProposalCount > 0) setProposalsCreatedCount(autoProposalCount);
   }
 
   function startAnother() {
@@ -544,10 +517,8 @@ export function EnquiryForm() {
     setEnquirySource('direct');
     setAgentId('');
     setGuestForm({ guest_name: '', guest_email: '', guest_phone: '' });
-    setIdentifierMode('guest');
-    setIdentifierBothOpen(false);
-    setSelectedPropertyIds(new Set());
-    setPropertySearch('');
+    setAgentEnquiryRefCode('');
+    setAgentGuestOpen(false);
   }
 
   const close = () => navigate('/operations/enquiries');
@@ -675,11 +646,46 @@ export function EnquiryForm() {
               );
             }
 
-            // Agent / platform — keep the existing gating.
+            // Agent — mirror direct: two buttons (quick save / close
+            // and continue to proposals). Save / close only needs an
+            // agent picked; Continue gates on the full proposal-ready
+            // set so the match page has what it needs.
             if (isAgent) {
-              if (!agentId) return null;
-              if (!form.subject.trim() && !guestForm.guest_name.trim()) return null;
+              if (!agentId || !agentEnquiryRefCode) return null;
+              const canContinue =
+                !!form.client_name.trim() &&
+                !!form.check_in &&
+                !!form.check_out &&
+                form.check_in < form.check_out &&
+                form.bedrooms_options.length > 0 &&
+                !!form.guests_total;
+              return (
+                <div style={{ display: 'inline-flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleAgentSaveOnly}
+                    disabled={saving}
+                    title="Save the enquiry now and close — fill the rest in from the kanban later"
+                  >
+                    {saving ? 'Saving…' : '💾 Save / close'}
+                  </button>
+                  <button
+                    type="submit"
+                    form="enquiry-form"
+                    className="btn btn-primary"
+                    disabled={saving || !canContinue}
+                    title={canContinue
+                      ? 'Continue to pick matching properties + price them'
+                      : 'Add dates, bedrooms and guests to continue to the property picker'}
+                  >
+                    {saving ? 'Saving…' : 'Continue to proposals →'}
+                  </button>
+                </div>
+              );
             }
+
+            // Platform — keep the single-button save.
             if (isPlatform && !form.source_url.trim()) return null;
             if (!form.client_name.trim()) return null;
             if (!form.check_in || !form.check_out) return null;
@@ -757,136 +763,73 @@ export function EnquiryForm() {
                   <option value="">— Pick an agent —</option>
                   {agents.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.name}{a.email ? ` · ${a.email}` : ''}
+                      {a.ref_code ? `${a.ref_code} · ` : ''}{a.name}{a.email ? ` · ${a.email}` : ''}
                     </option>
                   ))}
                 </select>
               </Field>
-              {agentId && (
-                // Mirror of the picked agent's contact, read-only. Source
-                // of truth lives on the agents row.
-                <div className="enquiry-grid-3" style={{ marginTop: 12 }}>
-                  <Field label="Name">
-                    <input className="form-input" value={form.client_name} disabled readOnly />
+            </Section>
+
+            {/* Gate the entire rest of the form on an agent being
+                picked — until then the form is just the source pick
+                and the agent dropdown so the user does ONE thing at
+                a time. */}
+            {agentId && (<>
+              {/* Mirror of the picked agent's contact + the auto-
+                  generated enquiry code. Both read-only. The code
+                  doubles as the card label until guest details are
+                  disclosed below. */}
+              <Section title="Enquiry code" subtitle="Auto-generated · used as the card label until guest details are added">
+                <div className="enquiry-grid-2">
+                  <Field label="Code">
+                    <input
+                      className="form-input"
+                      value={agentEnquiryRefCode || 'Generating…'}
+                      readOnly
+                      disabled
+                      style={{
+                        fontFamily: 'ui-monospace, monospace',
+                        fontWeight: 600,
+                        color: 'var(--color-primary)',
+                        background: 'var(--surface-muted, #F3F4F6)',
+                        cursor: 'not-allowed',
+                      }}
+                      title="Auto-incremented per agent. Locked once assigned."
+                    />
                   </Field>
-                  <Field label="Email">
-                    <input className="form-input" value={form.client_email} disabled readOnly />
-                  </Field>
-                  <Field label="Phone">
-                    <input className="form-input" value={form.client_phone} disabled readOnly />
+                  <Field label="Agent contact">
+                    <input
+                      className="form-input"
+                      value={[form.client_name, form.client_email || form.client_phone].filter(Boolean).join(' · ')}
+                      disabled
+                      readOnly
+                    />
                   </Field>
                 </div>
-              )}
-            </Section>
+              </Section>
 
-            <Section
-              title="Properties the agent is enquiring about"
-              subtitle="Tick one or more — a draft proposal is auto-created for each on save. Leave empty if the agent is asking about availability generally."
-            >
-              <PropertyMultiPicker
-                properties={properties}
-                selected={selectedPropertyIds}
-                onChange={setSelectedPropertyIds}
-                search={propertySearch}
-                onSearchChange={setPropertySearch}
-              />
-            </Section>
-
-            <Section
-              title="Identify this enquiry *"
-              subtitle="Pick how you want to label this on the board. Guest name wins on the card if both are filled. At least one is required."
-            >
-              {/* Mode toggle — same .view-toggle pattern as the other
-                  pill switches in the app so the choice reads as a
-                  single primary control. */}
-              <div className="view-toggle" style={{ marginBottom: 12 }}>
-                <button
-                  type="button"
-                  className={`view-toggle-btn ${identifierMode === 'guest' ? 'active' : ''}`}
-                  onClick={() => setIdentifierMode('guest')}
-                >
-                  👤 Guest details
-                </button>
-                <button
-                  type="button"
-                  className={`view-toggle-btn ${identifierMode === 'subject' ? 'active' : ''}`}
-                  onClick={() => setIdentifierMode('subject')}
-                >
-                  ✏ Subject
-                </button>
-              </div>
-
-              {identifierMode === 'guest' ? (
-                <>
-                  <div className="enquiry-grid-3">
-                    <Field label="Guest name *">
-                      <input
-                        className="form-input"
-                        value={guestForm.guest_name}
-                        onChange={(e) => setGuestForm(p => ({ ...p, guest_name: e.target.value }))}
-                        placeholder="e.g. Sarah Whitmore"
-                      />
-                    </Field>
-                    <Field label="Guest email">
-                      <input
-                        className="form-input"
-                        type="email"
-                        value={guestForm.guest_email}
-                        onChange={(e) => setGuestForm(p => ({ ...p, guest_email: e.target.value }))}
-                        placeholder="guest@example.com"
-                      />
-                    </Field>
-                    <Field label="Guest phone">
-                      <input
-                        className="form-input"
-                        value={guestForm.guest_phone}
-                        onChange={(e) => setGuestForm(p => ({ ...p, guest_phone: e.target.value }))}
-                        placeholder="+27 …"
-                      />
-                    </Field>
-                  </div>
-                  {identifierBothOpen ? (
-                    <div className="form-group" style={{ marginTop: 12 }}>
-                      <label className="form-label">Subject (bonus)</label>
-                      <input
-                        className="form-input"
-                        name="subject"
-                        value={form.subject}
-                        onChange={handleChange}
-                        placeholder="A short summary of the trip"
-                        maxLength={120}
-                      />
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => setIdentifierBothOpen(true)}
-                      style={{ fontSize: '0.8125rem', marginTop: 8 }}
-                    >
-                      + Also add a subject
-                    </button>
-                  )}
-                </>
-              ) : (
-                <>
-                  <input
-                    className="form-input"
-                    name="subject"
-                    value={form.subject}
-                    onChange={handleChange}
-                    placeholder="A short summary of the trip (e.g. Family of 6, Easter)"
-                    maxLength={120}
-                    required
-                  />
-                  {identifierBothOpen ? (
-                    <div className="enquiry-grid-3" style={{ marginTop: 12 }}>
-                      <Field label="Guest name (bonus)">
+              {/* Guest details collapse — agent enquiries usually
+                  arrive with no guest disclosed yet, so we don't
+                  push an empty section. The CTA reads as a clear
+                  next-step affordance (same .btn .btn-ghost styling
+                  used elsewhere in the form) so the user can see
+                  they need to click to add details. Property picking
+                  happens on the next page (matches the direct flow
+                  via /enquiry/new/match). */}
+              <Section
+                title="Guest details (optional)"
+                subtitle="Agents often don't disclose the guest up front. If left blank, the card uses the auto-generated code above."
+              >
+                {agentGuestOpen ? (
+                  <>
+                    <div className="enquiry-grid-3">
+                      <Field label="Guest name">
                         <input
                           className="form-input"
                           value={guestForm.guest_name}
                           onChange={(e) => setGuestForm(p => ({ ...p, guest_name: e.target.value }))}
                           placeholder="e.g. Sarah Whitmore"
+                          autoFocus
                         />
                       </Field>
                       <Field label="Guest email">
@@ -907,19 +850,30 @@ export function EnquiryForm() {
                         />
                       </Field>
                     </div>
-                  ) : (
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      onClick={() => setIdentifierBothOpen(true)}
+                      onClick={() => {
+                        setAgentGuestOpen(false);
+                        setGuestForm({ guest_name: '', guest_email: '', guest_phone: '' });
+                      }}
                       style={{ fontSize: '0.8125rem', marginTop: 8 }}
                     >
-                      + Also add guest details
+                      − Hide guest details
                     </button>
-                  )}
-                </>
-              )}
-            </Section>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => setAgentGuestOpen(true)}
+                    style={{ fontSize: '0.875rem' }}
+                  >
+                    + Add guest details
+                  </button>
+                )}
+              </Section>
+            </>)}
           </>
         ) : (
           // Direct OR Platform — same guest fields. Platform adds a
@@ -962,6 +916,11 @@ export function EnquiryForm() {
           </>
         )}
 
+        {/* Stay + Context only show once the agent is locked in
+            (agent path) or immediately (direct/platform). Keeps
+            the agent flow strictly linear: pick agent → reveal
+            the rest. */}
+        {(!isAgent || agentId) && (<>
         <Section title="Stay" subtitle="Dates and guest count">
           <div className="enquiry-grid-2">
             <Field label="Check-in *">
@@ -1058,6 +1017,7 @@ export function EnquiryForm() {
           </Field>
         </Section>
         </>)}
+        </>)}
       </ActionModal>
 
     </form>
@@ -1078,103 +1038,6 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-/** @deprecated — moved to ../components/NumericMultiSelect.
- *  Kept temporarily so any stray references still compile. */
-function ChipMultiSelect({ max, min = 1, value, onChange, placeholder = 'Pick one or more…', singular, plural }: {
-  max: number;
-  min?: number;
-  value: number[];
-  onChange: (next: number[]) => void;
-  placeholder?: string;
-  singular?: string;
-  plural?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-  function toggle(n: number) {
-    const set = new Set(value);
-    if (set.has(n)) set.delete(n); else set.add(n);
-    onChange([...set].sort((a, b) => a - b));
-  }
-  const options = Array.from({ length: max - min + 1 }, (_, i) => i + min);
-  const summary = value.length === 0
-    ? placeholder
-    : `${value.join(', ')}${singular ? ` ${value.length === 1 ? singular : (plural || singular + 's')}` : ''}`;
-  return (
-    <div ref={wrapperRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        className="form-input"
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%',
-          textAlign: 'left',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          background: 'var(--surface)',
-        }}
-        aria-expanded={open}
-      >
-        <span style={{
-          flex: 1, minWidth: 0,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          color: value.length === 0 ? 'var(--text-light)' : 'var(--text)',
-        }}>
-          {summary}
-        </span>
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 4px)',
-          left: 0,
-          right: 0,
-          zIndex: 20,
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-sm)',
-          boxShadow: 'var(--shadow-md, 0 4px 16px rgba(0,0,0,0.1))',
-          padding: 8,
-          maxHeight: 280,
-          overflowY: 'auto',
-        }}>
-          {options.map(n => {
-            const selected = value.includes(n);
-            return (
-              <label
-                key={n}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '6px 8px',
-                  cursor: 'pointer',
-                  background: selected ? 'var(--bg)' : 'transparent',
-                  borderRadius: 4,
-                }}
-              >
-                <input type="checkbox" checked={selected} onChange={() => toggle(n)} />
-                <span style={{ fontSize: '0.875rem' }}>{n}</span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Field({ label, children, style }: { label: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -1185,156 +1048,4 @@ function Field({ label, children, style }: { label: React.ReactNode; children: R
   );
 }
 
-function titleCase(s: string | null | undefined): string {
-  if (!s) return '';
-  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
-}
 
-/** Multi-select for active properties — collapsed by default into a
- *  trigger button that summarises the current selection. Click to
- *  open, type to search, click again (or anywhere outside) to close.
- *  Keeps the form compact while still allowing the search-and-tick
- *  flow the user expects. */
-function PropertyMultiPicker({
-  properties,
-  selected,
-  onChange,
-  search,
-  onSearchChange,
-}: {
-  properties: PropertyLite[];
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
-  search: string;
-  onSearchChange: (s: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  // Close on outside click so the picker dismisses when the user
-  // moves on. Doesn't fire on internal clicks (label, search box).
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
-  const filtered = terms.length === 0
-    ? properties
-    : properties.filter(p => {
-        const hay = [p.property_name, p.suburb].filter(Boolean).join(' ').toLowerCase();
-        return terms.every(t => hay.includes(t));
-      });
-  function toggle(id: string) {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    onChange(next);
-  }
-  // Trigger label: "Pick properties…" when nothing selected, else a
-  // short summary ("3 selected · 104 Zwaanswyk, 12 Bordeaux, +1").
-  const selectedProps = properties.filter(p => selected.has(p.id));
-  const triggerLabel = selectedProps.length === 0
-    ? 'Pick properties…'
-    : (() => {
-        const names = selectedProps.slice(0, 2).map(p => titleCase(p.property_name)).join(', ');
-        const extra = selectedProps.length > 2 ? `, +${selectedProps.length - 2}` : '';
-        return `${selectedProps.length} selected · ${names}${extra}`;
-      })();
-
-  return (
-    <div ref={wrapperRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        className="form-input"
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%',
-          textAlign: 'left',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          background: 'var(--surface)',
-        }}
-        aria-expanded={open}
-      >
-        <span style={{
-          flex: 1, minWidth: 0,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          color: selectedProps.length === 0 ? 'var(--text-light)' : 'var(--text)',
-        }}>
-          {triggerLabel}
-        </span>
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 4px)',
-          left: 0,
-          right: 0,
-          zIndex: 20,
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-sm)',
-          boxShadow: 'var(--shadow-md, 0 4px 16px rgba(0,0,0,0.1))',
-          padding: 8,
-        }}>
-          <input
-            type="search"
-            className="form-input"
-            placeholder="Search properties by name or suburb…"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            style={{ marginBottom: 6 }}
-            autoFocus
-          />
-          <div style={{
-            maxHeight: 220,
-            overflowY: 'auto',
-            border: '1px solid var(--border-light)',
-            borderRadius: 'var(--radius-sm)',
-          }}>
-            {filtered.length === 0 ? (
-              <div style={{ padding: 12, fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>No properties match.</div>
-            ) : filtered.map(p => {
-              const isSel = selected.has(p.id);
-              return (
-                <label
-                  key={p.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px',
-                    borderBottom: '1px solid var(--border-light)',
-                    cursor: 'pointer',
-                    background: isSel ? 'var(--bg)' : 'transparent',
-                  }}
-                >
-                  <input type="checkbox" checked={isSel} onChange={() => toggle(p.id)} />
-                  <span style={{ fontSize: '0.875rem', flex: 1 }}>
-                    {titleCase(p.property_name)}
-                    {p.suburb && <span style={{ color: 'var(--text-secondary)' }}> · {titleCase(p.suburb)}</span>}
-                    {p.bedrooms ? <span style={{ color: 'var(--text-secondary)' }}> · {p.bedrooms} bed</span> : null}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {selected.size > 0 && (
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 6 }}>
-          {selected.size} selected — a drafting proposal will be created for each on save.
-        </div>
-      )}
-    </div>
-  );
-}

@@ -26,6 +26,7 @@ import {
   getPropertyCountsByAgent,
   getPropertyIdsForAgent,
 } from '../lib/agentPortalAdmin';
+import { nextAgentRefCode } from '../lib/agentRefCode';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -193,22 +194,35 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
     if (!form.name.trim()) { toast.error('Agent name is required'); return; }
     setSaving(true);
     try {
-      const payload = {
+      const payload: any = {
         name: form.name.trim(),
         company: form.company.trim() || null,
         email: form.email.trim() || null,
         default_commission_pct: parseFloat(form.default_commission_pct) || 0,
       };
       if (editing?.id) {
+        // UPDATE: ref_code intentionally not touched — once an agent
+        // has a code, downstream references (enquiries / proposals)
+        // depend on it staying stable even if the name changes.
         const { error } = await supabase.from('agents').update(payload).eq('id', editing.id);
         if (error) throw error;
         toast.success('Agent updated');
         setInitialForm(form);
         setMode('view');
       } else {
+        // INSERT: compute the next free Axx from the codes already
+        // taken globally. Backfill migration handled existing rows;
+        // this keeps new inserts unique going forward. agents is not
+        // partner-scoped in this schema.
+        const takenCodes = new Set<string>(
+          agents
+            .map((a: any) => a.ref_code)
+            .filter((c: any): c is string => !!c),
+        );
+        payload.ref_code = nextAgentRefCode(payload.name, takenCodes);
         const { error } = await supabase.from('agents').insert(payload);
         if (error) throw error;
-        toast.success('Agent added');
+        toast.success(`Agent added · ${payload.ref_code}`);
         setEditing(null);
       }
       await loadAgents();
@@ -384,6 +398,28 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
           <DetailModalSection heading="Agent details">
             <fieldset disabled={mode === 'view'} className="form-fieldset-reset">
               <div className="form-grid-2">
+                {/* Code is locked — generated at creation from the
+                    agent's initials and never re-derived on edit so
+                    enquiry / proposal refs that mention it stay
+                    valid. Shows a placeholder for unsaved new
+                    agents (the code is assigned at insert time). */}
+                <div className="form-group">
+                  <label className="form-label">Code</label>
+                  <input
+                    className="form-input"
+                    value={editing?.id ? ((editing as any).ref_code || '—') : 'auto · generated on save'}
+                    readOnly
+                    disabled
+                    style={{
+                      fontFamily: 'ui-monospace, monospace',
+                      fontWeight: 600,
+                      color: editing?.id ? 'var(--color-primary)' : 'var(--text-light)',
+                      background: 'var(--surface-muted, #F3F4F6)',
+                      cursor: 'not-allowed',
+                    }}
+                    title="A{xx} where xx = agent initials. Locked once assigned."
+                  />
+                </div>
                 <div className="form-group">
                   <label className="form-label">Name *</label>
                   <input
@@ -583,6 +619,22 @@ function AgentGroupRow({
         cursor: 'pointer',
       }}
     >
+      {/* Locked code pill — leads the row so the team can identify
+          the agent by the same shorthand used in enquiry / proposal
+          refs. Monospace + primary colour matches every other ref
+          code on the platform. */}
+      <span
+        title={(agent as any).ref_code ? `Agent code · ${(agent as any).ref_code}` : 'No code assigned'}
+        style={{
+          fontFamily: 'ui-monospace, monospace',
+          fontWeight: 600,
+          color: (agent as any).ref_code ? 'var(--color-primary)' : 'var(--text-light)',
+          fontSize: '0.8125rem',
+          minWidth: 56,
+        }}
+      >
+        {(agent as any).ref_code || '—'}
+      </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, color: 'var(--text)' }}>{titleCase(agent.name)}</div>
         {agent.email && (
@@ -654,6 +706,7 @@ function AgentGroupRow({
 
 interface AgentRow extends DataRow {
   id: string;
+  ref_code: string;
   name: string;
   company: string;
   email: string;
@@ -681,6 +734,7 @@ function AgentsTable({
     const st = portalState[a.id] || { hasToken: false, activeToken: null, propertyCount: 0 };
     return {
       id: a.id,
+      ref_code: (a as any).ref_code || '',
       name: titleCase(a.name),
       company: titleCase(a.company || ''),
       email: a.email ? a.email.toLowerCase() : '',
@@ -694,6 +748,15 @@ function AgentsTable({
   });
 
   const columns = [
+    {
+      key: 'ref_code', label: 'Code', sortable: true, width: '90px',
+      render: (row: DataRow) => {
+        const code = (row as AgentRow).ref_code;
+        return code
+          ? <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 600, color: 'var(--color-primary)' }}>{code}</span>
+          : <span className="text-light">—</span>;
+      },
+    },
     {
       key: 'name', label: 'Agent', sortable: true,
       render: (row: DataRow) => <strong>{(row as AgentRow).name || <span className="text-light">-</span>}</strong>,

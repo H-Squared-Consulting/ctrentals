@@ -124,6 +124,10 @@ interface ProposalDetailModalProps {
    *  is responsible for writing the new status and syncing the enquiry. */
   onAccept?: () => void;
   onDecline?: () => void;
+  /** When set, the Accept button is disabled with this string as the
+   *  hover hint. Used for agent enquiries with no disclosed guest —
+   *  accepting without a guest leaves the booking un-attributable. */
+  acceptDisabledReason?: string | null;
   /** Click handler for the "From enquiry ENQ-…" subtitle link. Hosts wire
    *  this to navigate to the Proposals page filtered to this enquiry's
    *  siblings (?enquiry=<id>). Omitted on standalone proposals. */
@@ -139,6 +143,7 @@ export default function ProposalDetailModal({
   onSend,
   onAccept,
   onDecline,
+  acceptDisabledReason,
   onOpenEnquiry,
 }: ProposalDetailModalProps) {
 
@@ -218,11 +223,12 @@ export default function ProposalDetailModal({
   const footer = (
     <>
       {isSent && onDecline && (
-        // Background colour mirrors the Declined column accent so the
-        // button visually signals the destination state.
+        // Red danger styling so the destructive outcome reads
+        // distinctly from Accept (was grey from STATUS_ACCENT.declined,
+        // which made the two buttons look near-identical and the user
+        // couldn't tell them apart at a glance).
         <button
-          className="btn"
-          style={{ background: STATUS_ACCENT.declined, color: '#fff', border: 'none' }}
+          className="btn btn-outline-danger"
           onClick={onDecline}
         >
           ✕ Mark Declined
@@ -230,11 +236,20 @@ export default function ProposalDetailModal({
       )}
       {isSent && onAccept && (
         // Same idea — green Accepted accent makes the action's outcome
-        // unambiguous before the user commits.
+        // unambiguous before the user commits. When the parent enquiry
+        // hasn't met the prerequisites for accepting (agent enquiry +
+        // no disclosed guest) we keep the click handler live and let
+        // the host show a friendlier explainer; disabling the button
+        // silently swallowed the click and left the user stuck.
         <button
           className="btn"
-          style={{ background: STATUS_ACCENT.accepted, color: '#fff', border: 'none' }}
+          style={{
+            background: STATUS_ACCENT.accepted,
+            color: '#fff', border: 'none',
+            opacity: acceptDisabledReason ? 0.6 : 1,
+          }}
           onClick={onAccept}
+          title={acceptDisabledReason || undefined}
         >
           ✓ Mark Accepted
         </button>

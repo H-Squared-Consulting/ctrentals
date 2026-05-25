@@ -116,9 +116,13 @@ Deno.serve(async (req) => {
   }
 
   // 3. Enquiries this agent has submitted. Recent first, capped at 100.
+  //    Also pull agent_reference (the agent's own label for the
+  //    enquiry — what they fill in on the form, distinct from the
+  //    AHH/N `subject` the team uses) and requested_property_ids
+  //    (multi-property pick) so we can render rich row details.
   const { data: enqRows, error: enqErr } = await admin
     .from('enquiries')
-    .select('id, client_name, property_id, check_in, check_out, deal_status, updated_at')
+    .select('id, client_name, agent_reference, property_id, requested_property_ids, check_in, check_out, deal_status, updated_at')
     .eq('agent_id', agent.id)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -127,27 +131,47 @@ Deno.serve(async (req) => {
     return json(500, { ok: false, reason: 'enquiries-lookup-failed' });
   }
 
-  // Resolve property names for the enquiries we got. One round-trip,
-  // not per-row.
-  const enqPropertyIds = Array.from(new Set((enqRows || []).map(e => e.property_id).filter(Boolean)));
+  // Resolve property names for the enquiries we got. One round-trip
+  // covering BOTH the single-property column (legacy) and every
+  // entry in requested_property_ids (multi-property pick) so the
+  // portal can render "104 Zwaanswyk, 12 Bordeaux" inline on each
+  // row without a fan-out lookup.
+  const enqPropertyIds = new Set<string>();
+  for (const e of (enqRows || []) as any[]) {
+    if (e.property_id) enqPropertyIds.add(e.property_id);
+    for (const id of (e.requested_property_ids || []) as string[]) {
+      if (id) enqPropertyIds.add(id);
+    }
+  }
   const propertyNameById: Record<string, { name: string; slug: string }> = {};
-  if (enqPropertyIds.length > 0) {
+  if (enqPropertyIds.size > 0) {
     const { data: nameRows } = await admin
       .from('partner_properties')
       .select('id, property_name, slug')
-      .in('id', enqPropertyIds);
+      .in('id', [...enqPropertyIds]);
     for (const r of (nameRows || []) as any[]) {
       propertyNameById[r.id] = { name: r.property_name || '', slug: r.slug || '' };
     }
   }
 
   const enquiries = (enqRows || []).map((e: any) => {
-    const prop = e.property_id ? propertyNameById[e.property_id] : undefined;
+    const legacyProp = e.property_id ? propertyNameById[e.property_id] : undefined;
+    // Resolve the multi-property list to display names; fall back
+    // to the legacy single-property when the multi column is empty.
+    const requestedIds: string[] = Array.isArray(e.requested_property_ids) && e.requested_property_ids.length > 0
+      ? e.requested_property_ids
+      : (e.property_id ? [e.property_id] : []);
+    const requestedProperties = requestedIds
+      .map(id => propertyNameById[id])
+      .filter(Boolean)
+      .map(p => ({ name: p!.name, slug: p!.slug }));
     return {
       id: e.id,
       guestName: e.client_name || '',
-      propertyName: prop?.name || '',
-      propertySlug: prop?.slug || '',
+      agentReference: e.agent_reference || '',
+      propertyName: legacyProp?.name || '',
+      propertySlug: legacyProp?.slug || '',
+      requestedProperties,
       checkIn: e.check_in,
       checkOut: e.check_out,
       status: mapDealStatus(e.deal_status),

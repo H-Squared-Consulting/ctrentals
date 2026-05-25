@@ -28,7 +28,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { calculatePricing, CTR_DEFAULT, fmtRand } from '../lib/pricingEngine';
-import { nextDirectEnquiryRefCode, nextProposalRefCodeFor } from '../lib/refCodes';
+import { nextDirectEnquiryRefCode, nextProposalRefCodeFor, nextAgentProposalRefCode } from '../lib/refCodes';
 import { initialsForEmail } from '../lib/userInitials';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import { syncEnquiryFromProposal } from '../lib/statusSync';
@@ -95,6 +95,26 @@ export interface PendingEnquiry {
   notes: string | null;
   source: string | null;
   source_url: string | null;
+  /** Agent-enquiry context. When `is_agent` is true the modal:
+   *   - persists the row with is_agent=true + agent_id
+   *   - uses pre-supplied ref_code (the agent's AHH/N code) as
+   *     both ref_code AND subject instead of generating a D###
+   *   - falls through to legacy proposal ref codes (PD#####N
+   *     only applies to direct enquiries with D### parents)
+   *   - applies AGENT pricing defaults (commission + CTR) rather
+   *     than direct scenario defaults
+   *  Optional everywhere else so existing direct callers don't
+   *  need to set them. */
+  is_agent?: boolean;
+  agent_id?: string | null;
+  ref_code?: string | null;
+  /** Disclosed guest details for an agent enquiry. When the agent
+   *  hasn't shared them yet these stay null and a "Valued Guest"
+   *  placeholder is used at the proposal level. Direct enquiries
+   *  reuse client_* for these (already the recipient). */
+  guest_name?: string | null;
+  guest_email?: string | null;
+  guest_phone?: string | null;
 }
 
 interface Props {
@@ -112,6 +132,23 @@ interface Props {
    *  the existing id with PD####N codes derived from the existing
    *  ref_code. Used by the Deal modal's Create Proposal button. */
   existingEnquiry?: { id: string; ref_code: string } | null;
+  /** Property IDs to pre-tick on open. Used by the agent-portal
+   *  flow: when an agent submits a multi-property enquiry the
+   *  picked IDs land on `enquiries.requested_property_ids`, and
+   *  the deal modal's "Generate proposals for these N →" CTA
+   *  passes them here so the match modal opens with exactly those
+   *  rows checked. The user can still tick additional matches or
+   *  un-tick suggestions before saving. */
+  initiallySelected?: string[] | null;
+  /** When set, the property list is HARD-FILTERED to only these
+   *  IDs (and the bedrooms filter is skipped). Used exclusively
+   *  for the agent-portal flow where the agent has already named
+   *  the houses they want quoted — the team's job is to review
+   *  pricing per row, not pick from the whole portfolio. The
+   *  bedroom/availability subtitle and search box still apply
+   *  within the restricted set. Empty / null = no restriction
+   *  (every other entry point keeps showing all matches). */
+  restrictToIds?: string[] | null;
 }
 
 interface SeasonRow {
@@ -138,6 +175,10 @@ function seasonForDate(seasons: SeasonRow[], checkIn: string | null): SeasonRow 
   }
   return seasons.find(s => s.key === 'peak') || seasons[0] || null;
 }
+
+/** Generic-agent fallback commission when the picked agent's row
+ *  has no default_commission_pct set. Matches buildAgentSnapshot. */
+const GENERIC_AGENT_PCT = 15;
 
 /** Pure-compute default snapshot from pre-fetched data — no awaits.
  *  The match modal batch-loads baselines + seasons once on mount;
@@ -211,7 +252,73 @@ function buildDefaultDirectSnapshot(
   } as any;
 }
 
-export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, onSaved, existingEnquiry }: Props) {
+/** Agent-scenario sibling of buildDefaultDirectSnapshot — same
+ *  batched-data signature so it slots into the same per-property
+ *  loop, with an extra `agentPct` and `agentId` so each row
+ *  carries the right commission. CTR + agent split + peak season
+ *  default mirror buildAgentSnapshot's behaviour. */
+function buildDefaultAgentSnapshot(
+  baselineRow: BaselineRow | null,
+  seasons: SeasonRow[],
+  args: { propertyId: string; agentId: string; agentPct: number },
+): PricingSnapshot | null {
+  if (!baselineRow) return null;
+  const baseline = Number(baselineRow.daily_rate) || 0;
+  if (baseline <= 0) return null;
+
+  const seasonRow = seasons.find(s => s.key === 'peak') || seasons[0] || null;
+  const seasonMultiplier = seasonRow ? Number(seasonRow.multiplier) : 1;
+  const ctrPct = CTR_DEFAULT.agent;
+
+  const breakdown = calculatePricing({
+    baseline,
+    scenarioType: 'agent',
+    ctrPct,
+    agentPct: args.agentPct,
+    seasonMultiplier,
+    platformFeePct: 0,
+    platformFixedFee: 0,
+    reducedBaseline: null,
+    reducedCtrPct: null,
+    reducedAgentPct: null,
+    solveFor: 'guest',
+    targetGuestPrice: null,
+    vatEnabled: false,
+    vatRatePct: 0,
+  } as any);
+
+  return {
+    propertyId: args.propertyId,
+    scenarioType: 'agent',
+    agentId: args.agentId,
+    agents: [{ id: args.agentId, pct: args.agentPct }],
+    channelId: null,
+    baseline,
+    totalMarginPct: ctrPct + args.agentPct,
+    ctrPct,
+    agentPct: args.agentPct,
+    reducedBaseline: null,
+    reducedCtrPct: null,
+    reducedAgentPct: null,
+    seasonTag: seasonRow?.name || 'peak',
+    seasonMultiplier,
+    breakdown: {
+      ownerNet: breakdown.ownerNet,
+      ctrTake: breakdown.ctrTake,
+      agentTake: (breakdown as any).agentTake ?? 0,
+      platformFees: 0,
+      clientPriceExclVat: breakdown.clientPriceExclVat,
+      vatAmount: 0,
+      clientPriceInclVat: breakdown.clientPriceExclVat,
+      adjustedBaseline: breakdown.adjustedBaseline,
+      totalMarginPct: breakdown.totalMarginPct,
+      effectiveCtrMarginPct: breakdown.effectiveCtrMarginPct,
+      effectiveTotalMarkupPct: breakdown.effectiveTotalMarkupPct,
+    },
+  } as any;
+}
+
+export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, onSaved, existingEnquiry, initiallySelected, restrictToIds }: Props) {
   const toast = useToast();
   const { user } = useAuth();
   const [properties, setProperties] = useState<PropertyRow[]>([]);
@@ -257,17 +364,43 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       // Guests count is deliberately NOT applied here; in practice
       // a property that sleeps more is still a valid quote, and
       // filtering it out hides good matches from the team.
-      const bedFilter = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
+      // Build the bedrooms filter when the caller actually has one.
+      // Agent-portal enquiries skip the bedrooms question entirely
+      // (the agent already picked specific properties) so both
+      // `bedrooms_options` and `bedrooms_needed` come through as
+      // null — in that case we drop the .in() filter and show every
+      // available property. Without this skip the .in([null]) query
+      // returned an empty list and the modal showed "No matching
+      // properties available for these dates" even though the
+      // agent's picks were waiting in requested_property_ids.
+      const bedFilterRaw = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
         ? enquiry.bedrooms_options
-        : [enquiry.bedrooms_needed];
-      const propsQuery = supabase
+        : (enquiry.bedrooms_needed != null ? [enquiry.bedrooms_needed] : null);
+      const restrictMode = !!(restrictToIds && restrictToIds.length > 0);
+      let propsQuery = supabase
         .from('partner_properties')
         .select('id, property_name, suburb, city, bedrooms, sleeps, hero_image_url, is_published, is_archived')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .eq('is_published', true)
-        .in('bedrooms', bedFilter)
         .order('property_name');
-      const [propRes, bookingsRes, baselinesRes, seasonsRes] = await Promise.all([
+      if (restrictMode) {
+        // Agent-portal "Generate proposals" path — only show the
+        // exact houses the agent named. The bedrooms filter is
+        // intentionally skipped here: the agent's pick already
+        // expresses the brief, and the agent might have picked a
+        // 5-bed when a 4-bed-only filter would have excluded it.
+        propsQuery = propsQuery.in('id', restrictToIds as string[]);
+      } else if (bedFilterRaw && bedFilterRaw.length > 0) {
+        propsQuery = propsQuery.in('bedrooms', bedFilterRaw);
+      }
+      // Agent enquiries pull the picked agent's default commission so
+      // we can apply it to every per-property default snapshot. One
+      // extra query, batched into the same Promise.all so it doesn't
+      // serialise after the property list.
+      const agentQuery = enquiry.is_agent && enquiry.agent_id
+        ? supabase.from('agents').select('id, default_commission_pct').eq('id', enquiry.agent_id).maybeSingle()
+        : Promise.resolve({ data: null });
+      const [propRes, bookingsRes, baselinesRes, seasonsRes, agentRes] = await Promise.all([
         propsQuery,
         supabase
           .from('bookings')
@@ -283,6 +416,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
           .select('id, key, name, multiplier, date_ranges, sort_order')
           .eq('partner_id', CT_RENTALS_PARTNER_ID)
           .order('sort_order'),
+        agentQuery,
       ]);
 
       if (cancelled) return;
@@ -295,6 +429,25 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       );
       const free = props.filter(p => !busyPropertyIds.has(p.id));
       setProperties(free);
+      // Pre-tick any caller-supplied selections that survived the
+      // bedrooms + availability filters. Agent-portal flow lands
+      // here with the properties the agent ticked on /q/:token —
+      // intersecting with `free` means we silently drop ones that
+      // got booked between submission and triage rather than
+      // surfacing a confusing "this property was checked but isn't
+      // in the list" state. Only seeded ONCE (first load) so the
+      // user's manual ticks aren't clobbered on retry.
+      if (initiallySelected && initiallySelected.length > 0) {
+        const freeIds = new Set(free.map(p => p.id));
+        setSelected(prev => {
+          if (prev.size > 0) return prev;
+          const seed = new Set<string>();
+          for (const id of initiallySelected) {
+            if (freeIds.has(id)) seed.add(id);
+          }
+          return seed;
+        });
+      }
       setLoading(false);
 
       // Index baselines by property_id for O(1) per-row lookup.
@@ -305,13 +458,28 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       const seasons = (seasonsRes.data as SeasonRow[]) || [];
 
       // Synchronous compute per property — no awaits, no fan-out.
+      // Pick agent vs direct snapshot per enquiry mode so the team
+      // sees the right indicative pricing on the picker rows BEFORE
+      // they tick anything.
       const out: Record<string, PricingSnapshot | null> = {};
+      const isAgentMode = !!(enquiry.is_agent && enquiry.agent_id);
+      const agentPct = isAgentMode
+        ? (agentRes.data?.default_commission_pct != null
+            ? Number(agentRes.data.default_commission_pct)
+            : GENERIC_AGENT_PCT)
+        : 0;
       for (const p of free) {
         const baseline = baselineByProperty.get(p.id) ?? null;
-        out[p.id] = buildDefaultDirectSnapshot(baseline, seasons, {
-          propertyId: p.id,
-          checkIn: enquiry.check_in,
-        });
+        out[p.id] = isAgentMode
+          ? buildDefaultAgentSnapshot(baseline, seasons, {
+              propertyId: p.id,
+              agentId: enquiry.agent_id as string,
+              agentPct,
+            })
+          : buildDefaultDirectSnapshot(baseline, seasons, {
+              propertyId: p.id,
+              checkIn: enquiry.check_in,
+            });
       }
       setDefaults(out);
       } catch (err: any) {
@@ -326,7 +494,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
     // hits Retry (loadAttempt bump). bedrooms_options included so
     // multi-select changes on the host don't get stale results.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out, JSON.stringify(enquiry.bedrooms_options ?? []), loadAttempt]);
+  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out, enquiry.is_agent, enquiry.agent_id, JSON.stringify(enquiry.bedrooms_options ?? []), JSON.stringify(restrictToIds ?? []), loadAttempt]);
 
   // Search filter (name + suburb) applied on the matched set.
   const filtered = useMemo(() => {
@@ -386,21 +554,32 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
         if (updErr) throw updErr;
         enq = updated;
       } else {
-        const refCode = await nextDirectEnquiryRefCode(supabase);
+        // Agent enquiries pre-supply a ref_code (AHH/N) computed
+        // client-side; direct enquiries generate the next D### here.
+        // guest_* mirrors client_* for direct (recipient = guest)
+        // but is the optionally-disclosed guest for agent (may be
+        // null; downstream surfaces "Valued Guest" placeholder).
+        const isAgentEnquiry = !!enquiry.is_agent;
+        const refCode = isAgentEnquiry && enquiry.ref_code
+          ? enquiry.ref_code
+          : await nextDirectEnquiryRefCode(supabase);
+        const guestName  = isAgentEnquiry ? (enquiry.guest_name ?? null) : enquiry.client_name;
+        const guestEmail = isAgentEnquiry ? (enquiry.guest_email ?? null) : enquiry.client_email;
+        const guestPhone = isAgentEnquiry ? (enquiry.guest_phone ?? null) : enquiry.client_phone;
         const { data: inserted, error: enqErr } = await supabase
           .from('enquiries')
           .insert({
             partner_id: CT_RENTALS_PARTNER_ID,
             ref_code: refCode,
-            is_agent: false,
-            agent_id: null,
+            is_agent: isAgentEnquiry,
+            agent_id: isAgentEnquiry ? (enquiry.agent_id ?? null) : null,
             subject: enquiry.subject,
             client_name: enquiry.client_name,
             client_email: enquiry.client_email,
             client_phone: enquiry.client_phone,
-            guest_name: enquiry.client_name,
-            guest_email: enquiry.client_email,
-            guest_phone: enquiry.client_phone,
+            guest_name: guestName,
+            guest_email: guestEmail,
+            guest_phone: guestPhone,
             check_in: enquiry.check_in,
             check_out: enquiry.check_out,
             bedrooms_needed: enquiry.bedrooms_needed,
@@ -425,15 +604,23 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
 
       // 2. CRM auto-link (best-effort, non-blocking on failure).
       //    Skip when reusing an existing enquiry — that link was
-      //    already established at the original save.
-      if (!existingEnquiry && (enquiry.client_name || enquiry.client_email)) {
+      //    already established at the original save. For agent
+      //    enquiries, use the (optionally disclosed) guest details
+      //    rather than client_* (which is the AGENT's contact, not
+      //    the guest). When nothing's disclosed we skip — no guest
+      //    to link yet.
+      const isAgentEnquiry = !!enquiry.is_agent;
+      const crmName  = isAgentEnquiry ? (enquiry.guest_name  ?? null) : enquiry.client_name;
+      const crmEmail = isAgentEnquiry ? (enquiry.guest_email ?? null) : enquiry.client_email;
+      const crmPhone = isAgentEnquiry ? (enquiry.guest_phone ?? null) : enquiry.client_phone;
+      if (!existingEnquiry && (crmName || crmEmail)) {
         try {
           await linkOrCreateGuestForEnquiry(supabase, {
             enquiryId: enq.id,
             partnerId: CT_RENTALS_PARTNER_ID,
-            guestName: enquiry.client_name,
-            guestEmail: enquiry.client_email,
-            guestPhone: enquiry.client_phone,
+            guestName: crmName,
+            guestEmail: crmEmail,
+            guestPhone: crmPhone,
           });
         } catch (err) {
           console.error('Guest CRM link failed (non-blocking):', err);
@@ -488,7 +675,21 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             .single();
           if (ppErr) throw ppErr;
 
-          const proposalRefCode = (await nextProposalRefCodeFor(supabase, enq.ref_code)) || `PROP-${pid.slice(0, 6)}`;
+          // Per-stream proposal ref code:
+          //   Direct (D### parent) → PD####N via nextProposalRefCodeFor
+          //   Agent  (AHH/N parent) → AHH/N-P1, -P2, … via nextAgentProposalRefCode
+          // Both are serial-safe (single deal) and scoped to the parent.
+          const proposalRefCode = isAgentEnquiry
+            ? await nextAgentProposalRefCode(supabase, enq.id, enq.ref_code)
+            : ((await nextProposalRefCodeFor(supabase, enq.ref_code)) || `PROP-${pid.slice(0, 6)}`);
+          // Proposal guest_* mirrors the enquiry's resolved guest
+          // details — for agent enquiries with nothing disclosed yet
+          // we drop in the "Valued Guest" placeholder so the kanban
+          // card and the proposal-builder both have something to
+          // render (later disclosure cascades and replaces it).
+          const proposalGuestName = isAgentEnquiry
+            ? (enquiry.guest_name?.trim() || 'Valued Guest')
+            : enquiry.client_name;
           const proposalPayload = {
             ref_code: proposalRefCode,
             partner_id: CT_RENTALS_PARTNER_ID,
@@ -496,14 +697,14 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             property_id: pid,
             pricing_proposal_id: pp.id,
             guest_id: null,
-            guest_name: enquiry.client_name,
-            guest_email: enquiry.client_email,
-            guest_phone: enquiry.client_phone,
+            guest_name: proposalGuestName,
+            guest_email: isAgentEnquiry ? (enquiry.guest_email ?? null) : enquiry.client_email,
+            guest_phone: isAgentEnquiry ? (enquiry.guest_phone ?? null) : enquiry.client_phone,
             guests_total: enquiry.guests_total,
             check_in: enquiry.check_in,
             check_out: enquiry.check_out,
             status: 'drafting' as const,
-            is_agent: false,
+            is_agent: isAgentEnquiry,
             notes: null,
           };
           const { data: pr, error: prErr } = await supabase
@@ -557,14 +758,40 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
                 phrasing because the .in() filter only includes the
                 explicit counts the user picked. */}
             {(() => {
-              const bedList = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
+              const nightStr = <><strong>{nights} night{nights === 1 ? '' : 's'}</strong></>;
+              // Agent-portal restricted view: list only the houses
+              // the agent named. Subtitle reflects that — no point
+              // saying "all properties" when we're showing N of them.
+              if (restrictToIds && restrictToIds.length > 0) {
+                return (
+                  <>
+                    Showing the <strong>{restrictToIds.length} propert{restrictToIds.length === 1 ? 'y' : 'ies'}</strong> the agent asked about, for {nightStr}.
+                    Review pricing and untick any you don't want to quote.
+                  </>
+                );
+              }
+              // No-bedrooms case: agent-portal enquiries don't ask
+              // for bedroom counts (the agent picked specific
+              // houses) so the filter degrades to "everything free
+              // on those dates" — say that explicitly so the user
+              // doesn't read a blank "X beds" and assume the modal
+              // is broken.
+              const rawBeds = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
                 ? enquiry.bedrooms_options
-                : [enquiry.bedrooms_needed];
-              const bedStr = `${bedList.join(', ')} bed${bedList.length === 1 && bedList[0] === 1 ? '' : 's'}`;
+                : (enquiry.bedrooms_needed != null ? [enquiry.bedrooms_needed] : null);
+              if (!rawBeds || rawBeds.length === 0) {
+                return (
+                  <>
+                    Showing <strong>all properties</strong> free for {nightStr} on those dates.
+                    Tick the ones you want to quote.
+                  </>
+                );
+              }
+              const bedStr = `${rawBeds.join(', ')} bed${rawBeds.length === 1 && rawBeds[0] === 1 ? '' : 's'}`;
               return (
                 <>
                   Showing properties with <strong>{bedStr}</strong>,
-                  free for <strong>{nights} night{nights === 1 ? '' : 's'}</strong> on those dates.
+                  free for {nightStr} on those dates.
                   Tick the ones you want to quote.
                 </>
               );
@@ -749,10 +976,10 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
           <PricingModal
             property={{ id: p.id, property_name: p.property_name }}
             supabase={supabase}
-            // Pre-tag this as a direct enquiry so the PricingDashboard
-            // skips State A (Direct / Agent / Platform picker) — we
-            // already know the answer here, this whole flow is gated
-            // behind the direct-enquiry path.
+            // Pre-tag with the right scenario so the PricingDashboard
+            // skips State A (Direct / Agent / Platform picker) — for
+            // agent enquiries it pre-selects the picked agent so the
+            // commission split matches the row default.
             enquiryPrefill={{
               id: '',
               client_name: enquiry.client_name,
@@ -762,7 +989,11 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
               check_out: enquiry.check_out,
               guests_total: enquiry.guests_total,
               notes: enquiry.notes,
-              is_agent: false,
+              is_agent: !!enquiry.is_agent,
+              agent_id: enquiry.agent_id ?? null,
+              guest_name:  enquiry.guest_name  ?? null,
+              guest_email: enquiry.guest_email ?? null,
+              guest_phone: enquiry.guest_phone ?? null,
             }}
             // Snapshot-only mode — closes itself + returns the snapshot.
             onSnapshotReady={(snap) => {

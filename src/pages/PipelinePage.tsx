@@ -124,6 +124,11 @@ interface EnquirySide {
    *  Only meaningful when source === 'platform'. Surfaced as a small
    *  clickable icon on the deal card and inline on the deal modal. */
   source_url: string | null;
+  /** Agent-portal multi-property pick — the property ids the agent
+   *  ticked when submitting the enquiry on /q/:token. Used by the
+   *  deal modal's "Generate proposals for these N →" CTA to pre-tick
+   *  the match modal. NULL on legacy + non-portal enquiries. */
+  requested_property_ids: string[] | null;
   status: string;
   /** Pipeline-level status driving the kanban column. Present once the
    *  workflow rebuild migration has been applied; absent on older rows,
@@ -487,7 +492,7 @@ export default function PipelinePage() {
   const [columnSort, setColumnSort] = useState<Record<string, string>>({});
 
   // Drill-in state
-  const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit' } | null>(null);
+  const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit'; focusField?: string | null } | null>(null);
   const openDealInMode = (deal: Deal, mode: 'view' | 'edit' = 'view') => setOpenDeal({ deal, mode });
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
   /** Hydrated pricing_proposals row for the Edit Pricing → PricingDashboard
@@ -506,6 +511,17 @@ export default function PipelinePage() {
     enquiryId: string;
     refCode: string;
     payload: import('../components/EnquiryPropertyMatchModal').PendingEnquiry;
+    /** Property IDs to pre-tick on open. Set when launched from
+     *  the deal modal's "Generate proposals" CTA on an agent-portal
+     *  enquiry — passes through to the match modal so the agent's
+     *  picks land already checked. */
+    initiallySelected?: string[] | null;
+    /** Agent-portal hard-restriction: when set, the match modal
+     *  shows ONLY these property IDs (no full portfolio listing).
+     *  The team's job in this mode is to review pricing per row
+     *  and untick anything they don't want to quote — they can't
+     *  add properties the agent didn't ask for. */
+    restrictToIds?: string[] | null;
   } | null>(null);
   /** When set, the launcher opens with no enquiry — for the "+ Standalone
    *  proposal" path. Distinct from launcherFor so the launcher knows the
@@ -597,6 +613,7 @@ export default function PipelinePage() {
         guests_options: e.guests_options ?? null,
         source: e.source ?? null,
         source_url: e.source_url ?? null,
+        requested_property_ids: e.requested_property_ids ?? null,
         is_agent: !!e.is_agent,
         agent_id: e.agent_id ?? null,
         client_name: e.client_name,
@@ -684,13 +701,29 @@ export default function PipelinePage() {
   useEffect(() => {
     if (!supabase) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = onPipelineChanged(() => {
+    const schedule = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { fetchDeals(); timer = null; }, 250);
-    });
+    };
+    const unsubscribe = onPipelineChanged(schedule);
+
+    // Cross-client live updates via Supabase Realtime. The window
+    // event bus above only fires within the same tab — agent-portal
+    // submissions (different device entirely) need a server-pushed
+    // signal to wake the kanban up. We subscribe to INSERTs +
+    // UPDATEs on enquiries / proposals and feed them through the
+    // same debounced refetch path so a burst of cascade updates
+    // collapses to one round-trip.
+    const channel = supabase
+      .channel('pipeline-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, schedule)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'proposals' }, schedule)
+      .subscribe();
+
     return () => {
       if (timer) clearTimeout(timer);
       unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [supabase]);
 
@@ -915,7 +948,27 @@ export default function PipelinePage() {
           notes: e.notes,
           source: e.source,
           source_url: e.source_url,
+          // Carry the enquiry's agent context so the match modal +
+          // the PricingModal it opens land in the right scenario.
+          // Without these the per-row default snapshot + Edit pricing
+          // both fall back to direct, which silently swaps an agent
+          // quote into a direct one.
+          is_agent: !!(e as any).is_agent,
+          agent_id: (e as any).agent_id ?? null,
+          guest_name:  (e as any).guest_name  ?? null,
+          guest_email: (e as any).guest_email ?? null,
+          guest_phone: (e as any).guest_phone ?? null,
         },
+        // Pre-tick the agent's picks from /q/:token (agent-portal
+        // multi-property enquiries). Null / empty for any enquiry
+        // that didn't come through the portal — match modal opens
+        // with no selections, same as before.
+        initiallySelected: (e as any).requested_property_ids ?? null,
+        // Hard-restrict the property list to the agent's picks for
+        // portal enquiries so the team can't accidentally quote
+        // houses the agent didn't ask about. Null for every other
+        // path → modal keeps full-portfolio behaviour.
+        restrictToIds: (e as any).requested_property_ids ?? null,
       });
     } else {
       // Standalone proposal (FAB or orphan): keep the legacy flow
@@ -1053,31 +1106,62 @@ export default function PipelinePage() {
     notifyPipelineChanged();
   }
 
+  /** Pending Accept / Decline that's awaiting user confirmation. Set
+   *  when the user clicks one of the proposal-row outcome buttons;
+   *  cleared when they confirm or cancel via the ConfirmOutcome modal
+   *  below. liveSiblings is fetched up-front so the modal copy can
+   *  describe the cascade accurately ("auto-declines 2 others"). */
+  const [pendingOutcome, setPendingOutcome] = useState<{
+    proposal: ProposalRow;
+    outcome: ProposalStatus;
+    liveSiblings: number;
+  } | null>(null);
+  /** Set when the user tried to Accept a proposal whose parent enquiry
+   *  isn't ready for it yet (today: agent enquiries with no disclosed
+   *  guest). Renders an explainer modal with a single "Add guest
+   *  details" CTA that drops the user straight into edit mode on the
+   *  deal modal. */
+  const [acceptBlocker, setAcceptBlocker] = useState<{ deal: Deal; reason: string } | null>(null);
+
   /** Mark a sent proposal as accepted or declined from the detail modal.
    *  Cascade rules (see statusSync helpers + closeEnquiryOnProposalAccept):
    *    Accept → enquiry closes as Won, sibling proposals auto-decline.
    *    Decline → enquiry stays Open while other proposals are live;
    *              closes as Lost only when this was the last live one.
-   *  Confirms before the cascading branch so the user knows what'll
-   *  happen to siblings / the parent deal. Single-proposal accepts
-   *  skip the prompt — there's nothing else to close.
+   *  ALWAYS confirms (via the ConfirmOutcome modal below) before
+   *  firing — the team asked for a second-step on both Accept and
+   *  Decline regardless of cascade impact, since both are
+   *  effectively irreversible once cascaded.
    */
   async function markProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
-    const liveSiblings = await countLiveSiblings(supabase, p.id);
-
-    if (outcome === 'accepted' && liveSiblings > 0) {
-      const ok = window.confirm(
-        `Accepting this will close this enquiry and auto-decline the other ${liveSiblings} proposal${liveSiblings === 1 ? '' : 's'}. Continue?`,
-      );
-      if (!ok) return;
+    if (outcome === 'accepted') {
+      // Agent enquiries can't accept without a disclosed guest —
+      // accepting would book under "Valued Guest" and orphan the
+      // booking record. Surface a clear explainer + a one-click
+      // path to the edit form rather than silently no-op'ing
+      // (which is what a disabled button would do).
+      const parent = deals.find(d => d.enquiry?.id === p.enquiry_id);
+      if (parent?.is_agent && !parent.enquiry?.guest_name?.trim()) {
+        setOpenProposal(null);
+        setAcceptBlocker({
+          deal: parent,
+          reason: 'Agent enquiries need the underlying guest disclosed before a proposal can be accepted — the booking has to be attributable to a real person.',
+        });
+        return;
+      }
     }
-    if (outcome === 'declined' && liveSiblings === 0) {
-      const ok = window.confirm(
-        'This is the last live proposal on the enquiry — declining will close the enquiry. Continue?',
-      );
-      if (!ok) return;
+    if (outcome === 'accepted' || outcome === 'declined') {
+      const liveSiblings = await countLiveSiblings(supabase, p.id);
+      setPendingOutcome({ proposal: p, outcome, liveSiblings });
+      return;
     }
+    await applyProposalOutcome(p, outcome);
+  }
 
+  /** The actual mutation — runs after the user confirms (for Accept /
+   *  Decline) or directly (for any other outcome that skips the
+   *  confirmation gate). */
+  async function applyProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
     const patch: any = { status: outcome, updated_at: new Date().toISOString() };
     if (outcome === 'accepted') {
       patch.accepted_at = new Date().toISOString();
@@ -1274,6 +1358,7 @@ export default function PipelinePage() {
         <DealDetailModal
           deal={openDeal.deal}
           initialMode={openDeal.mode}
+          focusField={openDeal.focusField ?? null}
           onClose={() => setOpenDeal(null)}
           onQuote={() => startQuote(openDeal.deal)}
           onUpdateStatus={updateEnquiryStatus}
@@ -1369,6 +1454,17 @@ export default function PipelinePage() {
             setOpenProposal(null);
           }}
           onAccept={() => markProposalOutcome(openProposal, 'accepted')}
+          // Same gate as the deal-modal Accept button — agent
+          // enquiries with no disclosed guest can't be accepted
+          // because the booking has no one to attribute to. We look
+          // up the parent deal in the live `deals` array (the
+          // proposal row itself doesn't carry is_agent + guest_name).
+          acceptDisabledReason={(() => {
+            const parent = deals.find(d => d.enquiry?.id === openProposal.enquiry_id);
+            if (!parent?.is_agent) return null;
+            if (parent.enquiry?.guest_name?.trim()) return null;
+            return 'Add the guest name on the enquiry before accepting — agent proposals need a real guest to attribute the booking.';
+          })()}
           onDecline={() => markProposalOutcome(openProposal, 'declined')}
           onOpenEnquiry={(enquiryId) => {
             // No longer route to /operations/proposals (it's being
@@ -1398,18 +1494,12 @@ export default function PipelinePage() {
             const n = Math.round((new Date(co).getTime() - new Date(ci).getTime()) / (1000 * 60 * 60 * 24));
             return n > 0 ? n : undefined;
           })()}
-          // Lock the channel pill whenever the host context implies a
-          // fixed scenario. From the deal modal we know the host is
-          // direct/agent/platform via the deal's is_agent + source; for
-          // proposal-detail launches we use the proposal's own
-          // scenario_type. Without this, the scenario picker would let
-          // the user silently convert a direct quote into an agent one.
-          lockScenario={(() => {
-            if (editPricingFor._reopenDealId) {
-              return !openDeal?.deal.is_agent;
-            }
-            return editPricingFor.scenario_type === 'direct';
-          })()}
+          // Lock the channel pill in EVERY edit-pricing context — the
+          // scenario was set at proposal creation and changing it on
+          // edit would silently convert (e.g.) an agent quote into a
+          // direct one, orphaning the commission split + the proposal
+          // ref code. Direct vs agent enquiry both treated identically.
+          lockScenario={true}
           onClose={() => setEditPricingFor(null)}
           onPricingSaved={async () => {
             // Two host contexts can open this:
@@ -1445,6 +1535,8 @@ export default function PipelinePage() {
           supabase={supabase}
           enquiry={matchForExisting.payload}
           existingEnquiry={{ id: matchForExisting.enquiryId, ref_code: matchForExisting.refCode }}
+          initiallySelected={matchForExisting.initiallySelected ?? null}
+          restrictToIds={matchForExisting.restrictToIds ?? null}
           onClose={() => setMatchForExisting(null)}
           onSaved={async (enquiryId) => {
             // Snap back to the kanban so the user SEES the card move
@@ -1507,6 +1599,113 @@ export default function PipelinePage() {
         />
       )}
 
+      {/* Accept blocker — when the user clicks Accept on an agent
+          enquiry with no disclosed guest, surface a clear "why not"
+          explanation and a one-click path to fix it (drops them into
+          edit mode on the deal modal with focus on the guest fields).
+          Replaces the silent disabled-button UX which left the user
+          unsure what to do next. */}
+      {acceptBlocker && (
+        <ActionModal
+          title="Can't accept yet"
+          subtitle="Add the guest details first"
+          width={460}
+          onClose={() => setAcceptBlocker(null)}
+          primaryAction={
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                const target = acceptBlocker.deal;
+                setAcceptBlocker(null);
+                // focusField triggers DealDetailModal's auto-focus
+                // effect → scrollIntoView + focus on the guest name
+                // input so the user lands with the cursor blinking
+                // exactly where they need to type. Zero hunting.
+                setOpenDeal({ deal: target, mode: 'edit', focusField: 'guest_name' });
+              }}
+            >
+              ✏ Add guest details
+            </button>
+          }
+        >
+          <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.5 }}>
+            {acceptBlocker.reason}
+          </p>
+          <p style={{
+            margin: '12px 0 0',
+            fontSize: '0.8125rem',
+            lineHeight: 1.5,
+            color: 'var(--text-secondary)',
+            padding: '8px 10px',
+            borderRadius: 6,
+            background: 'var(--surface-muted, #F3F4F6)',
+          }}>
+            Click <strong>Add guest details</strong> to open this enquiry in edit mode and fill in the guest's name. Once saved, Accept will unlock automatically.
+          </p>
+        </ActionModal>
+      )}
+
+      {/* Outcome confirmation — fires for every Accept / Decline on a
+          proposal row (deal modal inline + ProposalDetailModal footer).
+          Replaces the previous window.confirm so the prompt reads as a
+          first-class step rather than a browser pop-up, and so the
+          cascade copy can be properly formatted. */}
+      {pendingOutcome && (() => {
+        const { proposal, outcome, liveSiblings } = pendingOutcome;
+        const isAccept = outcome === 'accepted';
+        const willCloseDeal = isAccept || (outcome === 'declined' && liveSiblings === 0);
+        return (
+          <ActionModal
+            title={isAccept ? 'Mark this proposal as accepted?' : 'Mark this proposal as declined?'}
+            subtitle={
+              <>
+                {titleCase(proposal.property_name)}
+                {' '}
+                <span style={{ fontFamily: 'monospace', color: 'var(--text-light)' }}>
+                  · {proposal.ref_code}
+                </span>
+              </>
+            }
+            width={460}
+            onClose={() => setPendingOutcome(null)}
+            primaryAction={
+              <button
+                type="button"
+                className={isAccept ? 'btn btn-primary' : 'btn btn-danger'}
+                onClick={async () => {
+                  const snapshot = pendingOutcome;
+                  setPendingOutcome(null);
+                  await applyProposalOutcome(snapshot.proposal, snapshot.outcome);
+                }}
+              >
+                {isAccept ? '✓ Yes, accept' : '✕ Yes, decline'}
+              </button>
+            }
+          >
+            <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.5 }}>
+              {isAccept
+                ? `This locks the proposal as the agreed quote${liveSiblings > 0 ? ` and auto-declines the other ${liveSiblings} live proposal${liveSiblings === 1 ? '' : 's'} on this enquiry` : ''}.`
+                : 'This marks the proposal as declined. The team can still see it in the deal history.'}
+            </p>
+            {willCloseDeal && (
+              <p style={{
+                margin: '12px 0 0',
+                fontSize: '0.8125rem',
+                lineHeight: 1.5,
+                color: 'var(--text-secondary)',
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: 'var(--surface-muted, #F3F4F6)',
+              }}>
+                {isAccept
+                  ? 'The enquiry will close as Won and move to the Booked column.'
+                  : 'This is the last live proposal — the enquiry will close as Lost.'}
+              </p>
+            )}
+          </ActionModal>
+        );
+      })()}
     </div>
   );
 }
@@ -2300,6 +2499,7 @@ function ProposalRowInline({
   onMarkOutcome,
   onEditPricing,
   onDelete,
+  acceptDisabledReason,
 }: {
   proposal: ProposalRow;
   onOpen: () => void;
@@ -2313,6 +2513,12 @@ function ProposalRowInline({
   /** Only set when the deal modal is in edit mode — shows a destructive
    *  "Delete" action on the row so the user can prune unwanted quotes. */
   onDelete?: () => void;
+  /** When set, the Accept button is disabled and shows this string as
+   *  the hover hint. Used for agent enquiries that haven't disclosed
+   *  the guest yet — accepting without a guest leaves the booking
+   *  un-attributable. Decline stays available because rejecting a
+   *  quote needs no guest identity. */
+  acceptDisabledReason?: string | null;
 }) {
   const p = proposal;
   const isDraft = p.status === 'draft' || p.status === 'drafting' || p.status === 'ready';
@@ -2400,9 +2606,17 @@ function ProposalRowInline({
             <button
               type="button"
               className="btn btn-outline-success"
-              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              style={{
+                fontSize: '0.75rem', padding: '4px 10px',
+                // Visually flag the blocked state without preventing
+                // the click — disabling the button silently swallowed
+                // the click and left the user wondering what to do
+                // next. Now the button STILL fires; the parent shows
+                // an explainer modal with a path to unblock it.
+                ...(acceptDisabledReason ? { opacity: 0.55 } : {}),
+              }}
               onClick={stop(() => onMarkOutcome('accepted'))}
-              title="Mark accepted (cascades — closes deal, auto-declines siblings)"
+              title={acceptDisabledReason || 'Mark accepted (cascades — closes deal, auto-declines siblings)'}
             >
               ✓ Accept
             </button>
@@ -2437,12 +2651,17 @@ function ProposalRowInline({
 // ─── Deal detail modal ──────────────────────────────────────────────────
 
 function DealDetailModal({
-  deal, initialMode = 'view', onClose, onQuote,
+  deal, initialMode = 'view', focusField = null, onClose, onQuote,
   onUpdateStatus, onUpdateProposalOutcome, onSetStage,
   onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
+  /** When set, the modal auto-scrolls + focuses the matching
+   *  `data-field="<focusField>"` input on mount. Used by the
+   *  accept-blocker flow to drop the user straight onto the guest
+   *  name field with the cursor ready to type. */
+  focusField?: string | null;
   onClose: () => void;
   onQuote: () => void;
   onUpdateStatus: (enquiryId: string, status: string) => void;
@@ -2484,6 +2703,57 @@ function DealDetailModal({
     : Boolean(standaloneProp && INACTIVE_PROPOSAL_STATUSES.has(standaloneProp.status));
 
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
+
+  // Auto-focus a specific input on mount when the caller asked for it
+  // (e.g. accept-blocker → "Add guest details"). Two RAFs: the first
+  // lets the modal mount + body render, the second waits a paint so
+  // scrollIntoView lands on the final layout. focus() is wrapped in a
+  // try so a removed/null input never throws.
+  useEffect(() => {
+    if (!focusField) return;
+    let cancelled = false;
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        const el = document.querySelector<HTMLInputElement>(
+          `input[data-field="${focusField}"]`,
+        );
+        if (!el) return;
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus({ preventScroll: true });
+        } catch { /* noop */ }
+      });
+      return () => cancelAnimationFrame(raf2);
+    });
+    return () => { cancelled = true; cancelAnimationFrame(raf1); };
+  }, [focusField]);
+
+  /** Resolve the agent-portal "requested properties" UUIDs into
+   *  display names so the deal modal can show "Agent requested
+   *  quotes for: 104 Zwaanswyk, 12 Bordeaux, 129a Zwaanswyk" rather
+   *  than a list of opaque IDs. One small lookup per modal open;
+   *  no-op when the enquiry didn't come through the multi-property
+   *  portal flow. */
+  const requestedIds = e?.requested_property_ids ?? null;
+  const [requestedPropertyNames, setRequestedPropertyNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!requestedIds || requestedIds.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('partner_properties')
+        .select('id, property_name')
+        .in('id', requestedIds);
+      if (cancelled || !data) return;
+      const map: Record<string, string> = {};
+      for (const row of data as Array<{ id: string; property_name: string }>) {
+        map[row.id] = row.property_name;
+      }
+      setRequestedPropertyNames(map);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, JSON.stringify(requestedIds)]);
 
   // Snapshot of the editable shape for both enquiry-rooted and standalone
   // deals. Standalone deals don't carry bedrooms / budget on the proposal,
@@ -2847,6 +3117,13 @@ function DealDetailModal({
     </div>
   ) : undefined;
 
+  // Edit mode disables every action button in the footer so the
+  // user can't half-edit + half-act (e.g. flip stage with stale
+  // dates still in the form). Save / Cancel up top are the only
+  // exits from edit mode; once back in view mode everything below
+  // re-enables. Title attrs explain the why on hover.
+  const isEditing = mode === 'edit';
+  const editingDisabledTitle = 'Save or cancel your edits to use this action';
   const footerActions = (
     <>
       {/* Add Proposal is hidden on terminal-state deals (Booked /
@@ -2856,6 +3133,8 @@ function DealDetailModal({
       {!isClosed && (
         <button
           className="btn btn-primary"
+          disabled={isEditing}
+          title={isEditing ? editingDisabledTitle : undefined}
           onClick={async () => {
             // If the user has unsaved edits on the deal modal, flush
             // them first so the match modal's property filter sees
@@ -2876,8 +3155,9 @@ function DealDetailModal({
         <select
           className="list-filter-select"
           value=""
+          disabled={isEditing}
           onChange={(ev) => { if (ev.target.value) onSetStage(e.id, ev.target.value); }}
-          title="Move this deal to a different column"
+          title={isEditing ? editingDisabledTitle : 'Move this deal to a different column'}
         >
           <option value="" disabled>Set stage…</option>
           {/* "Quoting" was here but the natural way to move a deal
@@ -2911,8 +3191,8 @@ function DealDetailModal({
   );
 
   const footerHint = mode === 'edit'
-    ? <>Editing client details. <strong>Save</strong> to keep changes.</>
-    : <>Click <strong>Edit</strong> to change client details. Action buttons work in either mode.</>;
+    ? <>Editing client details. <strong>Save</strong> or <strong>Cancel</strong> to use the action buttons below.</>
+    : <>Click <strong>Edit</strong> to change client details.</>;
 
   return (
     <DetailModal
@@ -2940,27 +3220,29 @@ function DealDetailModal({
         // Subject section sits ABOVE everything else — it's the
         // headline that the kanban shows. Only relevant for AGENT
         // enquiries (direct ones use the guest name as the headline
-        // already). Hidden entirely for direct deals + standalone
-        // proposals so the modal stays clean.
+        // already). The subject IS the auto-generated AHH/N code
+        // that downstream proposal refs lock to (e.g. AHH/1-P1),
+        // so it's permanently read-only — letting the user edit it
+        // would orphan every child proposal ref.
         const subjectSection = (e && e.is_agent) ? (
           <DetailModalSection
             heading="Subject"
-            headingRight={!form.subject?.trim() && <span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>not set</span>}
+            headingRight={<span style={{ fontSize: '0.6875rem', color: 'var(--text-light)' }}>locked · auto-generated</span>}
           >
-            <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
-              <input
-                className="form-input"
-                value={form.subject}
-                onChange={ev => update('subject', ev.target.value)}
-                placeholder="What is this enquiry about? e.g. Family of 6, Constantia, Easter"
-                maxLength={120}
-              />
-              {fieldsDisabled && !form.subject?.trim() && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4, fontStyle: 'italic' }}>
-                  Click Edit and add a one-line subject so this enquiry stands out on the board.
-                </div>
-              )}
-            </fieldset>
+            <input
+              className="form-input"
+              value={form.subject || ''}
+              readOnly
+              disabled
+              style={{
+                fontFamily: 'ui-monospace, monospace',
+                fontWeight: 600,
+                color: 'var(--color-primary)',
+                background: 'var(--surface-muted, #F3F4F6)',
+                cursor: 'not-allowed',
+              }}
+              title="Auto-generated enquiry code. Locked — proposal refs (e.g. AHH/1-P1) depend on it."
+            />
           </DetailModalSection>
         ) : null;
         const clientSection = (
@@ -2999,7 +3281,13 @@ function DealDetailModal({
                   <div className="form-grid-2">
                     <div className="form-group">
                       <label className="form-label">Guest name</label>
-                      <input className="form-input" value={form.guest_name} onChange={ev => update('guest_name', ev.target.value)} placeholder="e.g. Sarah Whitmore" />
+                      <input
+                        className="form-input"
+                        data-field="guest_name"
+                        value={form.guest_name}
+                        onChange={ev => update('guest_name', ev.target.value)}
+                        placeholder="e.g. Sarah Whitmore"
+                      />
                     </div>
                     <div className="form-group">
                       <label className="form-label">Guest email</label>
@@ -3158,24 +3446,100 @@ function DealDetailModal({
             ) : null}
           >
             {deal.proposals.length === 0 ? (
-              <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                No proposals yet. Use "Create Proposal" below to add one for this client.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {deal.proposals.map(p => (
-                  <ProposalRowInline
-                    key={p.id}
-                    proposal={p}
-                    onOpen={() => onOpenProposal(p)}
-                    onSend={() => onSendProposal(p)}
-                    onMarkOutcome={(outcome) => onMarkProposalOutcome(p, outcome)}
-                    onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
-                    onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}
-                  />
-                ))}
-              </div>
-            )}
+              requestedIds && requestedIds.length > 0 ? (
+                // Agent-portal multi-property enquiry — the agent
+                // ticked these on /q/:token. We don't auto-create
+                // proposals (ladies want to triage every incoming
+                // agent enquiry in Arrived first), so this section
+                // surfaces the picks + a one-click path to the
+                // match modal pre-checked with exactly those IDs.
+                // Team can review, drop unsuitable picks, or add
+                // properties the agent didn't think of before
+                // committing — same match modal as every other
+                // "generate proposals" path.
+                <div style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(99, 102, 241, 0.06)',
+                  padding: '12px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    🤝 Agent requested quotes for {requestedIds.length} propert{requestedIds.length === 1 ? 'y' : 'ies'}:
+                  </div>
+                  <ul style={{
+                    margin: 0,
+                    paddingLeft: 18,
+                    fontSize: '0.875rem',
+                    color: 'var(--text)',
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                  }}>
+                    {requestedIds.map(id => (
+                      <li key={id} style={{ fontWeight: 500 }}>
+                        {requestedPropertyNames[id]
+                          ? titleCase(requestedPropertyNames[id])
+                          : <span style={{ color: 'var(--text-light)', fontFamily: 'monospace', fontSize: '0.75rem' }}>{id.slice(0, 8)}…</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ alignSelf: 'flex-start' }}
+                    onClick={async () => {
+                      // Same path as the "Create Proposal" footer
+                      // button — flushes any pending edits first so
+                      // the match modal sees the latest dates / beds
+                      // / guests, then routes through onQuote (which
+                      // already passes requested_property_ids as
+                      // initiallySelected via startQuote).
+                      if (isDirty) await save();
+                      onQuote();
+                    }}
+                  >
+                    📝 Generate proposals for {requestedIds.length === 1 ? 'this property' : `these ${requestedIds.length}`} →
+                  </button>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', lineHeight: 1.4 }}>
+                    The match modal will open showing only the agent's picks — review pricing and untick any you don't want to quote.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                  No proposals yet. Use "Create Proposal" below to add one for this client.
+                </div>
+              )
+            ) : (() => {
+              // Agent enquiries can't accept a proposal until the
+              // underlying guest is disclosed — accepting a quote with
+              // no guest name leaves the booking un-attributable and
+              // every downstream surface (booking row, invoice, comms)
+              // would render "Valued Guest". Once the user adds the
+              // guest's name on the enquiry the lock lifts and Accept
+              // re-enables (the deal modal cascades guest_* to every
+              // child proposal on save). Direct enquiries skip the
+              // check because client_name IS the guest by definition.
+              const acceptDisabledReason = (deal.is_agent && !deal.enquiry?.guest_name?.trim())
+                ? 'Add the guest name on this enquiry before accepting — agent proposals need a real guest to attribute the booking.'
+                : null;
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {deal.proposals.map(p => (
+                    <ProposalRowInline
+                      key={p.id}
+                      proposal={p}
+                      onOpen={() => onOpenProposal(p)}
+                      onSend={() => onSendProposal(p)}
+                      onMarkOutcome={(outcome) => onMarkProposalOutcome(p, outcome)}
+                      onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
+                      onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}
+                      acceptDisabledReason={acceptDisabledReason}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
           </DetailModalSection>
         );
 
