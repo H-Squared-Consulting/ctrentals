@@ -232,11 +232,16 @@ export function EnquiryForm() {
    *  wants to capture an enquiry now and quote later. */
   async function handleDirectSaveOnly() {
     if (saving) return;
-    if (!form.client_name.trim()) { toast.warning('Recipient name is required'); return; }
-    if (!form.check_in || !form.check_out) { toast.warning('Check-in and check-out are required'); return; }
-    if (form.check_in >= form.check_out) { toast.warning('Check-out must be after check-in'); return; }
-    if (form.bedrooms_options.length === 0) { toast.warning('Pick at least one bedroom count'); return; }
-    if (!form.guests_total || Number(form.guests_total) < 1) { toast.warning('Pick the guest count'); return; }
+    // Quick-entry mode: name is the only hard requirement. Everything
+    // else (dates, beds, guests) is captured-when-known so the team
+    // can spit out a placeholder card from a phone call and fill the
+    // rest in from the kanban later. Dates still get a sanity check
+    // ONLY when both have been entered.
+    if (!form.client_name.trim()) { toast.warning('Guest name is required'); return; }
+    if (form.check_in && form.check_out && form.check_in >= form.check_out) {
+      toast.warning('Check-out must be after check-in');
+      return;
+    }
     setSaving(true);
     try {
       const refCode = await nextDirectEnquiryRefCode(supabase);
@@ -254,14 +259,14 @@ export function EnquiryForm() {
           guest_name: form.client_name.trim(),
           guest_email: form.client_email.trim() || null,
           guest_phone: form.client_phone.trim() || null,
-          check_in: form.check_in,
-          check_out: form.check_out,
+          check_in: form.check_in || null,
+          check_out: form.check_out || null,
           // bedrooms_needed stays populated with the min of the
           // multi-select so legacy readers + the kanban card keep
           // working. The .in() filter on the property match step
           // uses bedrooms_options. guests_total is single-value.
-          bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : 1,
-          guests_total:    Number(form.guests_total) || 1,
+          bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : null,
+          guests_total:    form.guests_total ? Number(form.guests_total) : null,
           bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
           guests_options:   null,
           guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
@@ -623,14 +628,54 @@ export function EnquiryForm() {
         subtitle="Capture an incoming guest enquiry"
         width={760}
         primaryAction={
-          // Hide the action buttons entirely until the form has
-          // enough to be saveable. For direct enquiries we show TWO
-          // buttons: a ghost "Save enquiry" (persists now, no
-          // proposals, lands in Arrived) and a primary "Continue"
-          // (goes to step 2 to pick + price properties). Agent and
-          // platform paths keep their single Save button.
+          // Direct enquiries are the quick-entry path — the team
+          // often takes a phone call and just needs to drop a name
+          // into the system to remember to follow up. We show
+          // "Save / close" the moment a name exists (the only true
+          // requirement) so the button is never hidden during data
+          // entry. "Continue to proposals" stays gated on the full
+          // set because the match step needs dates + beds to filter
+          // properties. Agent / platform paths keep their single
+          // gated Save (they have stricter required fields anyway).
           (() => {
             if (!hasSource) return null;
+
+            if (enquirySource === 'direct') {
+              const hasName = form.client_name.trim().length > 0;
+              if (!hasName) return null;
+              const canContinue =
+                !!form.check_in &&
+                !!form.check_out &&
+                form.check_in < form.check_out &&
+                form.bedrooms_options.length > 0 &&
+                !!form.guests_total;
+              return (
+                <div style={{ display: 'inline-flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleDirectSaveOnly}
+                    disabled={saving}
+                    title="Save the enquiry now and close — only the guest name is required; fill the rest in from the kanban later"
+                  >
+                    {saving ? 'Saving…' : '💾 Save / close'}
+                  </button>
+                  <button
+                    type="submit"
+                    form="enquiry-form"
+                    className="btn btn-primary"
+                    disabled={saving || !canContinue}
+                    title={canContinue
+                      ? 'Continue to pick matching properties + price them'
+                      : 'Add dates, bedrooms and guests to continue to the property picker'}
+                  >
+                    {saving ? 'Saving…' : 'Continue to proposals →'}
+                  </button>
+                </div>
+              );
+            }
+
+            // Agent / platform — keep the existing gating.
             if (isAgent) {
               if (!agentId) return null;
               if (!form.subject.trim() && !guestForm.guest_name.trim()) return null;
@@ -639,30 +684,6 @@ export function EnquiryForm() {
             if (!form.client_name.trim()) return null;
             if (!form.check_in || !form.check_out) return null;
             if (form.check_in >= form.check_out) return null;
-            if (enquirySource === 'direct') {
-              return (
-                <div style={{ display: 'inline-flex', gap: 8 }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={handleDirectSaveOnly}
-                    disabled={saving}
-                    title="Save now without picking properties — you can add proposals later from the Enquiries board"
-                  >
-                    Save enquiry
-                  </button>
-                  <button
-                    type="submit"
-                    form="enquiry-form"
-                    className="btn btn-primary"
-                    disabled={saving}
-                    title="Continue to pick matching properties + price them"
-                  >
-                    {saving ? 'Saving…' : 'Continue →'}
-                  </button>
-                </div>
-              );
-            }
             return (
               <button type="submit" form="enquiry-form" className="btn btn-primary" disabled={saving}>
                 {saving ? 'Saving…' : 'Save enquiry'}

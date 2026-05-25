@@ -687,6 +687,13 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             }}
             initialSnapshot={snapshots[p.id] ?? null}
             nights={nights}
+            // This whole flow is the direct-enquiry path — lock the
+            // channel pill so the user can't silently flip the
+            // snapshot into an agent / platform quote (which would
+            // rewire the maths against an enquiry that has no agent
+            // attached). enquiryPrefill above also pre-selects direct
+            // so the dashboard lands in State B from the off.
+            lockScenario
             onClose={() => setEditingPropertyId(null)}
           />
         );

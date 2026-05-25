@@ -1267,6 +1267,31 @@ export default function PipelinePage() {
             }
             markProposalOutcome(p, outcome);
           }}
+          onEditProposalPricing={async (p) => {
+            // Inline shortcut to the same PricingModal-edit flow the
+            // proposal detail modal exposes — saves the user a click.
+            // Mark the host context as 'deal' so onPricingSaved knows
+            // to refresh the deal modal in place rather than reopen
+            // the (uninvolved) proposal detail modal.
+            if (!p.pricing_proposal_id) return;
+            const { data } = await supabase
+              .from('pricing_proposals')
+              .select('*')
+              .eq('id', p.pricing_proposal_id)
+              .single();
+            if (data) {
+              setEditPricingFor({
+                ...data,
+                _propertyName: p.property_name,
+                _reopenDealId: openDeal?.deal.enquiry?.id ?? openDeal?.deal.key ?? null,
+                // Carried so PricingModal can show per-stay totals
+                // (e.g. "R 770 164 · 31n total") alongside the
+                // per-night R-amount. Pulled from the host deal.
+                _checkIn: openDeal?.deal.check_in ?? p.check_in ?? null,
+                _checkOut: openDeal?.deal.check_out ?? p.check_out ?? null,
+              });
+            }
+          }}
         />
       )}
 
@@ -1288,7 +1313,14 @@ export default function PipelinePage() {
               .eq('id', openProposal.pricing_proposal_id)
               .single();
             if (data) {
-              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id });
+              setEditPricingFor({
+                ...data,
+                _propertyName: openProposal.property_name,
+                _reopenProposalId: openProposal.id,
+                // Same per-stay totals carrier as the deal-modal path.
+                _checkIn: openProposal.check_in ?? null,
+                _checkOut: openProposal.check_out ?? null,
+              });
               setOpenProposal(null);
             }
           }}
@@ -1313,14 +1345,51 @@ export default function PipelinePage() {
           property={{ id: editPricingFor.property_id, property_name: editPricingFor._propertyName }}
           supabase={supabase}
           editPricingProposal={editPricingFor}
+          // Forward the stay length so the breakdown rows render the
+          // running per-stay total under every per-night R-amount
+          // ("R 24 844 / night · R 770 164 · 31n total") — same UX as
+          // the EnquiryPropertyMatchModal Edit pricing flow. Computed
+          // from whichever host opened this modal (deal vs proposal
+          // detail) so the right dates feed in.
+          nights={(() => {
+            const ci = editPricingFor._checkIn;
+            const co = editPricingFor._checkOut;
+            if (!ci || !co) return undefined;
+            const n = Math.round((new Date(co).getTime() - new Date(ci).getTime()) / (1000 * 60 * 60 * 24));
+            return n > 0 ? n : undefined;
+          })()}
+          // Lock the channel pill whenever the host context implies a
+          // fixed scenario. From the deal modal we know the host is
+          // direct/agent/platform via the deal's is_agent + source; for
+          // proposal-detail launches we use the proposal's own
+          // scenario_type. Without this, the scenario picker would let
+          // the user silently convert a direct quote into an agent one.
+          lockScenario={(() => {
+            if (editPricingFor._reopenDealId) {
+              return !openDeal?.deal.is_agent;
+            }
+            return editPricingFor.scenario_type === 'direct';
+          })()}
           onClose={() => setEditPricingFor(null)}
           onPricingSaved={async () => {
-            const reopenId = editPricingFor?._reopenProposalId;
+            // Two host contexts can open this:
+            //  - the proposal detail modal (set _reopenProposalId)
+            //  - the deal modal's inline Edit pricing button
+            //    (set _reopenDealId)
+            // We refresh deals and re-seat whichever was open so the
+            // user sees the new price without the modal beneath
+            // looking stale.
+            const reopenProposalId = editPricingFor?._reopenProposalId;
+            const reopenDealId = editPricingFor?._reopenDealId;
             setEditPricingFor(null);
             const refreshed = await fetchDeals();
-            if (reopenId) {
-              const next = refreshed.flatMap(d => d.proposals).find(p => p.id === reopenId);
+            if (reopenProposalId) {
+              const next = refreshed.flatMap(d => d.proposals).find(p => p.id === reopenProposalId);
               if (next) setOpenProposal(next);
+            }
+            if (reopenDealId) {
+              const nextDeal = refreshed.find(d => (d.enquiry?.id ?? d.key) === reopenDealId);
+              if (nextDeal) setOpenDeal(prev => prev ? { deal: nextDeal, mode: prev.mode } : { deal: nextDeal, mode: 'view' });
             }
           }}
         />
@@ -2196,12 +2265,18 @@ function ProposalRowInline({
   onOpen,
   onSend,
   onMarkOutcome,
+  onEditPricing,
   onDelete,
 }: {
   proposal: ProposalRow;
   onOpen: () => void;
   onSend: () => void;
   onMarkOutcome: (outcome: 'accepted' | 'declined' | 'interested') => void;
+  /** Opens the full PricingModal pre-filled with this proposal's snapshot
+   *  so the user can adjust daily rate + per-night total without
+   *  drilling into the proposal detail page first. Only relevant when
+   *  the row has a pricing_proposal_id (older rows pre-pricing didn't). */
+  onEditPricing?: () => void;
   /** Only set when the deal modal is in edit mode — shows a destructive
    *  "Delete" action on the row so the user can prune unwanted quotes. */
   onDelete?: () => void;
@@ -2252,6 +2327,17 @@ function ProposalRowInline({
         >
           👁 View
         </a>
+        {onEditPricing && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+            onClick={stop(onEditPricing)}
+            title="Edit pricing — opens the full calculator with daily rate + per-night totals"
+          >
+            ✎ Edit pricing
+          </button>
+        )}
         {isDraft && (
           <button
             type="button"
@@ -2307,7 +2393,7 @@ function ProposalRowInline({
 function DealDetailModal({
   deal, initialMode = 'view', onClose, onQuote,
   onUpdateStatus, onUpdateProposalOutcome, onSetStage,
-  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome,
+  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
@@ -2327,6 +2413,10 @@ function DealDetailModal({
    *  Wraps the existing cascade logic (auto-decline siblings on
    *  accept; close enquiry as lost on last decline). */
   onMarkProposalOutcome: (p: ProposalRow, outcome: 'accepted' | 'declined' | 'interested') => void;
+  /** Open the full PricingModal pre-filled with this proposal's
+   *  snapshot. Avoids the two-click "open proposal detail → click
+   *  Edit Pricing" detour for what's usually a quick rate tweak. */
+  onEditProposalPricing: (p: ProposalRow) => void;
 }) {
   const { supabase } = useAuth();
   const toast = useToast();
@@ -2728,7 +2818,10 @@ function DealDetailModal({
           title="Move this deal to a different column"
         >
           <option value="" disabled>Set stage…</option>
-          {col === 'new' && <option value="drafting">Quoting</option>}
+          {/* "Quoting" was here but the natural way to move a deal
+              into Quoting is to create a proposal (which auto-flips
+              the deal_status). A manual stage flip with no proposal
+              left empty Quoting cards on the board — confusing. */}
           <option value="lost">Closed</option>
           {/* "Booked" isn't here — Mark Booked is the dedicated path
               because it also writes a bookings row. */}
@@ -2989,6 +3082,7 @@ function DealDetailModal({
                     onOpen={() => onOpenProposal(p)}
                     onSend={() => onSendProposal(p)}
                     onMarkOutcome={(outcome) => onMarkProposalOutcome(p, outcome)}
+                    onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
                     onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}
                   />
                 ))}

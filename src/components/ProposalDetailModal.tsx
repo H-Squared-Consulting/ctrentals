@@ -206,32 +206,17 @@ export default function ProposalDetailModal({
     </>
   );
 
-  // Footer changes shape based on the proposal's lifecycle stage. In the
-  // pre-send states (drafting/ready) the user is still authoring — they
-  // see Edit Pricing + Continue (Continue opens the Send dialog). Once
-  // Sent, those are gone and the user can only mark the outcome
-  // (Accepted / Declined). Closed states (accepted/declined) show no
-  // footer actions — the proposal is final.
+  // Footer changes shape based on the proposal's lifecycle stage. Once
+  // Sent the user can mark the outcome (Accepted / Declined). Pre-send
+  // (draft/drafting/ready) is now a pure VIEW screen — Edit Pricing
+  // and Continue (Send) both live on the deal modal's proposal row so
+  // the user has one canonical place to act from, and this detail
+  // page reads cleanly as "here's what I've drafted so far". Closed
+  // states (accepted/declined) also show no footer actions.
   const isSent = proposal.status === 'sent' || proposal.status === 'viewed' || proposal.status === 'interested';
-  const isPreSend = proposal.status === 'draft' || proposal.status === 'drafting' || proposal.status === 'ready';
 
   const footer = (
     <>
-      {isPreSend && onEditPricing && (
-        <button
-          className="btn btn-ghost"
-          onClick={onEditPricing}
-          disabled={!proposal.pricing_proposal_id}
-          title={proposal.pricing_proposal_id ? 'Edit the pricing for this proposal' : 'No pricing snapshot linked'}
-        >
-          💰 Edit Pricing
-        </button>
-      )}
-      {isPreSend && onSend && (
-        <button className="btn btn-primary" onClick={onSend}>
-          Continue →
-        </button>
-      )}
       {isSent && onDecline && (
         // Background colour mirrors the Declined column accent so the
         // button visually signals the destination state.
@@ -366,7 +351,7 @@ export default function ProposalDetailModal({
           );
         })() : (
           <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No pricing snapshot linked. Use Edit Pricing to attach one.
+            No pricing snapshot linked. Open the deal modal and use Edit pricing on the proposal row to attach one.
           </div>
         )}
       </DetailModalSection>
@@ -399,8 +384,25 @@ export default function ProposalDetailModal({
       </DetailModalSection>
 
       <DetailModalSection heading="Proposal Link">
-        <div style={{ fontSize: '0.8125rem', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>
-          {proposalUrl(proposal.ref_code)}
+        {/* Eye-icon button matching the rest of the platform (deal
+            modal proposal rows, deal cards) — opens the public
+            proposal page in a new tab. The raw URL was previously
+            shown inline, but users kept asking "where do I click?"
+            because there was no button affordance. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <a
+            href={proposalUrl(proposal.ref_code)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost"
+            style={{ fontSize: '0.8125rem', textDecoration: 'none' }}
+            title="Open the proposal page as the recipient sees it"
+          >
+            👁 View proposal page
+          </a>
+          <span style={{ fontSize: '0.75rem', fontFamily: 'ui-monospace, monospace', color: 'var(--text-light)', wordBreak: 'break-all' }}>
+            {proposalUrl(proposal.ref_code)}
+          </span>
         </div>
       </DetailModalSection>
     </DetailModal>

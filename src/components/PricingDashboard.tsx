@@ -126,6 +126,14 @@ interface Props {
   onCreateProposal?: (snapshot: PricingSnapshot) => void;
   actionLabel?: string;
   saving?: boolean;
+  /** Lock the channel/scenario to whatever it was opened with. Hides
+   *  the "· change" affordance on the channel pill so the user can
+   *  edit pricing without accidentally switching a direct enquiry's
+   *  quote into an agent / platform quote (which would also rewire
+   *  the breakdown maths). Set by callers that already know the
+   *  host context locks the scenario — e.g. editing pricing on a
+   *  direct enquiry's existing proposal. */
+  lockScenario?: boolean;
 }
 
 /**
@@ -273,6 +281,7 @@ export default function PricingDashboard({
   onCreateProposal,
   actionLabel = 'Create proposal from this',
   saving = false,
+  lockScenario = false,
 }: Props) {
   const currentYear = new Date().getFullYear();
 
@@ -711,15 +720,30 @@ export default function PricingDashboard({
       )}
       {/* Context bar — channel pill + season selector */}
       <div className="detail-modal-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: 0 }}>
-        <button
-          type="button"
-          className="detail-modal-mode-badge detail-modal-mode-badge--view"
-          style={{ cursor: 'pointer', border: 'none' }}
-          onClick={() => setScenario(null)}
-          title="Change channel"
-        >
-          {channelIcon} {channelLabel} · change
-        </button>
+        {/* Channel pill. Click to return to State A (channel picker)
+            UNLESS the host has locked the scenario — in that case it
+            renders as a static badge so the user can't accidentally
+            convert (say) a direct quote into an agent quote and
+            rewire the breakdown maths. */}
+        {lockScenario ? (
+          <span
+            className="detail-modal-mode-badge detail-modal-mode-badge--view"
+            style={{ border: 'none' }}
+            title="Channel is locked to the host enquiry's type"
+          >
+            {channelIcon} {channelLabel}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="detail-modal-mode-badge detail-modal-mode-badge--view"
+            style={{ cursor: 'pointer', border: 'none' }}
+            onClick={() => setScenario(null)}
+            title="Change channel"
+          >
+            {channelIcon} {channelLabel} · change
+          </button>
+        )}
         <div className="form-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="form-label" style={{ margin: 0 }}>Season</label>
           <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value as SeasonKey)}>
