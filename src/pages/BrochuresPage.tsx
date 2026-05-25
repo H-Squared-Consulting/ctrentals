@@ -17,11 +17,13 @@ interface Property {
   is_published: boolean;
 }
 
+const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
+
 function getBrochureUrl(property: { id: string; slug?: string | null }) {
   // Prefer the clean slug-based URL; vercel.json rewrites /brochures/:slug
   // to /brochure.html?slug=:slug. Old ?id= URLs still resolve.
-  if (property.slug) return `${window.location.origin}/brochures/${encodeURIComponent(property.slug)}`;
-  return `${window.location.origin}/brochure.html?id=${property.id}`;
+  if (property.slug) return `https://${BRAND_DOMAIN}/brochures/${encodeURIComponent(property.slug)}`;
+  return `https://${BRAND_DOMAIN}/brochure.html?id=${property.id}`;
 }
 
 export default function BrochuresPage({ embedded }: { embedded?: boolean } = {}) {

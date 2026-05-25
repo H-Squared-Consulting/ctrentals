@@ -53,8 +53,10 @@ interface Props {
   onBack?: () => void;
 }
 
+const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
+
 function proposalUrl(refCode: string): string {
-  return `${window.location.origin}/proposal.html?ref=${refCode}`;
+  return `https://${BRAND_DOMAIN}/proposal.html?ref=${refCode}`;
 }
 
 /** Build a formal subject/body for the batch. Single- vs multi-proposal

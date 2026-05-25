@@ -24,6 +24,7 @@ import ActionModal from './ActionModal';
 type Mode = 'branded' | 'agent';
 
 const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || '';
+const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
 function brochureUrl(p: any, mode: Mode) {
   const path = p.slug
@@ -33,9 +34,9 @@ function brochureUrl(p: any, mode: Mode) {
     if (AGENT_DOMAIN) return `https://${AGENT_DOMAIN}${path}`;
     // Fallback for testing before the neutral domain is registered.
     const join = path.indexOf('?') === -1 ? '?' : '&';
-    return `${window.location.origin}${path}${join}brand=agent`;
+    return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
   }
-  return `${window.location.origin}${path}`;
+  return `https://${BRAND_DOMAIN}${path}`;
 }
 
 export default function BrochureShareMenu({

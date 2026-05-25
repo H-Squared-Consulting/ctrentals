@@ -102,8 +102,10 @@ function fmtDateTime(d: string | null) {
   return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
+const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
+
 function proposalUrl(refCode: string) {
-  return `${window.location.origin}/proposal.html?ref=${refCode}`;
+  return `https://${BRAND_DOMAIN}/proposal.html?ref=${refCode}`;
 }
 
 interface ProposalDetailModalProps {

@@ -93,9 +93,10 @@ export default function BrochureEditor({ property, onClose, onSave, supabase }) 
 
   // Prefer the clean slug-based URL (handled by vercel.json rewrite). Falls
   // back to the legacy ?id= form when a property somehow has no slug.
+  const brandDomain = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
   const shareUrl = property.slug
-    ? `${window.location.origin}/brochures/${encodeURIComponent(property.slug)}`
-    : `${window.location.origin}/brochure.html?id=${encodeURIComponent(property.id)}`;
+    ? `https://${brandDomain}/brochures/${encodeURIComponent(property.slug)}`
+    : `https://${brandDomain}/brochure.html?id=${encodeURIComponent(property.id)}`;
 
   // Drag state for reordering the photo strip. dragIndex is the source thumb
   // being dragged; dropIndex is the gap index (0..N) where it would land.

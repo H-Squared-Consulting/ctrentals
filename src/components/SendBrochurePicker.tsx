@@ -17,6 +17,7 @@ import ActionModal from './ActionModal';
 
 type ShareMode = 'branded' | 'agent';
 const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || '';
+const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
 export default function SendBrochurePicker({ onClose }: { onClose: () => void }) {
   const { supabase } = useAuth();
@@ -63,9 +64,9 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
       if (AGENT_DOMAIN) return `https://${AGENT_DOMAIN}${path}`;
       // Fallback for testing before the neutral domain is registered.
       const join = path.indexOf('?') === -1 ? '?' : '&';
-      return `${window.location.origin}${path}${join}brand=agent`;
+      return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
     }
-    return `${window.location.origin}${path}`;
+    return `https://${BRAND_DOMAIN}${path}`;
   }
 
   async function copy(p: any) {
