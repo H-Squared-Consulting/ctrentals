@@ -55,6 +55,12 @@ interface PricingModalProps {
   /** Number of nights — forwarded to PricingDashboard for total-stay
    *  sub-lines on every R-amount row. */
   nights?: number;
+  /** Forwarded to PricingDashboard. Hides the channel-change toggle
+   *  on the channel pill — used when editing pricing from a context
+   *  where the scenario is already fixed (e.g. a direct enquiry's
+   *  existing proposal). Without this, a stray click could silently
+   *  flip a direct quote into an agent quote and rewire the maths. */
+  lockScenario?: boolean;
 }
 
 export default function PricingModal({
@@ -68,6 +74,7 @@ export default function PricingModal({
   onSnapshotReady,
   initialSnapshot,
   nights,
+  lockScenario = false,
 }: PricingModalProps) {
   const toast = useToast();
   const [creatingFromSnapshot, setCreatingFromSnapshot] = useState<PricingSnapshot | null>(null);
@@ -178,6 +185,7 @@ export default function PricingModal({
           // in the dashboard. Without this the dropdown defaults to
           // "(any agent)" — frustrating when we already know who.
           initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
+          lockScenario={lockScenario}
           // Three modes:
           //   onSnapshotReady set → snapshot-only (return + close, no DB write)
           //   isEdit              → in-place save (UPDATE existing pricing_proposal)
