@@ -16,7 +16,7 @@ import EmptyState from './EmptyState';
 import ActionModal from './ActionModal';
 
 type ShareMode = 'branded' | 'agent';
-const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || '';
+const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || 'ctvilla.co.za';
 const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
 export default function SendBrochurePicker({ onClose }: { onClose: () => void }) {
