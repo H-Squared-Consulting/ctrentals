@@ -27,6 +27,7 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
   const [search, setSearch] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const [mode, setMode] = useState<ShareMode>('branded');
+  const [handle, setHandle] = useState<string | null>(null);
 
   useEffect(() => {
     // ActionModal owns the body-scroll lock and Escape handling.
@@ -47,6 +48,23 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
     return () => { cancelled = true; };
   }, [supabase]);
 
+  // Resolve the signed-in user's email → short share handle (e.g. 'jh').
+  // The brochure does the reverse lookup to show the sharer's email in
+  // its contact pill without putting the address in the URL.
+  useEffect(() => {
+    if (!user?.email) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('admin_handles')
+        .select('handle')
+        .eq('email', user.email)
+        .maybeSingle();
+      if (!cancelled) setHandle(data?.handle ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, user?.email]);
+
   const filtered = useMemo(() => {
     if (!search) return properties;
     const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
@@ -66,12 +84,12 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
       const join = path.indexOf('?') === -1 ? '?' : '&';
       return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
     }
-    // Branded link carries the admin's email so the brochure's "Book Direct"
-    // panel shows the person who shared it as the point of contact.
-    const fromEmail = user?.email || null;
+    // Branded link carries a short admin handle (e.g. ?s=jh) so the brochure
+    // can resolve it to the sharer's email without exposing the address in
+    // the URL. Falls back to a clean URL when the admin has no handle yet.
     const join = path.indexOf('?') === -1 ? '?' : '&';
-    const fromQs = fromEmail ? `${join}from=${encodeURIComponent(fromEmail)}` : '';
-    return `https://${BRAND_DOMAIN}${path}${fromQs}`;
+    const sQs = handle ? `${join}s=${encodeURIComponent(handle)}` : '';
+    return `https://${BRAND_DOMAIN}${path}${sQs}`;
   }
 
   async function copy(p: any) {

@@ -786,15 +786,17 @@
       html += '</section>';
     } else {
       // Branded "Book Direct" panel — only appears on the company domain.
-      // The contact email is the admin who shared the brochure, passed in
-      // via ?from=<email>. Falls back to a generic inbox when the link
-      // was opened without a from param (e.g. typed by hand).
-      var fromEmail = (new URLSearchParams(window.location.search)).get('from') || 'info@southernescapes.co.za';
+      // The contact email is the admin who shared the brochure, resolved
+      // from `?s=<handle>` via the admin_handles table (set on
+      // window._brSharerEmail by main() before render). Falls back to a
+      // generic inbox when the link was opened without a handle or the
+      // handle didn't resolve.
+      var sharerEmail = window._brSharerEmail || 'info@southernescapes.co.za';
       html += '<section class="br-agent-contact reveal">';
       html += '<h2 class="br-agent-contact-heading">Book Direct with Southern Escapes</h2>';
       html += '<div class="br-agent-contact-body" style="margin-bottom:16px">Speak to our team for availability, pricing and to secure your booking.</div>';
       html += '<div class="br-contact-links">';
-      html += '<a href="mailto:' + esc(fromEmail) + '" class="br-contact-btn">' + esc(fromEmail) + '</a>';
+      html += '<a href="mailto:' + esc(sharerEmail) + '" class="br-contact-btn">' + esc(sharerEmail) + '</a>';
       html += '</div>';
       html += '</section>';
     }
@@ -852,17 +854,40 @@
       : 'slug=eq.' + encodeURIComponent(slug);
     var url = SUPABASE_URL + '/rest/v1/partner_properties?' + lookup + '&select=*&limit=1';
 
-    fetch(url, {
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY
-      }
-    })
-    .then(function(res) {
-      if (!res.ok) throw new Error('Failed to load property data');
-      return res.json();
-    })
-    .then(function(data) {
+    // Optional sharer handle (?s=jh) → look up the admin's email in parallel
+    // with the property fetch. Renderer reads window._brSharerEmail.
+    var handle = params.get('s');
+    var sharerPromise = Promise.resolve(null);
+    if (handle && /^[a-z0-9]{2,8}$/i.test(handle)) {
+      var handleUrl = SUPABASE_URL + '/rest/v1/admin_handles?handle=eq.' +
+        encodeURIComponent(handle.toLowerCase()) + '&select=email&limit=1';
+      sharerPromise = fetch(handleUrl, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+      })
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(rows) {
+          var em = rows && rows[0] && rows[0].email;
+          if (em) window._brSharerEmail = em;
+          return em || null;
+        })
+        .catch(function() { return null; });
+    }
+
+    Promise.all([
+      fetch(url, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        }
+      })
+      .then(function(res) {
+        if (!res.ok) throw new Error('Failed to load property data');
+        return res.json();
+      }),
+      sharerPromise
+    ])
+    .then(function(results) {
+      var data = results[0];
       if (!data || data.length === 0) {
         showError('Property Not Found', 'The requested property could not be found. It may have been removed or the link may be incorrect.');
         return;

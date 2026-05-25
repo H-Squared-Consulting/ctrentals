@@ -17,7 +17,7 @@
  * neutral domain exists, set VITE_AGENT_DOMAIN and the agent URL flips
  * over without any other code change.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useToast } from './ToastProvider';
 import { useAuth } from '../contexts/AuthContext';
 import ActionModal from './ActionModal';
@@ -27,7 +27,7 @@ type Mode = 'branded' | 'agent';
 const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || 'ctvilla.co.za';
 const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
-function brochureUrl(p: any, mode: Mode, fromEmail: string | null) {
+function brochureUrl(p: any, mode: Mode, handle: string | null) {
   const path = p.slug
     ? `/brochures/${encodeURIComponent(p.slug)}`
     : `/brochure.html?id=${encodeURIComponent(p.id)}`;
@@ -37,11 +37,12 @@ function brochureUrl(p: any, mode: Mode, fromEmail: string | null) {
     const join = path.indexOf('?') === -1 ? '?' : '&';
     return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
   }
-  // Branded link carries the admin's email so the brochure's "Book Direct"
-  // panel shows the person who shared it as the point of contact.
+  // Branded link carries a short admin handle (e.g. ?s=jh) so the brochure
+  // can resolve it to the sharer's email without exposing the address in
+  // the URL. Falls back to a clean URL when the admin has no handle yet.
   const join = path.indexOf('?') === -1 ? '?' : '&';
-  const fromQs = fromEmail ? `${join}from=${encodeURIComponent(fromEmail)}` : '';
-  return `https://${BRAND_DOMAIN}${path}${fromQs}`;
+  const sQs = handle ? `${join}s=${encodeURIComponent(handle)}` : '';
+  return `https://${BRAND_DOMAIN}${path}${sQs}`;
 }
 
 export default function BrochureShareMenu({
@@ -52,11 +53,28 @@ export default function BrochureShareMenu({
   onClose: () => void;
 }) {
   const toast = useToast();
-  const { user } = useAuth();
+  const { user, supabase } = useAuth();
   const [copied, setCopied] = useState(false);
   const [mode, setMode] = useState<Mode>('branded');
+  const [handle, setHandle] = useState<string | null>(null);
 
-  const url = brochureUrl(property, mode, user?.email || null);
+  // Resolve the signed-in user's email → short handle once on mount. Anon
+  // can read this table, so the brochure does the same lookup in reverse.
+  useEffect(() => {
+    if (!user?.email) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('admin_handles')
+        .select('handle')
+        .eq('email', user.email)
+        .maybeSingle();
+      if (!cancelled) setHandle(data?.handle ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, user?.email]);
+
+  const url = brochureUrl(property, mode, handle);
   const subject = encodeURIComponent(`${property.property_name} brochure`);
   const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
   const wa = encodeURIComponent(`Brochure for ${property.property_name}: ${url}`);
