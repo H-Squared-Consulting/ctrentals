@@ -591,7 +591,7 @@
     // neutral (agent-share) variant keeps the hero clean so nothing on the
     // brochure leaks the company brand to the agent's client.
     if (BRAND_MODE === 'direct') {
-      html += '<div class="br-hero-brand">CT Rentals</div>';
+      html += '<div class="br-hero-brand">Southern Escapes</div>';
     }
     html += '<h1 class="br-hero-title">' + esc(p.property_name) + '</h1>';
     if (p.tagline) {
@@ -786,15 +786,15 @@
       html += '</section>';
     } else {
       // Branded "Book Direct" panel — only appears on the company domain.
-      // Mirrors the proposal page's contact block so the two surfaces feel
-      // consistent; same phone / email / WhatsApp endpoints.
+      // The contact email is the admin who shared the brochure, passed in
+      // via ?from=<email>. Falls back to a generic inbox when the link
+      // was opened without a from param (e.g. typed by hand).
+      var fromEmail = (new URLSearchParams(window.location.search)).get('from') || 'info@southernescapes.co.za';
       html += '<section class="br-agent-contact reveal">';
-      html += '<h2 class="br-agent-contact-heading">Book Direct with CT Rentals</h2>';
+      html += '<h2 class="br-agent-contact-heading">Book Direct with Southern Escapes</h2>';
       html += '<div class="br-agent-contact-body" style="margin-bottom:16px">Speak to our team for availability, pricing and to secure your booking.</div>';
       html += '<div class="br-contact-links">';
-      html += '<a href="tel:+27218130813" class="br-contact-btn">+27 21 813 0813</a>';
-      html += '<a href="mailto:info@ctrentals.co.za" class="br-contact-btn">info@ctrentals.co.za</a>';
-      html += '<a href="https://wa.me/27218130813" target="_blank" rel="noopener" class="br-contact-btn">WhatsApp</a>';
+      html += '<a href="mailto:' + esc(fromEmail) + '" class="br-contact-btn">' + esc(fromEmail) + '</a>';
       html += '</div>';
       html += '</section>';
     }
@@ -813,9 +813,9 @@
     // Section 8: FOOTER — branded on the company domain, neutral elsewhere
     html += '<footer class="br-footer">';
     if (BRAND_MODE === 'direct') {
-      html += '<div class="br-footer-brand">CT Rentals</div>';
+      html += '<div class="br-footer-brand">Southern Escapes</div>';
       html += '<div class="br-footer-tagline">Cape Town Holiday Rentals</div>';
-      html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' CT Rentals. All rights reserved.</div>';
+      html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' Southern Escapes. All rights reserved.</div>';
     } else {
       html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' All rights reserved.</div>';
     }

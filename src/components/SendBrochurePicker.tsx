@@ -20,7 +20,7 @@ const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || 'ctvilla.co.
 const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
 export default function SendBrochurePicker({ onClose }: { onClose: () => void }) {
-  const { supabase } = useAuth();
+  const { supabase, user } = useAuth();
   const toast = useToast();
   const [properties, setProperties] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +66,12 @@ export default function SendBrochurePicker({ onClose }: { onClose: () => void })
       const join = path.indexOf('?') === -1 ? '?' : '&';
       return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
     }
-    return `https://${BRAND_DOMAIN}${path}`;
+    // Branded link carries the admin's email so the brochure's "Book Direct"
+    // panel shows the person who shared it as the point of contact.
+    const fromEmail = user?.email || null;
+    const join = path.indexOf('?') === -1 ? '?' : '&';
+    const fromQs = fromEmail ? `${join}from=${encodeURIComponent(fromEmail)}` : '';
+    return `https://${BRAND_DOMAIN}${path}${fromQs}`;
   }
 
   async function copy(p: any) {

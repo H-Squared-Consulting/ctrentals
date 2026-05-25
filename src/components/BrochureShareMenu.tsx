@@ -19,6 +19,7 @@
  */
 import { useState } from 'react';
 import { useToast } from './ToastProvider';
+import { useAuth } from '../contexts/AuthContext';
 import ActionModal from './ActionModal';
 
 type Mode = 'branded' | 'agent';
@@ -26,7 +27,7 @@ type Mode = 'branded' | 'agent';
 const AGENT_DOMAIN = (import.meta as any).env?.VITE_AGENT_DOMAIN || 'ctvilla.co.za';
 const BRAND_DOMAIN = (import.meta as any).env?.VITE_BRAND_DOMAIN || 'southernescapes.co.za';
 
-function brochureUrl(p: any, mode: Mode) {
+function brochureUrl(p: any, mode: Mode, fromEmail: string | null) {
   const path = p.slug
     ? `/brochures/${encodeURIComponent(p.slug)}`
     : `/brochure.html?id=${encodeURIComponent(p.id)}`;
@@ -36,7 +37,11 @@ function brochureUrl(p: any, mode: Mode) {
     const join = path.indexOf('?') === -1 ? '?' : '&';
     return `https://${BRAND_DOMAIN}${path}${join}brand=agent`;
   }
-  return `https://${BRAND_DOMAIN}${path}`;
+  // Branded link carries the admin's email so the brochure's "Book Direct"
+  // panel shows the person who shared it as the point of contact.
+  const join = path.indexOf('?') === -1 ? '?' : '&';
+  const fromQs = fromEmail ? `${join}from=${encodeURIComponent(fromEmail)}` : '';
+  return `https://${BRAND_DOMAIN}${path}${fromQs}`;
 }
 
 export default function BrochureShareMenu({
@@ -47,10 +52,11 @@ export default function BrochureShareMenu({
   onClose: () => void;
 }) {
   const toast = useToast();
+  const { user } = useAuth();
   const [copied, setCopied] = useState(false);
   const [mode, setMode] = useState<Mode>('branded');
 
-  const url = brochureUrl(property, mode);
+  const url = brochureUrl(property, mode, user?.email || null);
   const subject = encodeURIComponent(`${property.property_name} brochure`);
   const body = encodeURIComponent(`Have a look at this brochure: ${url}`);
   const wa = encodeURIComponent(`Brochure for ${property.property_name}: ${url}`);
