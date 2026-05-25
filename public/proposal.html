@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CT Rentals - Property Proposal</title>
+<title>Southern Escapes - Property Proposal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
@@ -521,7 +521,7 @@
     }
     html += '<div class="pos-hero-overlay"></div>';
     html += '<div class="pos-hero-content">';
-    if (!isAgent) html += '<div class="pos-hero-brand">CT Rentals</div>';
+    if (!isAgent) html += '<div class="pos-hero-brand">Southern Escapes</div>';
     html += '<h1 class="pos-hero-title">' + esc(pr.property_name) + '</h1>';
     html += '</div>';
     html += '</section>';
@@ -691,7 +691,7 @@
       if (brochureUrl) {
         html += '<button id="btn-copy-brochure" class="pos-btn-share" data-url="' + esc(brochureUrl) + '">🔗 Copy Brochure Link</button>';
       } else {
-        html += '<span style="font-size:13px;color:#888;">Brochure link unavailable — contact CT Rentals.</span>';
+        html += '<span style="font-size:13px;color:#888;">Brochure link unavailable — contact Southern Escapes.</span>';
       }
       html += '</div>';
       html += '</section>';
@@ -722,9 +722,9 @@
     // Section 11 - FOOTER
     html += '<footer class="pos-footer reveal">';
     if (!isAgent) {
-      html += '<div class="pos-footer-brand">CT Rentals</div>';
+      html += '<div class="pos-footer-brand">Southern Escapes</div>';
       html += '<div class="pos-footer-tagline">Cape Town Holiday Rentals</div>';
-      html += '<div class="pos-footer-copy">&copy; ' + new Date().getFullYear() + ' CT Rentals. All rights reserved.</div>';
+      html += '<div class="pos-footer-copy">&copy; ' + new Date().getFullYear() + ' Southern Escapes. All rights reserved.</div>';
     } else {
       html += '<div class="pos-footer-copy" style="color:var(--text-light)">Property Proposal &mdash; ' + esc(fmtDate(p.created_at)) + '</div>';
     }

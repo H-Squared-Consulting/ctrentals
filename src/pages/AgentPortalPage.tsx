@@ -260,7 +260,7 @@ function PropertiesTab({ properties, onEnquire }: { properties: AgentProperty[];
   if (properties.length === 0) {
     return (
       <div className="card" style={emptyStateStyle}>
-        No properties enabled for you yet. Get in touch with CT Rentals if this looks wrong.
+        No properties enabled for you yet. Get in touch with Southern Escapes if this looks wrong.
       </div>
     );
   }

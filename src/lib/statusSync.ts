@@ -113,19 +113,27 @@ export async function closeEnquiryOnProposalAccept(
     .update({ deal_status: 'won', updated_at: new Date().toISOString() })
     .eq('id', prop.enquiry_id);
 
-  // Decline every still-live sibling. .neq excludes the just-accepted
-  // proposal; .not('status', 'in', ...) skips anything already terminal
-  // so we don't overwrite an existing decline_reason.
-  await supabase
+  // Snapshot each sibling's CURRENT status into previous_status
+  // BEFORE we cascade them to declined. Lets "Move back to
+  // Responded" restore each sibling to its exact pre-cascade state
+  // (drafting / ready / sent) rather than guessing.
+  const { data: liveSiblings } = await supabase
     .from('proposals')
-    .update({
-      status: 'declined',
-      decline_reason: 'Superseded by accepted proposal',
-      updated_at: new Date().toISOString(),
-    })
+    .select('id, status')
     .eq('enquiry_id', prop.enquiry_id)
     .neq('id', proposalId)
     .not('status', 'in', '("accepted","declined")');
+  for (const sib of (liveSiblings || []) as Array<{ id: string; status: string }>) {
+    await supabase
+      .from('proposals')
+      .update({
+        previous_status: sib.status,
+        status: 'declined',
+        decline_reason: 'Superseded by accepted proposal',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sib.id);
+  }
 }
 
 /** Called after a proposal is declined. If no live siblings remain on

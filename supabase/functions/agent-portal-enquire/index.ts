@@ -27,6 +27,7 @@ function json(status: number, body: Record<string, unknown>) {
 interface EnquireBody {
   token?: unknown;
   propertyId?: unknown;
+  subject?: unknown;
   guestName?: unknown;
   guestEmail?: unknown;
   guestPhone?: unknown;
@@ -73,6 +74,7 @@ Deno.serve(async (req) => {
 
   const token       = asString(body.token, 128);
   const propertyId  = asString(body.propertyId, 64);
+  const subject     = asString(body.subject, 120);
   const guestName   = asString(body.guestName, 200);
   const guestEmail  = asString(body.guestEmail, 200).toLowerCase();
   const guestPhone  = asString(body.guestPhone, 60);
@@ -86,6 +88,7 @@ Deno.serve(async (req) => {
     return json(400, { ok: false, reason: 'invalid-token' });
   }
   if (!propertyId)             return json(400, { ok: false, reason: 'missing-property' });
+  if (!subject)                return json(400, { ok: false, reason: 'missing-subject' });
   if (!isIsoDate(checkIn))     return json(400, { ok: false, reason: 'invalid-check-in' });
   if (!isIsoDate(checkOut))    return json(400, { ok: false, reason: 'invalid-check-out' });
   if (checkOut <= checkIn)     return json(400, { ok: false, reason: 'check-out-before-check-in' });
@@ -156,6 +159,7 @@ Deno.serve(async (req) => {
   const payload = {
     partner_id: PARTNER_ID,
     ref_code: refCode,
+    subject,
     is_agent: true,
     agent_id: agent.id,
     property_id: propertyId,

@@ -20,6 +20,7 @@ import { fmtRand } from '../lib/pricingEngine';
 import { nightsBetween } from '../lib/nights';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { syncEnquiryFromProposal } from '../lib/statusSync';
+import { nextProposalRefCodeFor } from '../lib/refCodes';
 import type { PricingSnapshot } from './PricingDashboard';
 
 interface GuestRow {
@@ -38,6 +39,14 @@ function titleCase(s: string | null | undefined): string {
  *  start blank when the proposal is created in response to a guest enquiry. */
 export interface EnquiryPrefill {
   id: string;
+  /** Parent enquiry's ref_code. Drives the new proposal's ref_code
+   *  format — direct enquiries (D###) produce PD####N children;
+   *  legacy formats fall through to the old CTR-… generator. */
+  ref_code?: string | null;
+  /** 1-line summary the user writes at capture so the enquiry is
+   *  distinguishable on the kanban (e.g. "Family of 6, Constantia
+   *  Easter"). Used as the deal card headline. */
+  subject?: string | null;
   client_name: string;
   client_email: string | null;
   client_phone: string | null;
@@ -283,7 +292,13 @@ export default function CreateProposalModal({
       const pricingProposalId = pricingRes.data.id;
 
       // 2) Create the sendable proposal linked to that snapshot.
-      const refCode = generateRefCode();
+      //    Direct-enquiry parents (Dxxx) get PDxxxxN children — one
+      //    sequence per parent. Other parents (agent legacy ENQ-…,
+      //    standalone) keep the old CTR-YYYYMMDD-XXXX format until
+      //    those streams migrate.
+      const refCode =
+        (await nextProposalRefCodeFor(supabase, enquiryPrefill?.ref_code)) ??
+        generateRefCode();
       const proposalPayload = {
         ref_code: refCode,
         partner_id: CT_RENTALS_PARTNER_ID,

@@ -76,10 +76,10 @@ export default function Fab() {
               <span className="fab-action-icon">💬</span>
               <span className="fab-action-label">New enquiry</span>
             </button>
-            <button className="fab-action" onClick={() => trigger('proposal')}>
-              <span className="fab-action-icon">📝</span>
-              <span className="fab-action-label">New proposal</span>
-            </button>
+            {/* "New proposal" hidden — proposals are now always
+                created against an enquiry via the property match
+                step. The standalone-proposal FAB entry was a
+                holdover from the old flow. */}
             <button className="fab-action" onClick={() => trigger('booking')}>
               <span className="fab-action-icon">📅</span>
               <span className="fab-action-label">New booking</span>

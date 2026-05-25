@@ -11,8 +11,11 @@ type Section = 'operations' | 'crm' | 'finance' | 'reports';
 
 const SECTIONS: Record<Section, { to: string; label: string }[]> = {
   operations: [
+    // Proposals tab dropped — the kanban + deal modal on Enquiries
+    // now surfaces every proposal action inline (Send, Accept, Decline,
+    // Send all drafts). The /operations/proposals route still exists as
+    // a redirect so stale bookmarks land on Enquiries.
     { to: '/operations/enquiries', label: 'Enquiries' },
-    { to: '/operations/proposals', label: 'Proposals' },
     { to: '/operations/bookings', label: 'Bookings' },
   ],
   crm: [
