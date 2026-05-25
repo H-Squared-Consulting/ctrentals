@@ -977,7 +977,15 @@ export function EnquiryForm() {
                 required
               />
             </Field>
-            <Field label="Check-out *">
+            <Field label={
+              <>
+                Check-out *
+                {/* Inline night count — appears the moment both dates
+                    are valid so the user doesn't have to count nights
+                    in their head before saving the enquiry. */}
+                <NightCount checkIn={form.check_in} checkOut={form.check_out} />
+              </>
+            }>
               <input
                 type="date"
                 className="form-input"
@@ -1168,7 +1176,7 @@ function ChipMultiSelect({ max, min = 1, value, onChange, placeholder = 'Pick on
   );
 }
 
-function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
+function Field({ label, children, style }: { label: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div className="form-group" style={style}>
       <label className="form-label">{label}</label>

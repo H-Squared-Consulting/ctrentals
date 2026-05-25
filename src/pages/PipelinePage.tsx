@@ -2305,6 +2305,19 @@ function ProposalRowInline({
         <div className="editor-list-title">{titleCase(p.property_name)}</div>
         <div className="editor-list-sub">
           {p.guest_price != null ? <><strong>{fmtRand(p.guest_price)}</strong> / night</> : 'No pricing'}
+          {/* Per-stay total — surfaced inline so the user sees both
+              the headline rate AND what the guest will actually pay
+              for the whole booking. Only renders when we have both
+              a price and a valid night count to multiply by. */}
+          {(() => {
+            const n = nightsBetween(p.check_in, p.check_out);
+            if (p.guest_price == null || n == null) return null;
+            return (
+              <span style={{ color: 'var(--text-light)' }}>
+                {' · '}{fmtRand(p.guest_price * n)} · {n}n total
+              </span>
+            );
+          })()}
           {p.scenario_type && <span style={{ color: 'var(--text-light)' }}> · {p.scenario_type}</span>}
           <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: '0.6875rem', color: 'var(--text-light)' }}>{p.ref_code}</span>
         </div>
@@ -2991,7 +3004,33 @@ function DealDetailModal({
                   <input type="date" className="form-input" value={form.check_in || ''} onChange={ev => update('check_in', ev.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Check-out</label>
+                  <label className="form-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    Check-out
+                    {/* Night count rendered as a coloured pill so the
+                        stay length is obvious at a glance — the old
+                        muted-grey "(N nights)" label was too easy to
+                        miss next to the date input. */}
+                    {(() => {
+                      const n = nightsBetween(form.check_in, form.check_out);
+                      if (n == null) return null;
+                      return (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          background: 'var(--color-primary)',
+                          color: '#fff',
+                          fontSize: '0.6875rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                        }}>
+                          🌙 {n} night{n === 1 ? '' : 's'}
+                        </span>
+                      );
+                    })()}
+                  </label>
                   <input type="date" className="form-input" value={form.check_out || ''} onChange={ev => update('check_out', ev.target.value)} />
                 </div>
                 <div className="form-group">

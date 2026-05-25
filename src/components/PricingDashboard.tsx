@@ -424,18 +424,13 @@ export default function PricingDashboard({
   const [fixedOwnerOverride, setFixedOwnerOverride] = useState('');
   const [agentSplitPct, setAgentSplitPct] = useState('50');
 
-  // Edit-mode hydration for selectedSeason. Snapshots store the season
-  // name (e.g. "Peak"); the dropdown now uses SeasonKey ('peak' etc.).
-  // Once seasons has loaded, map the snapshot's season name back to its
-  // key. Ref-guarded so a later refetch doesn't overwrite user picks.
-  const seasonHydratedRef = useRef(false);
-  useEffect(() => {
-    if (seasonHydratedRef.current) return;
-    if (!hydrate?.season_tag || seasons.length === 0) return;
-    const match = seasons.find(s => s.name === hydrate.season_tag || s.key === hydrate.season_tag);
-    if (match) setSelectedSeason(match.key);
-    seasonHydratedRef.current = true;
-  }, [seasons, hydrate]);
+  // Season hydration intentionally NOT applied: Peak is the universal
+  // default everywhere (match modal, new proposals, edit pricing) so
+  // the team always starts from the negotiating anchor and steps down
+  // via the dropdown if they want a different tier. Previously this
+  // mapped the saved snapshot's season_tag back into the dropdown,
+  // which meant a proposal saved at Winter re-opened at Winter and
+  // hid the "Peak everywhere by default" intent.
 
   const activeChannel = useMemo(
     () => channels.find(c => c.id === selectedChannelId) || null,
