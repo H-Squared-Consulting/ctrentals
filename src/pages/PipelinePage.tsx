@@ -18,7 +18,7 @@
  * sitting un-sent.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/ToastProvider';
@@ -538,23 +538,52 @@ export default function PipelinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageFromUrl]);
 
+  /** How far back to load CLOSED/BOOKED enquiries. Open / quoting /
+   *  responded rows are always pulled regardless of age — those are
+   *  what the team actually works on. Terminal rows older than this
+   *  cutoff are deliberately left in the database; the kanban is for
+   *  current pipeline, not the all-time archive.
+   *
+   *  Before this floor every page load shipped ~years of dead deals
+   *  with full pricing snapshots, ballooning the payload past 10 MB
+   *  and making the page unusable. */
+  const CLOSED_LOOKBACK_DAYS = 60;
+
   async function fetchDeals(): Promise<Deal[]> {
     setLoading(true);
+    const closedFloor = new Date(Date.now() - CLOSED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
+      .toISOString();
+    // PostgREST .or() — keep every row that's EITHER not-terminal
+    // (open / quoting / responded / null) OR terminal but recent
+    // enough to still be relevant. Phrased this way so the index on
+    // (partner_id, created_at) does the heavy lifting.
+    const ACTIVE_OR_RECENT =
+      `deal_status.is.null,` +
+      `deal_status.not.in.(won,lost),` +
+      `created_at.gte.${closedFloor}`;
     const [enqRes, standaloneRes] = await Promise.all([
       // Enquiries with all their proposals + property + pricing joined.
       supabase
         .from('enquiries')
         .select('*, proposals(*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents))')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
-        .order('created_at', { ascending: false }),
+        .or(ACTIVE_OR_RECENT)
+        .order('created_at', { ascending: false })
+        // Safety net — even with the recency floor a runaway create-
+        // loop or backfill shouldn't break the page.
+        .limit(500),
       // Proposals created without an enquiry (FAB flow) — these are deals
-      // in their own right.
+      // in their own right. Same windowing applied: only recent rows
+      // ship by default. Standalone proposals don't have deal_status
+      // so a flat created_at floor is enough.
       supabase
         .from('proposals')
         .select('*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .is('enquiry_id', null)
-        .order('created_at', { ascending: false }),
+        .gte('created_at', closedFloor)
+        .order('created_at', { ascending: false })
+        .limit(200),
     ]);
 
     const fromEnquiries: Deal[] = (enqRes.data || []).map((e: any) => ({
@@ -645,7 +674,25 @@ export default function PipelinePage() {
   // FAB-launched proposal flow, the new-enquiry form, status flips from
   // ProposalDetailModal, all dispatch a window event we subscribe to.
   // Without this the Kanban stays stale until the user hits Refresh.
-  useEffect(() => onPipelineChanged(() => { fetchDeals(); }), [supabase]);
+  //
+  // Debounced because a single user action often triggers several
+  // writes in quick succession (accept cascade fires N sibling
+  // updates → N events → without debounce, N full refetches in
+  // parallel). 250 ms is short enough to feel instant after the
+  // last write and long enough to collapse the burst into one round-
+  // trip.
+  useEffect(() => {
+    if (!supabase) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = onPipelineChanged(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { fetchDeals(); timer = null; }, 250);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [supabase]);
 
   /** Card id flash-highlighted briefly when the user lands here
    *  from the New Enquiry flow (?deal=…&highlight=1). Set on URL
@@ -1012,7 +1059,9 @@ export default function PipelinePage() {
     }
 
     setOpenProposal(null);
-    notifyPipelineChanged();
+    // We do the refetch ourselves below — emitting the pipeline event
+    // here would queue a SECOND (debounced) refetch 250 ms later for
+    // no benefit. Skip the notify; the explicit await is what we need.
     const refreshed = await fetchDeals();
 
     // Accept is a terminal action on the deal — close the modal
@@ -1213,7 +1262,7 @@ export default function PipelinePage() {
                 .from('proposals')
                 .update({ status: 'interested', updated_at: new Date().toISOString() })
                 .eq('id', p.id)
-                .then(() => { fetchDeals(); notifyPipelineChanged(); });
+                .then(() => { fetchDeals(); });
               return;
             }
             markProposalOutcome(p, outcome);
@@ -1526,7 +1575,17 @@ function KanbanColumnBody({
 // agent look identical (no property is attached at New). Inbox UX is
 // built for differentiating similar items: subject leads, agent +
 // dates + notes preview underneath, ref + time-ago on the right.
-function InboxRow({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: Deal) => void; highlighted?: boolean }) {
+const InboxRow = memo(InboxRowImpl, (prev, next) =>
+  // Identity compare on the value props that drive the visible UI.
+  // Function props are intentionally ignored: they're closures freshly
+  // created on every parent render, but their behaviour is stable
+  // (they delegate to setState calls in PipelinePage). Comparing them
+  // would defeat the memo entirely while adding nothing for correctness.
+  prev.deal === next.deal &&
+  prev.highlighted === next.highlighted
+);
+
+function InboxRowImpl({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: Deal) => void; highlighted?: boolean }) {
   const e = deal.enquiry;
   // Agent rows: disclosed guest name wins > subject. Direct rows
   // just use the recipient (who IS the guest).
@@ -1603,7 +1662,20 @@ function InboxRow({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: Deal)
 
 // ─── Deal card ──────────────────────────────────────────────────────────
 
-function DealCard({
+const DealCard = memo(DealCardImpl, (prev, next) =>
+  // Same rationale as InboxRow: skip function-prop compares so search-
+  // box keystrokes + unrelated state changes don't re-render every
+  // card on the board. The deal object reference is stable between
+  // refetches (a new array is built, but a card whose data didn't
+  // change still gets a fresh object — accepted cost for correctness).
+  prev.deal === next.deal &&
+  prev.stage === next.stage &&
+  prev.closed === next.closed &&
+  prev.compact === next.compact &&
+  prev.highlighted === next.highlighted
+);
+
+function DealCardImpl({
   deal, stage, onOpen, onQuote, onSend, closed, compact, highlighted,
 }: {
   deal: Deal;
