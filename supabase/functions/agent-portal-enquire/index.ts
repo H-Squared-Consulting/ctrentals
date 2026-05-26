@@ -46,11 +46,6 @@ interface EnquireBody {
    *  enquiries.agent_reference; separate from the AHH/N `subject`
    *  the team uses. */
   agentReference?: unknown;
-  /** Who on the SE team the agent wants handling this — 'NT' or
-   *  'HH'. Required. Mapped to enquiries.created_by_initials so
-   *  the kanban "users" filter behaves identically to internal
-   *  creations (which stamp the same column from the user email). */
-  assignTo?: unknown;
   subject?: unknown;
   guestName?: unknown;
   guestEmail?: unknown;
@@ -149,12 +144,6 @@ Deno.serve(async (req) => {
   const propertyIds    = normalisePropertyIds(body);
   const subject        = asString(body.subject, 120);
   const agentReference = asString(body.agentReference, 120);
-  // assignTo whitelist — only 'NT' / 'HH' are accepted today. Casing
-  // is normalised so a stray 'nt' from a misbehaving client still
-  // works. Any other value falls through to the empty-string
-  // missing-assign-to error below.
-  const assignToRaw    = asString(body.assignTo, 4).toUpperCase();
-  const assignTo       = (assignToRaw === 'NT' || assignToRaw === 'HH') ? assignToRaw : '';
   const guestName   = asString(body.guestName, 200);
   const guestEmail  = asString(body.guestEmail, 200).toLowerCase();
   const guestPhone  = asString(body.guestPhone, 60);
@@ -167,9 +156,10 @@ Deno.serve(async (req) => {
   if (!token || token.length < 16) {
     return json(400, { ok: false, reason: 'invalid-token' });
   }
-  if (propertyIds.length === 0)  return json(400, { ok: false, reason: 'missing-properties' });
+  // propertyIds.length === 0 is allowed — that's a "general
+  // enquiry" (dates only, no specific houses). agent_reference is
+  // still required so the agent's My Enquiries tab has a label.
   if (!agentReference)           return json(400, { ok: false, reason: 'missing-agent-reference' });
-  if (!assignTo)                 return json(400, { ok: false, reason: 'missing-assign-to' });
   if (!isIsoDate(checkIn))       return json(400, { ok: false, reason: 'invalid-check-in' });
   if (!isIsoDate(checkOut))      return json(400, { ok: false, reason: 'invalid-check-out' });
   if (checkOut <= checkIn)       return json(400, { ok: false, reason: 'check-out-before-check-in' });
@@ -213,21 +203,24 @@ Deno.serve(async (req) => {
   // 2. Confirm every picked property is one this agent is actually
   //    allowed to sell. Belt-and-braces against someone forging
   //    propertyIds on a real token. Single round-trip with .in() so
-  //    we don't fan out per-property.
-  const { data: links, error: linkErr } = await admin
-    .from('agent_properties')
-    .select('property_id')
-    .eq('agent_id', agent.id)
-    .in('property_id', propertyIds);
-  if (linkErr) {
-    console.error('agent_properties lookup failed:', linkErr);
-    return json(500, { ok: false, reason: 'lookup-failed' });
-  }
-  const allowedSet = new Set((links || []).map((l: any) => l.property_id));
-  const disallowed = propertyIds.filter(id => !allowedSet.has(id));
-  if (disallowed.length > 0) {
-    console.warn('agent', agent.id, 'tried to enquire on disallowed ids:', disallowed);
-    return json(403, { ok: false, reason: 'property-not-allowed' });
+  //    we don't fan out per-property. Skipped entirely for general
+  //    enquiries (zero properties) — nothing to validate.
+  if (propertyIds.length > 0) {
+    const { data: links, error: linkErr } = await admin
+      .from('agent_properties')
+      .select('property_id')
+      .eq('agent_id', agent.id)
+      .in('property_id', propertyIds);
+    if (linkErr) {
+      console.error('agent_properties lookup failed:', linkErr);
+      return json(500, { ok: false, reason: 'lookup-failed' });
+    }
+    const allowedSet = new Set((links || []).map((l: any) => l.property_id));
+    const disallowed = propertyIds.filter(id => !allowedSet.has(id));
+    if (disallowed.length > 0) {
+      console.warn('agent', agent.id, 'tried to enquire on disallowed ids:', disallowed);
+      return json(403, { ok: false, reason: 'property-not-allowed' });
+    }
   }
 
   // 3. Compute total guests if both adults+children given.
@@ -271,11 +264,13 @@ Deno.serve(async (req) => {
     guests_adults: adults,
     guests_children: children,
     notes: notes || (subject ? `Agent note: ${subject}` : null),
-    // Stamp the team member the agent picked into the same column
-    // the manual /enquiry/new flow uses (initialsForEmail there;
-    // 'NT' / 'HH' here). Keeps the kanban "users" filter coherent
-    // across entry points.
-    created_by_initials: assignTo,
+    // Every agent-portal enquiry is auto-assigned to BOTH team
+    // members so either can pick it up. Stored as a comma-separated
+    // list — the kanban pill + the "users" filter on the team side
+    // both split on commas, so a card stamped "NT,HH" surfaces
+    // under either lens. Distinct from the internal /enquiry/new
+    // path which stamps a single creator's initials.
+    created_by_initials: 'NT,HH',
     source: 'agent_portal',
     deal_status: 'new',
   };

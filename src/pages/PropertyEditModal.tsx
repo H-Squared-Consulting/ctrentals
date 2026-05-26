@@ -1744,11 +1744,13 @@ function LinkRow({ label, hint, url, disabled }: { label: string; hint?: string;
  *  icon is a short visual cue used in the view-mode minimalistic row;
  *  edit mode falls back to the full labelled URL form. */
 const LISTING_PLATFORMS: Array<{ key: string; label: string; icon: string; hostMatch?: RegExp }> = [
-  { key: 'airbnb',      label: 'Airbnb',      icon: 'A',  hostMatch: /(^|\.)airbnb\./i },
-  { key: 'booking_com', label: 'Booking.com', icon: 'B',  hostMatch: /(^|\.)booking\./i },
-  { key: 'vrbo',        label: 'VRBO',        icon: 'V',  hostMatch: /(^|\.)(vrbo|homeaway)\./i },
-  { key: 'direct',      label: 'Direct',      icon: '🏠' },
-  { key: 'other',       label: 'Other',       icon: '🔗' },
+  // Southern Escapes only lists on Airbnb + VRBO — other platforms
+  // (Booking.com, direct, generic 'other') were dropped to keep the
+  // editor matching reality. Legacy values still in listing_urls
+  // for archived rows stay in the DB; we just don't render fields
+  // for them anymore.
+  { key: 'airbnb', label: 'Airbnb', icon: 'A', hostMatch: /(^|\.)airbnb\./i },
+  { key: 'vrbo',   label: 'VRBO',   icon: 'V', hostMatch: /(^|\.)(vrbo|homeaway)\./i },
 ];
 
 /** Returns a label like "Airbnb" when `url` looks like it belongs to a

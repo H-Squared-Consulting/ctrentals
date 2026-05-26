@@ -704,7 +704,7 @@ export function EnquiryForm() {
             {([
               { key: 'direct',   label: '👤 Direct guest' },
               { key: 'agent',    label: '🤝 An agent (on behalf of a guest)' },
-              { key: 'platform', label: '🔗 Platform (Airbnb / Booking / etc)' },
+              { key: 'platform', label: '🔗 Platform (Airbnb or VRBO)' },
             ] as const)
               // Progressive disclosure: show ALL three options when
               // nothing's been picked yet. Once the user commits,
@@ -885,7 +885,7 @@ export function EnquiryForm() {
             {isPlatform && (
               <Section
                 title="Platform"
-                subtitle="Paste the link to the message thread on Airbnb, Booking, VRBO, etc. We render it as a one-click back-link on the deal."
+                subtitle="Paste the link to the message thread on Airbnb or VRBO. We render it as a one-click back-link on the deal."
               >
                 <Field label="Conversation URL *">
                   <input
