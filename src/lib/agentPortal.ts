@@ -71,6 +71,25 @@ export interface AgentEnquiry {
    *  Falls back to a 1-element array derived from propertyName/Slug
    *  on legacy rows. */
   requestedProperties: Array<{ name: string; slug: string }>;
+  /** Proposals the team has explicitly published to this agent
+   *  (Publish-to-portal button on the deal modal). Only includes
+   *  proposals whose published_to_agent_expires is still in the
+   *  future. Empty array when none — the portal renders an
+   *  "awaiting response" placeholder in that case. */
+  publishedProposals: Array<{
+    refCode: string;
+    propertyName: string;
+    publishedAt: string;
+    expiresOn: string | null;
+    /** Proposal lifecycle status — when 'accepted' / 'booked' (or
+     *  any other terminal state) the portal renders a read-only
+     *  summary modal instead of an active link, so the agent
+     *  can't keep sharing the live proposal URL post-booking. */
+    status: string;
+    guestPrice: number | null;
+    checkIn: string | null;
+    checkOut: string | null;
+  }>;
   checkIn: string;
   checkOut: string;
   status: AgentEnquiryStatus;
@@ -128,12 +147,6 @@ export interface SubmitEnquiryInput {
    *  agent can find this submission later. Stored separately from
    *  the AHH/N `subject` the team uses. */
   agentReference: string;
-  /** Who on the Southern Escapes team the agent wants this enquiry
-   *  assigned to. Required at the form level (no default — agents
-   *  consciously pick the person they're working with). Server-side
-   *  this maps to created_by_initials so the kanban "users" filter
-   *  treats portal enquiries the same as internal creations. */
-  assignTo: 'NT' | 'HH';
   // Guest details are optional — agents often enquire before they've
   // disclosed the guest. Empty values land as NULL guest_* fields on
   // the enquiry and can be filled in later from the Pipeline.

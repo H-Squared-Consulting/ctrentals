@@ -461,6 +461,7 @@ function mapProposalRow(p: any, parentEnquiry?: { id: string; ref_code: string }
 export default function PipelinePage() {
   const { supabase, user } = useAuth();
   const { setPageTitle } = useLayout();
+  const toast = useToast();
 
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -823,7 +824,15 @@ export default function PipelinePage() {
       const target: TeamInitials | null =
         userFilter === 'mine' ? initialsForEmail(user?.email) : userFilter;
       if (target) {
-        result = result.filter(d => d.enquiry?.created_by_initials === target);
+        // created_by_initials may be a comma-separated list (e.g.
+        // "NT,HH" for agent-portal-created enquiries) — treat the
+        // filter as "is this initial in the assigned set" so multi-
+        // assigned cards show up under EITHER team-member's lens.
+        result = result.filter(d => {
+          const raw = d.enquiry?.created_by_initials;
+          if (!raw) return false;
+          return raw.split(',').map(s => s.trim()).includes(target);
+        });
       } else {
         // 'mine' picked but the signed-in user isn't in the team map
         // — empty result is the honest outcome, no spurious matches.
@@ -1122,6 +1131,12 @@ export default function PipelinePage() {
    *  details" CTA that drops the user straight into edit mode on the
    *  deal modal. */
   const [acceptBlocker, setAcceptBlocker] = useState<{ deal: Deal; reason: string } | null>(null);
+  /** Pending agent-portal publish. Set when the user clicks the
+   *  📢 Publish button on an agent proposal row; cleared on confirm
+   *  or cancel. The parent deal is included so the modal can quote
+   *  the agent name + the check_in expiry date inline. */
+  const [pendingPublish, setPendingPublish] = useState<{ proposal: ProposalRow; deal: Deal } | null>(null);
+  const [publishing, setPublishing] = useState(false);
 
   /** Mark a sent proposal as accepted or declined from the detail modal.
    *  Cascade rules (see statusSync helpers + closeEnquiryOnProposalAccept):
@@ -1161,6 +1176,53 @@ export default function PipelinePage() {
   /** The actual mutation — runs after the user confirms (for Accept /
    *  Decline) or directly (for any other outcome that skips the
    *  confirmation gate). */
+  /** Publish-to-portal commit. Sets the two new columns AND flips
+   *  status to 'sent' so the existing cascade (syncEnquiryFromProposal)
+   *  moves the deal into Responded. expires_at is the enquiry's
+   *  check_in — after that date the agent-portal-read edge function
+   *  silently drops the proposal from the agent's My Enquiries tab.
+   *  Fail-loud toast on any error; no partial commits to clean up. */
+  async function performPublishToPortal(p: ProposalRow, deal: Deal) {
+    if (publishing) return;
+    setPublishing(true);
+    try {
+      const expires = deal.check_in ?? deal.enquiry?.check_in ?? null;
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase
+        .from('proposals')
+        .update({
+          published_to_agent_at: nowIso,
+          published_to_agent_expires: expires,
+          status: 'sent',
+          sent_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq('id', p.id);
+      if (error) throw error;
+      // Cascade the enquiry's deal_status to 'sent' (Responded col).
+      await syncEnquiryFromProposal(supabase, p.id, 'sent');
+      notifyPipelineChanged();
+      toast.success(`Published to ${titleCase(deal.client_name)}'s portal`);
+      // Snap back to the kanban so the user SEES the card move
+      // into Responded — same pattern as Mark Sent + Accept. Close
+      // every dialog, refetch the board, then deep-link with
+      // highlight=1 so the card flashes in its new column.
+      const enquiryId = deal.enquiry?.id ?? null;
+      setPendingPublish(null);
+      setOpenProposal(null);
+      setOpenDeal(null);
+      await fetchDeals();
+      if (enquiryId) {
+        navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
+      }
+    } catch (err: any) {
+      console.error('performPublishToPortal failed:', err);
+      toast.error('Failed to publish: ' + (err?.message || String(err)));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function applyProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
     const patch: any = { status: outcome, updated_at: new Date().toISOString() };
     if (outcome === 'accepted') {
@@ -1257,7 +1319,7 @@ export default function PipelinePage() {
                     type="button"
                     className={`view-toggle-btn ${typeFilter === opt.key ? 'active' : ''}`}
                     onClick={() => !isPlatformEmpty && setTypeFilter(opt.key)}
-                    title={isPlatformEmpty ? 'Platform (Airbnb / Booking) — coming soon' : opt.label}
+                    title={isPlatformEmpty ? 'Platform (Airbnb / VRBO) — coming soon' : opt.label}
                     disabled={isPlatformEmpty}
                     style={isPlatformEmpty ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
                   >
@@ -1376,6 +1438,7 @@ export default function PipelinePage() {
           }}
           onSendProposal={(p) => setSendingProposals([hydrateProposalContact(p)])}
           onSendDrafts={(drafts) => setSendingProposals(drafts.map(hydrateProposalContact))}
+          onPublishProposal={(p) => setPendingPublish({ proposal: p, deal: openDeal.deal })}
           onMarkProposalOutcome={(p, outcome) => {
             if (outcome === 'interested') {
               // Interested is a status-flip with no cascade, so use the
@@ -1598,6 +1661,59 @@ export default function PipelinePage() {
           } : undefined}
         />
       )}
+
+      {/* Publish-to-portal confirmation. Surfaces who'll see the
+          proposal (the agent name) + the expiry date + the side-
+          effect (marks Sent → card moves to Responded). Single
+          primary action commits the UPDATE + cascade. */}
+      {pendingPublish && (() => {
+        const { proposal, deal } = pendingPublish;
+        const agentName = titleCase(deal.client_name) || 'the agent';
+        const expiresOn = deal.check_in || deal.enquiry?.check_in || null;
+        return (
+          <ActionModal
+            title="Publish this proposal to the agent's portal?"
+            subtitle={
+              <>
+                {titleCase(proposal.property_name)}
+                {' '}
+                <span style={{ fontFamily: 'monospace', color: 'var(--text-light)' }}>
+                  · {proposal.ref_code}
+                </span>
+              </>
+            }
+            width={460}
+            onClose={() => { if (!publishing) setPendingPublish(null); }}
+            primaryAction={
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={publishing}
+                onClick={() => performPublishToPortal(proposal, deal)}
+              >
+                {publishing ? 'Publishing…' : '📢 Yes, publish'}
+              </button>
+            }
+          >
+            <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.5 }}>
+              <strong>{agentName}</strong> will see this proposal on their <em>My Enquiries</em> tab on the agent portal
+              {expiresOn ? <> until <strong>{expiresOn}</strong> (the guest's check-in date)</> : null}.
+            </p>
+            <p style={{
+              margin: '12px 0 0',
+              fontSize: '0.8125rem',
+              lineHeight: 1.5,
+              color: 'var(--text-secondary)',
+              padding: '8px 10px',
+              borderRadius: 6,
+              background: 'var(--surface-muted, #F3F4F6)',
+            }}>
+              Publishing also marks the proposal as <strong>Sent</strong>, so the deal moves to the <strong>Responded</strong> column.
+              You can still share it by email / WhatsApp using the ✉ Send button.
+            </p>
+          </ActionModal>
+        );
+      })()}
 
       {/* Accept blocker — when the user clicks Accept on an agent
           enquiry with no disclosed guest, surface a clear "why not"
@@ -1888,11 +2004,17 @@ const InboxRow = memo(InboxRowImpl, (prev, next) =>
 
 function InboxRowImpl({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: Deal) => void; highlighted?: boolean }) {
   const e = deal.enquiry;
+  // Title-case → UPPER-case formatter for the card headline. Same
+  // rationale as DealCardImpl.headlineCase: cards live alongside
+  // ref codes (AAK/1, AHH/3) so the guest name reads as an equally
+  // stable identifier when in scanning context. Detail surfaces
+  // outside the card keep titleCase via the existing helper.
+  const headlineCase = (s: string | null | undefined): string => (s || '').trim().toUpperCase();
   // Agent rows: disclosed guest name wins > subject. Direct rows
   // just use the recipient (who IS the guest).
   const subject = deal.is_agent
-    ? (e?.guest_name?.trim() ? titleCase(e.guest_name) : e?.subject?.trim() || '')
-    : titleCase(deal.client_name);
+    ? (e?.guest_name?.trim() ? headlineCase(e.guest_name) : e?.subject?.trim() || '')
+    : headlineCase(deal.client_name);
   const notesPreview = e?.notes?.trim() || null;
   const dateRange = (deal.check_in && deal.check_out)
     ? `${fmtDate(deal.check_in)} → ${fmtDate(deal.check_out)}`
@@ -2031,26 +2153,35 @@ function DealCardImpl({
     if (proposalCount === 1) return titleCase(deal.proposals[0].property_name);
     return `${proposalCount} properties`;
   })();
+  // Card-headline formatter for guest names: uppercase so they sit
+  // alongside the ref codes (AAK/1, AHH/3) as equally-stable
+  // identifiers. Only applied on the card headline — every other
+  // surface (detail modals, expanded views, breadcrumbs) keeps
+  // titleCase so the name reads naturally outside the scanning
+  // context. Trims defensively; empty input falls through to the
+  // ref-code / property-summary fallbacks below.
+  const headlineCase = (s: string | null | undefined): string => (s || '').trim().toUpperCase();
+
   // Agent-deal headline priority (per the New Enquiry form's
   // identifier toggle): disclosed guest name wins > subject >
   // property+dates legacy fallback. Direct deals always use the
   // recipient name because they have no agent intermediary.
   const agentGuestHeadline = deal.is_agent
-    ? (deal.enquiry?.guest_name?.trim() ? titleCase(deal.enquiry.guest_name) : null)
+    ? (deal.enquiry?.guest_name?.trim() ? headlineCase(deal.enquiry.guest_name) : null)
     : null;
   const subjectHeadline = deal.is_agent
     ? (deal.enquiry?.subject?.trim() || null)
     : null;
   const headline = agentGuestHeadline ?? subjectHeadline ?? (
     !deal.is_agent
-      ? titleCase(deal.client_name)
+      ? headlineCase(deal.client_name)
       : (
           // Pre-identifier legacy rows: property + dates > property
           // > dates > agent name (last-resort).
           (propertySummary && dateRange) ? `${propertySummary} · ${dateRange}` :
           propertySummary ? propertySummary :
           dateRange ? dateRange :
-          titleCase(deal.client_name)
+          headlineCase(deal.client_name)
         )
   );
   // Guest sub-line — only meaningful for agent deals. Direct deals'
@@ -2296,30 +2427,43 @@ const INITIALS_COLOURS: Record<string, { bg: string; fg: string }> = {
 };
 
 function CreatorInitialsPill({ initials }: { initials: string }) {
-  const colour = INITIALS_COLOURS[initials] ?? {
-    bg: 'var(--surface-muted, #F3F4F6)',
-    fg: 'var(--text-secondary, #6B7280)',
-  };
+  // Comma-separated values mean the card is owned by multiple team
+  // members — used today by agent-portal-created enquiries which
+  // auto-assign to NT + HH. Render each as its own coloured pill
+  // (slightly tighter spacing) so the team can see who's
+  // responsible at a glance without us having to invent a "TEAM"
+  // catch-all colour.
+  const list = initials.split(',').map(s => s.trim()).filter(Boolean);
+  if (list.length === 0) return null;
   return (
-    <span
-      title={`Captured by ${initials}`}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: 22,
-        height: 18,
-        padding: '0 5px',
-        borderRadius: 9,
-        background: colour.bg,
-        color: colour.fg,
-        fontSize: '0.6875rem',
-        fontWeight: 700,
-        letterSpacing: '0.02em',
-        flexShrink: 0,
-      }}
-    >
-      {initials}
+    <span style={{ display: 'inline-flex', gap: 3, flexShrink: 0 }} title={`Assigned to ${list.join(' + ')}`}>
+      {list.map(i => {
+        const colour = INITIALS_COLOURS[i] ?? {
+          bg: 'var(--surface-muted, #F3F4F6)',
+          fg: 'var(--text-secondary, #6B7280)',
+        };
+        return (
+          <span
+            key={i}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minWidth: 22,
+              height: 18,
+              padding: '0 5px',
+              borderRadius: 9,
+              background: colour.bg,
+              color: colour.fg,
+              fontSize: '0.6875rem',
+              fontWeight: 700,
+              letterSpacing: '0.02em',
+            }}
+          >
+            {i}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -2496,6 +2640,7 @@ function ProposalRowInline({
   proposal,
   onOpen,
   onSend,
+  onPublish,
   onMarkOutcome,
   onEditPricing,
   onDelete,
@@ -2504,6 +2649,11 @@ function ProposalRowInline({
   proposal: ProposalRow;
   onOpen: () => void;
   onSend: () => void;
+  /** Publish to the agent's portal — only set for agent enquiries
+   *  (the team can still ALSO click Send to email / WhatsApp the
+   *  same proposal). Undefined = no publish action for this
+   *  proposal type (direct, platform). */
+  onPublish?: () => void;
   onMarkOutcome: (outcome: 'accepted' | 'declined' | 'interested') => void;
   /** Opens the full PricingModal pre-filled with this proposal's snapshot
    *  so the user can adjust daily rate + per-night total without
@@ -2590,13 +2740,29 @@ function ProposalRowInline({
             ✎ Edit pricing
           </button>
         )}
+        {isDraft && onPublish && (
+          // Agent-enquiry only — publishes the proposal to the
+          // agent's /q/:token portal until check_in passes. Also
+          // marks the proposal Sent (parent confirmation modal
+          // explains). Sits BEFORE Send in the row so the most
+          // common agent-flow action reads left-to-right.
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+            onClick={stop(onPublish)}
+            title="Publish this proposal to the agent's portal — they'll see it on their My Enquiries tab"
+          >
+            📢 Publish
+          </button>
+        )}
         {isDraft && (
           <button
             type="button"
             className="btn btn-primary"
             style={{ fontSize: '0.75rem', padding: '4px 10px' }}
             onClick={stop(onSend)}
-            title="Send this proposal"
+            title="Send this proposal via email or WhatsApp"
           >
             ✉ Send
           </button>
@@ -2653,7 +2819,7 @@ function ProposalRowInline({
 function DealDetailModal({
   deal, initialMode = 'view', focusField = null, onClose, onQuote,
   onUpdateStatus, onUpdateProposalOutcome, onSetStage,
-  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing,
+  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
@@ -2682,6 +2848,11 @@ function DealDetailModal({
    *  snapshot. Avoids the two-click "open proposal detail → click
    *  Edit Pricing" detour for what's usually a quick rate tweak. */
   onEditProposalPricing: (p: ProposalRow) => void;
+  /** Publish the proposal to the agent's /q/:token portal. Only
+   *  wired for agent enquiries on the parent — passed through to
+   *  ProposalRowInline which renders the button only when this
+   *  prop is set AND the proposal is in a draft state. */
+  onPublishProposal: (p: ProposalRow) => void;
 }) {
   const { supabase } = useAuth();
   const toast = useToast();
@@ -3531,6 +3702,10 @@ function DealDetailModal({
                       proposal={p}
                       onOpen={() => onOpenProposal(p)}
                       onSend={() => onSendProposal(p)}
+                      // Publish is agent-only — for direct / platform
+                      // deals we leave it undefined so the button
+                      // doesn't render at all.
+                      onPublish={deal.is_agent ? () => onPublishProposal(p) : undefined}
                       onMarkOutcome={(outcome) => onMarkProposalOutcome(p, outcome)}
                       onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
                       onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}

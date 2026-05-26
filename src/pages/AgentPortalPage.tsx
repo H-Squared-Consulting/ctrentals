@@ -129,6 +129,10 @@ export default function AgentPortalPage() {
             if (picked.length === 0) return;
             setEnquiringForProperties(picked);
           }}
+          // General-enquiry path — opens the same modal with an
+          // empty properties array. Useful when the agent has dates
+          // and a brief but doesn't know which houses to ask about.
+          onGeneralEnquire={() => setEnquiringForProperties([])}
         />
       )}
       {tab === 'enquiries' && <EnquiriesTab enquiries={enquiries} />}
@@ -276,13 +280,17 @@ function ContactCard({ name, role, whatsappE164, whatsappDisplay, email }: {
 // ── Properties tab ──────────────────────────────────────────────────
 
 function PropertiesTab({
-  properties, selectedIds, onToggle, onClear, onEnquire,
+  properties, selectedIds, onToggle, onClear, onEnquire, onGeneralEnquire,
 }: {
   properties: AgentProperty[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onClear: () => void;
   onEnquire: () => void;
+  /** "I don't have specific houses in mind" path — opens the same
+   *  modal with zero properties so the team handles the property
+   *  match on their side. */
+  onGeneralEnquire: () => void;
 }) {
   if (properties.length === 0) {
     return (
@@ -302,7 +310,7 @@ function PropertiesTab({
       <div style={selectionBarStyle}>
         <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>
           {selectedCount === 0
-            ? <span style={{ color: 'var(--text-secondary)' }}>Tick the properties you want quoted, then send one enquiry covering all of them.</span>
+            ? <span style={{ color: 'var(--text-secondary)' }}>Tick the properties you want quoted — or send a general enquiry if you don't have specific houses in mind.</span>
             : <><strong>{selectedCount}</strong> propert{selectedCount === 1 ? 'y' : 'ies'} selected</>}
         </div>
         <div style={{ display: 'flex', gap: 'var(--s-2)', alignItems: 'center' }}>
@@ -316,19 +324,30 @@ function PropertiesTab({
               Clear
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={selectedCount === 0}
-            onClick={onEnquire}
-            title={selectedCount === 0 ? 'Tick at least one property first' : `Send an enquiry covering ${selectedCount} propert${selectedCount === 1 ? 'y' : 'ies'}`}
-          >
-            {selectedCount === 0
-              ? '+ Enquire'
-              : selectedCount === 1
+          {selectedCount === 0 ? (
+            // No tick → only the general-enquiry path is available.
+            // We swap the disabled "+ Enquire" placeholder for an
+            // active CTA so the agent always has a way forward.
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onGeneralEnquire}
+              title="Submit an enquiry without naming specific houses — Southern Escapes will suggest matches"
+            >
+              + General enquiry
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onEnquire}
+              title={`Send an enquiry covering ${selectedCount} propert${selectedCount === 1 ? 'y' : 'ies'}`}
+            >
+              {selectedCount === 1
                 ? '+ Enquire about this property'
                 : `+ Enquire about ${selectedCount} properties →`}
-          </button>
+            </button>
+          )}
         </div>
       </div>
       <div className="property-grid">
@@ -456,22 +475,43 @@ function EnquiriesTab({ enquiries }: { enquiries: AgentEnquiry[] }) {
   );
 }
 
+/** Lifecycle states that mean "this proposal is no longer open for
+ *  the agent to share" — accepted/booked locks the live URL because
+ *  the booking is confirmed; declined/cancelled/expired locks it
+ *  because the deal is closed. In any of those states the portal
+ *  renders a read-only summary modal instead of a click-through link. */
+const TERMINAL_PROPOSAL_STATUSES = new Set([
+  'accepted', 'booked', 'declined', 'cancelled', 'expired', 'archived',
+]);
+
+type PublishedProposal = AgentEnquiry['publishedProposals'][number];
+
 function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
   // Expand-to-show-details. Click the row body to toggle. Status
   // pill + View proposal link have stopPropagation so they don't
   // also toggle when clicked.
   const [open, setOpen] = useState(false);
+  /** Read-only overview modal for terminal-state proposals. */
+  const [summaryProposal, setSummaryProposal] = useState<PublishedProposal | null>(null);
+  // Defensive defaults — the edge function might not yet be on the
+  // latest deploy, in which case these new arrays come back as
+  // undefined. Reading .length on undefined would kill the React
+  // tree and crash the tab (blank screen / bounce back to
+  // Properties). Treating them as [] keeps the row rendering with
+  // graceful empty states until the function ships.
+  const requestedProperties = enquiry.requestedProperties ?? [];
+  const publishedProposals = enquiry.publishedProposals ?? [];
   // Title priority: agent's own reference > legacy guest name >
   // first property name > "Untitled" (shouldn't happen post-migration).
   const title = enquiry.agentReference?.trim()
     || titleCase(enquiry.guestName)
-    || (enquiry.requestedProperties[0] && titleCase(enquiry.requestedProperties[0].name))
+    || (requestedProperties[0] && titleCase(requestedProperties[0].name))
     || 'Untitled enquiry';
-  const propCount = enquiry.requestedProperties.length;
+  const propCount = requestedProperties.length;
   const propSummary = propCount === 0
     ? '—'
     : propCount === 1
-      ? titleCase(enquiry.requestedProperties[0].name)
+      ? titleCase(requestedProperties[0].name)
       : `${propCount} properties`;
 
   return (
@@ -500,16 +540,23 @@ function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
           <span className="ops-status-pill-dot" />
           {statusLabel(enquiry.status)}
         </span>
-        {enquiry.proposalShareUrl && (
-          <a
-            className="btn btn-ghost"
-            href={enquiry.proposalShareUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
+        {/* Surface a count badge in the row header when any proposals
+            have been published. Tapping the row expands the body
+            which renders the per-proposal "View proposal" links. */}
+        {publishedProposals.length > 0 && (
+          <span
+            style={{
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: 'var(--color-primary)',
+              background: 'var(--color-primary-bg)',
+              padding: '2px 8px',
+              borderRadius: 999,
+            }}
+            title={`${publishedProposals.length} proposal${publishedProposals.length === 1 ? '' : 's'} from Southern Escapes`}
           >
-            View proposal
-          </a>
+            {publishedProposals.length} proposal{publishedProposals.length === 1 ? '' : 's'}
+          </span>
         )}
         <span style={{
           fontSize: '0.75rem',
@@ -524,11 +571,29 @@ function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
         // what they submitted without leaving the list. No edit
         // surface here; changes need to go through Southern Escapes.
         <div style={enquiryExpandedStyle}>
+          {/* Published proposals first when they exist — that's
+              the thing the agent actually came here for. Each row
+              is the property name + a "View proposal" link that
+              opens the public /proposal.html page. */}
+          {publishedProposals.length > 0 && (
+            <div style={{ marginBottom: 'var(--s-4)' }}>
+              <div style={enquiryExpandedLabelStyle}>Proposals from Southern Escapes</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {publishedProposals.map(p => (
+                  <PublishedProposalRow
+                    key={p.refCode}
+                    proposal={p}
+                    onSummary={() => setSummaryProposal(p)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           {propCount > 0 && (
             <div style={{ marginBottom: 'var(--s-3)' }}>
               <div style={enquiryExpandedLabelStyle}>Properties enquired about</div>
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.875rem', color: 'var(--text)' }}>
-                {enquiry.requestedProperties.map((p, i) => (
+                {requestedProperties.map((p, i) => (
                   <li key={p.slug || `${p.name}-${i}`} style={{ marginBottom: 2 }}>
                     {titleCase(p.name)}
                   </li>
@@ -553,6 +618,218 @@ function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
           )}
         </div>
       )}
+      {summaryProposal && (
+        <ProposalSummaryModal
+          proposal={summaryProposal}
+          onClose={() => setSummaryProposal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A single published-proposal row inside the expanded enquiry body.
+ *  Splits the trailing action by the proposal's lifecycle:
+ *    - terminal (accepted/booked/etc.) → "View summary" → modal
+ *    - active   (sent/viewed)          → "View proposal →" → live link
+ *  Same visual chrome either way; the difference is what clicking
+ *  does. Locking the live URL once accepted/booked stops the agent
+ *  from re-sharing a stale link after the booking has been confirmed.
+ */
+function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProposal; onSummary: () => void }) {
+  const isTerminal = TERMINAL_PROPOSAL_STATUSES.has(proposal.status);
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 10px',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        gap: 'var(--s-3)',
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text)' }}>
+          {titleCase(proposal.propertyName) || 'Proposal'}
+        </div>
+        <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', fontFamily: 'monospace' }}>
+          {proposal.refCode}
+          {/* Expiry is only meaningful while the proposal is still
+              an offer the agent can act on. Once it's terminal
+              (booked / accepted / declined / cancelled / expired)
+              the date is misleading — the proposal has been
+              resolved, not "expiring". */}
+          {!isTerminal && proposal.expiresOn ? <> · expires {proposal.expiresOn}</> : null}
+        </div>
+      </div>
+      {isTerminal ? (
+        <button
+          type="button"
+          className="btn btn-outline"
+          style={{ fontSize: '0.8125rem' }}
+          onClick={(e) => { e.stopPropagation(); onSummary(); }}
+          title="Booking is confirmed — open the read-only summary"
+        >
+          View summary
+        </button>
+      ) : (
+        <a
+          className="btn btn-primary"
+          style={{ fontSize: '0.8125rem' }}
+          href={`/proposal.html?ref=${encodeURIComponent(proposal.refCode)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          View proposal →
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** Read-only summary modal for terminal-state proposals (booked /
+ *  accepted / declined / cancelled / expired). Mirrors the level of
+ *  detail the live proposal page would surface — property, ref,
+ *  status, dates, per-night + per-stay totals — but with no edit
+ *  affordances and no "open in new tab" hook out to the live page. */
+function ProposalSummaryModal({ proposal, onClose }: { proposal: PublishedProposal; onClose: () => void }) {
+  const nights = (proposal.checkIn && proposal.checkOut)
+    ? Math.round((new Date(proposal.checkOut).getTime() - new Date(proposal.checkIn).getTime()) / 86_400_000)
+    : null;
+  const total = (proposal.guestPrice != null && nights != null && nights > 0)
+    ? proposal.guestPrice * nights
+    : null;
+  const statusLabelText = (() => {
+    switch (proposal.status) {
+      case 'accepted':  return 'Accepted';
+      case 'booked':    return 'Booked';
+      case 'declined':  return 'Declined';
+      case 'cancelled': return 'Cancelled';
+      case 'expired':   return 'Expired';
+      case 'archived':  return 'Archived';
+      default:          return proposal.status || 'Closed';
+    }
+  })();
+  const isWon = proposal.status === 'accepted' || proposal.status === 'booked';
+
+  // Render a vanilla overlay rather than pulling in ActionModal so
+  // the bundle stays tiny for the public portal. Click outside or
+  // press Escape to close.
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 'var(--s-4)',
+      }}
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--radius)',
+          boxShadow: 'var(--shadow-lg, 0 20px 60px rgba(0,0,0,0.25))',
+          maxWidth: 480, width: '100%',
+          padding: 'var(--s-5) var(--s-5) var(--s-4)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--s-3)' }}>
+          <div>
+            <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+              Proposal summary
+            </div>
+            <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text)' }}>
+              {titleCase(proposal.propertyName) || 'Proposal'}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', fontFamily: 'monospace', marginTop: 2 }}>
+              {proposal.refCode}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: '1.25rem', color: 'var(--text-secondary)', padding: 4,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr',
+          gap: 'var(--s-3)', marginTop: 'var(--s-3)',
+        }}>
+          <div>
+            <div style={enquiryExpandedLabelStyle}>Status</div>
+            <div style={{
+              display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+              fontSize: '0.75rem', fontWeight: 600,
+              background: isWon ? 'var(--success-bg, #D1FAE5)' : 'var(--bg)',
+              color: isWon ? 'var(--success, #065F46)' : 'var(--text-secondary)',
+            }}>
+              {statusLabelText}
+            </div>
+          </div>
+          <div>
+            <div style={enquiryExpandedLabelStyle}>Dates</div>
+            <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>
+              {proposal.checkIn || '—'} → {proposal.checkOut || '—'}
+              {nights ? <span style={{ color: 'var(--text-light)' }}> · {nights}n</span> : null}
+            </div>
+          </div>
+        </div>
+
+        {proposal.guestPrice != null && (
+          <div style={{ marginTop: 'var(--s-4)' }}>
+            <div style={enquiryExpandedLabelStyle}>Pricing</div>
+            <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text)' }}>
+              ZAR {Math.round(proposal.guestPrice).toLocaleString('en-ZA')}
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-light)', fontWeight: 400 }}> / night</span>
+            </div>
+            {total != null && (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                Total: ZAR {Math.round(total).toLocaleString('en-ZA')} for {nights} night{nights === 1 ? '' : 's'}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{
+          marginTop: 'var(--s-4)',
+          padding: 'var(--s-3)',
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.8125rem',
+          color: 'var(--text-secondary)',
+          lineHeight: 1.5,
+        }}>
+          {isWon
+            ? <>This booking is confirmed. For any changes, please contact Southern Escapes directly.</>
+            : <>This proposal is closed. The live link is no longer available — contact Southern Escapes if you'd like to revisit it.</>}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--s-4)' }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

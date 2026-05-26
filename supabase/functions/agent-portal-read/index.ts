@@ -154,6 +154,78 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Published proposals for these enquiries — agent-visible only
+  // while the publish hasn't expired (expiry = enquiry's check-in,
+  // set by the team at publish time). One round-trip across every
+  // enquiry; the array is empty for legacy / unpublished cases.
+  const enqIds = (enqRows || []).map((e: any) => e.id).filter(Boolean);
+  const todayIso = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const publishedByEnquiry: Record<string, Array<{
+    refCode: string;
+    propertyName: string;
+    publishedAt: string;
+    expiresOn: string | null;
+    /** Lifecycle status — drives whether the portal renders an
+     *  active "View proposal →" link (drafting/sent/viewed/etc.)
+     *  or a read-only "View summary" modal (accepted/booked/
+     *  declined/cancelled). Once accepted/booked we lock the
+     *  proposal page so the agent can't keep sharing the live
+     *  link after the booking's been confirmed. */
+    status: string;
+    /** Snapshot fields for the summary modal — guest_price (per
+     *  night) + check-in/out so the portal can render an overview
+     *  without needing to hit the public proposal page. */
+    guestPrice: number | null;
+    checkIn: string | null;
+    checkOut: string | null;
+  }>> = {};
+  if (enqIds.length > 0) {
+    const { data: pubRows, error: pubErr } = await admin
+      .from('proposals')
+      .select('id, ref_code, enquiry_id, property_id, status, check_in, check_out, published_to_agent_at, published_to_agent_expires, pricing_proposals(client_price_excl_vat)')
+      .in('enquiry_id', enqIds)
+      .not('published_to_agent_at', 'is', null)
+      .gte('published_to_agent_expires', todayIso)
+      .order('published_to_agent_at', { ascending: false });
+    if (pubErr) {
+      console.warn('published proposals lookup failed (non-fatal):', pubErr);
+    }
+    // Also resolve any property names we don't already have cached.
+    const extraPropertyIds = (pubRows || [])
+      .map((p: any) => p.property_id)
+      .filter((id: string) => id && !propertyNameById[id]);
+    if (extraPropertyIds.length > 0) {
+      const { data: extraNames } = await admin
+        .from('partner_properties')
+        .select('id, property_name, slug')
+        .in('id', extraPropertyIds);
+      for (const r of (extraNames || []) as any[]) {
+        propertyNameById[r.id] = { name: r.property_name || '', slug: r.slug || '' };
+      }
+    }
+    for (const p of (pubRows || []) as any[]) {
+      if (!p.enquiry_id) continue;
+      const prop = p.property_id ? propertyNameById[p.property_id] : undefined;
+      // pricing_proposals join returns either an object (single
+      // FK) or null. Pull client_price_excl_vat for the per-night
+      // figure surfaced on the summary modal.
+      const pricingJoin = p.pricing_proposals;
+      const guestPrice = pricingJoin && typeof pricingJoin === 'object'
+        ? (Number(pricingJoin.client_price_excl_vat) || null)
+        : null;
+      (publishedByEnquiry[p.enquiry_id] ||= []).push({
+        refCode: p.ref_code || '',
+        propertyName: prop?.name || '',
+        publishedAt: p.published_to_agent_at || '',
+        expiresOn: p.published_to_agent_expires || null,
+        status: p.status || '',
+        guestPrice,
+        checkIn: p.check_in || null,
+        checkOut: p.check_out || null,
+      });
+    }
+  }
+
   const enquiries = (enqRows || []).map((e: any) => {
     const legacyProp = e.property_id ? propertyNameById[e.property_id] : undefined;
     // Resolve the multi-property list to display names; fall back
@@ -172,6 +244,12 @@ Deno.serve(async (req) => {
       propertyName: legacyProp?.name || '',
       propertySlug: legacyProp?.slug || '',
       requestedProperties,
+      // Proposals the team has explicitly published to this agent
+      // (status flipped to Sent + published_to_agent_* set). Empty
+      // array when no published-and-unexpired proposals exist; the
+      // portal renders an "awaiting response" placeholder in that
+      // case.
+      publishedProposals: publishedByEnquiry[e.id] || [],
       checkIn: e.check_in,
       checkOut: e.check_out,
       status: mapDealStatus(e.deal_status),
