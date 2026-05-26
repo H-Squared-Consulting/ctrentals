@@ -2960,6 +2960,19 @@ button.ops-board-card-tag--clickable:active {
   border-color: var(--color-primary);
   background: var(--color-primary-pale, #F3F6FB);
 }
+/* Occupied days don't accept gap clicks — the event bar handles its own
+   click. Drop the pointer affordance so the user doesn't expect a tile
+   to be interactive when it would just duplicate-clash. */
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked {
+  cursor: default;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked:hover {
+  border-color: var(--border-light);
+  background: #fff;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked.bookings-calendar-day--muted:hover {
+  background: var(--bg);
+}
 .bookings-calendar-event {
   position: absolute;
   height: 20px;

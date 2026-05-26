@@ -1387,16 +1387,21 @@ function BookingsCalendar({
                 const k = toDateStr(d);
                 const inMonth = d.getMonth() === month.getMonth();
                 const isToday = k === todayKey;
-                const isAvailable = inMonth && selectedPropertyId !== '' && !occupiedDays.has(k);
+                const isOccupied = occupiedDays.has(k);
+                const isAvailable = inMonth && selectedPropertyId !== '' && !isOccupied;
+                // Only available in-month days take a click — occupied days
+                // already have a booking/block, so opening the chooser there
+                // would just lead to a duplicate-clash error. The bar itself
+                // is the click target for opening the existing event.
+                const dayClickable = isAvailable;
                 return (
                   <div
                     key={k}
-                    className={`bookings-calendar-day${inMonth ? '' : ' bookings-calendar-day--muted'}${isToday ? ' bookings-calendar-day--today' : ''}${isAvailable ? ' bookings-calendar-day--available' : ''}`}
-                    onClick={() => {
-                      if (!selectedPropertyId) return;
-                      onGapClick(selectedPropertyId, k, toDateStr(addDays(d, 1)));
-                    }}
-                    title={selectedPropertyId ? `Click to book / block on ${fmtFull(d)}` : undefined}
+                    className={`bookings-calendar-day${inMonth ? '' : ' bookings-calendar-day--muted'}${isToday ? ' bookings-calendar-day--today' : ''}${isAvailable ? ' bookings-calendar-day--available' : ''}${dayClickable ? '' : ' bookings-calendar-day--locked'}`}
+                    onClick={dayClickable
+                      ? () => onGapClick(selectedPropertyId, k, toDateStr(addDays(d, 1)))
+                      : undefined}
+                    title={dayClickable ? `Click to book / block on ${fmtFull(d)}` : undefined}
                   >
                     <div className="bookings-calendar-daynum">{d.getDate()}</div>
                     {isAvailable && <span className="bookings-calendar-available-pill">Available</span>}

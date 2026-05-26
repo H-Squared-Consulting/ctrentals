@@ -22,6 +22,7 @@ import { useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
+import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -108,6 +109,24 @@ export default function BlockModal({
 
     setSaving(true);
     try {
+      // Refuse to create a block that overlaps an existing booking or
+      // block on the same property — the calendar treats both kinds as
+      // "occupied", so silently double-booking would let the dashboard
+      // lie about availability.
+      const conflict = await findBookingConflict({
+        supabase,
+        partnerId,
+        propertyId: form.property_id,
+        checkIn: form.check_in,
+        checkOut: form.check_out,
+        excludeId: block.id,
+      });
+      if (conflict) {
+        toast.error(`Dates clash with ${describeConflict(conflict)}`);
+        setSaving(false);
+        return;
+      }
+
       // bookings rows with kind='block' reuse the schema — guest /
       // payment / platform columns are null. We mirror the reason
       // label into guest_name so the calendar bar's existing label
