@@ -286,6 +286,41 @@ function BreakdownRows({
   );
 }
 
+/** One Negotiate figure. The driver renders as an accented, formatted input;
+ *  the rest render as plain tappable results. */
+function MoneyCell({
+  isDriver, text, derived, disabled, onActivate, onText,
+}: {
+  isDriver: boolean;
+  text: string;
+  derived: number;
+  disabled?: boolean;
+  onActivate: () => void;
+  onText: (digits: string) => void;
+}) {
+  if (disabled) return <span className="pricing-deal-cell pricing-deal-cell--off">—</span>;
+  if (isDriver) {
+    const shown = text === '' ? '' : Number(text).toLocaleString('en-ZA');
+    return (
+      <span className="pricing-deal-cell pricing-deal-cell--driver">
+        <span className="pricing-deal-cell-r">R</span>
+        <input
+          autoFocus
+          inputMode="numeric"
+          className="pricing-deal-cell-input"
+          value={shown}
+          onChange={(e) => onText(e.target.value.replace(/\D/g, ''))}
+        />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="pricing-deal-cell pricing-deal-cell--calc" onClick={onActivate}>
+      {fmtRand(derived)}
+    </button>
+  );
+}
+
 export default function PricingDashboard({
   property,
   supabase,
@@ -343,11 +378,21 @@ export default function PricingDashboard({
    *  Avoids the "why is the negotiate field pre-filled with the same
    *  number as the default?" confusion. */
   const wasNegotiated = hydrate?.reduced_baseline != null || hydrate?.reduced_commission_pct != null;
-  const [targetGuest, setTargetGuest] = useState(
+  // Negotiation driver: which of the four figures the user is setting
+  // (guest/owner × daily/stay) and its raw digits. null = nothing pinned, so
+  // the Negotiate rows sit on the baseline until a cell is tapped.
+  const [negField, setNegField] = useState<'gn' | 'gt' | 'on' | 'ot' | null>(
+    wasNegotiated && hydrate?.client_price_excl_vat != null ? 'gn' : null,
+  );
+  const [negText, setNegText] = useState(
     wasNegotiated && hydrate?.client_price_excl_vat != null
       ? String(Math.round(Number(hydrate.client_price_excl_vat)))
       : '',
   );
+  const [baseDetail, setBaseDetail] = useState(false);
+  const [negDetail, setNegDetail] = useState(false);
+  // Season selector shows only the current season until tapped to switch.
+  const [seasonOpen, setSeasonOpen] = useState(false);
   /** Secondary levers — shave margins to protect owner net at the target.
    *  In edit-mode, pre-fill from the reduced fields if they were used. */
   const [overrideCtr, setOverrideCtr] = useState(
@@ -472,7 +517,24 @@ export default function PricingDashboard({
 
   const effCtrPct = overrideCtr !== '' ? Number(overrideCtr) : defaultCtrPct;
   const effAgentPct = overrideAgent !== '' ? Number(overrideAgent) : defaultAgentPct;
-  const targetGuestNum = targetGuest !== '' ? Number(targetGuest) : null;
+  // Guest↔owner conversion (exact for direct + agent; platform fees sit on
+  // top, so owner-side pinning there is approximate).
+  const negMarginDivisor = 1 - (effCtrPct + effAgentPct) / 100;
+  const negNights = nights && nights > 0 ? nights : 0;
+
+  // Canonical guest per-night, derived from whichever figure is pinned. This
+  // is the single value the engine reverse-solves from, so all four cells and
+  // both sections stay perfectly in step.
+  const targetGuestNum: number | null = (() => {
+    if (negField === null || negText === '') return null;
+    const n = Number(negText);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const nn = negNights || 1;
+    if (negField === 'gn') return n;
+    if (negField === 'gt') return n / nn;
+    if (negField === 'on') return negMarginDivisor > 0 ? n / negMarginDivisor : n;
+    return negMarginDivisor > 0 ? (n / nn) / negMarginDivisor : n / nn; // 'ot'
+  })();
 
   /** Benchmark: default pricing for the chosen channel + season. No
    *  overrides applied. This is the anchor Mom negotiates against. */
@@ -517,7 +579,26 @@ export default function PricingDashboard({
     });
   }, [scenario, baseRate, effCtrPct, effAgentPct, seasonMultiplier, defaultPlatformFeePct, defaultPlatformFixedFee, targetGuestNum]);
 
-  const overridesActive = targetGuest !== '' || overrideCtr !== '' || overrideAgent !== '';
+  const overridesActive = (negField !== null && negText !== '') || overrideCtr !== '' || overrideAgent !== '';
+
+  // The live value for any cell, read off the negotiated breakdown so the
+  // three cells you're not editing always reflect the current result.
+  function negDerived(field: 'gn' | 'gt' | 'on' | 'ot'): number {
+    if (!negotiated) return 0;
+    const cp = negotiated.clientPriceExclVat;
+    const on = negotiated.ownerNet;
+    // Totals round the product (same as the Baseline card) so the two cards
+    // never differ by a rand.
+    if (field === 'gn') return Math.round(cp);
+    if (field === 'gt') return Math.round(cp * negNights);
+    if (field === 'on') return Math.round(on);
+    return Math.round(on * negNights); // 'ot'
+  }
+  // Tap a figure to start driving it, seeded with its current value.
+  function activateNeg(field: 'gn' | 'gt' | 'on' | 'ot') {
+    setNegField(field);
+    setNegText(String(negDerived(field)));
+  }
 
   /** Fixed-mode breakdown. Built directly from the property's stored Guest
    *  + Owner rates (with per-quote overrides), not from the standard
@@ -662,7 +743,10 @@ export default function PricingDashboard({
   }, [scenario, negotiated, selectedAgent, effAgentPct, effCtrPct, selectedSeason, seasonMultiplier, defaultCtrPct, defaultAgentPct, defaultPlatformFeePct, defaultPlatformFixedFee, overrideCtr, overrideAgent, targetGuestNum, baseRate, selectedChannelId, property.id]);
 
   function resetOverrides() {
-    setTargetGuest('');
+    setNegField(null);
+    setNegText('');
+    setBaseDetail(false);
+    setNegDetail(false);
     setOverrideCtr('');
     setOverrideAgent('');
     setFixedGuestOverride('');
@@ -730,14 +814,14 @@ export default function PricingDashboard({
   const agentLabel = selectedAgent ? selectedAgent.name : 'Generic agent';
 
   return (
-    <>
+    <div className="pricing-dash">
       {pricingMode === 'fixed' && (
         <div className="pricing-banner pricing-banner--high" style={{ marginBottom: 12 }}>
           <strong>Fixed pricing.</strong> Guest rate is set by a 3rd party and the owner rate is pre-agreed. The calculator uses the values from Settings → Pricing; override below for this proposal only.
         </div>
       )}
       {/* Context bar — channel pill + season selector */}
-      <div className="detail-modal-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: 0 }}>
+      <div className="detail-modal-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: 16 }}>
         {/* Channel pill. Click to return to State A (channel picker)
             UNLESS the host has locked the scenario — in that case it
             renders as a static badge so the user can't accidentally
@@ -762,21 +846,29 @@ export default function PricingDashboard({
             {channelIcon} {channelLabel} · change
           </button>
         )}
-        <div className="form-group" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label className="form-label" style={{ margin: 0 }}>Season</label>
-          <select className="list-filter-select" value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value as SeasonKey)}>
-            {SEASON_ORDER.map(k => {
-              const row = seasons.find(s => s.key === k);
-              if (!row) return null;
-              return (
-                <option key={k} value={k}>
-                  {row.name} (×{row.multiplier})
-                </option>
-              );
-            })}
-          </select>
-          {seasonOverride != null && (
-            <span className="ops-status-pill ops-status-pill--ready" title={`Per-property override applied for ${selectedSeasonRow?.name}: R${seasonOverride.toLocaleString('en-US')}/night (otherwise auto-suggest would be R${Math.round((baseline?.daily_rate ?? 0) * seasonMultiplier).toLocaleString('en-US')})`}>
+        <div className="pricing-season-chips">
+          {(seasonOpen ? SEASON_ORDER : [selectedSeason]).map(k => {
+            const row = seasons.find(s => s.key === k);
+            if (!row) return null;
+            const isSel = selectedSeason === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                className={`ops-status-pill ops-status-pill--${k} pricing-season-chip${isSel ? ' is-selected' : ''}`}
+                onClick={() => {
+                  if (!seasonOpen) { setSeasonOpen(true); return; }
+                  setSelectedSeason(k);
+                  setSeasonOpen(false);
+                }}
+                title={seasonOpen ? `${row.name} season (×${row.multiplier})` : 'Tap to change season'}
+              >
+                {row.name} ×{row.multiplier}{!seasonOpen ? ' ▾' : ''}
+              </button>
+            );
+          })}
+          {!seasonOpen && seasonOverride != null && (
+            <span className="ops-status-pill ops-status-pill--ready" title={`Per-property override applied for ${selectedSeasonRow?.name}: R${seasonOverride.toLocaleString('en-US')}/night`}>
               <span className="ops-status-pill-dot" />
               Override
             </span>
@@ -880,108 +972,160 @@ export default function PricingDashboard({
       ) : (
       /* System-mode panels (Benchmark + Negotiate) unchanged. */
       <>
-      {/* Benchmark — read-only default for this channel + season */}
-      <div className="detail-modal-section">
-        <div className="detail-modal-section-heading">
-          Default · {channelLabel} · {selectedSeasonRow?.name ?? 'Peak'}
+      {/* Baseline — standard price for this channel + season, read-only */}
+      <div className="detail-modal-section pricing-deal-card pricing-deal-card--baseline">
+        <div className="pricing-deal-head">
+          <span className="pricing-deal-title">Baseline</span>
+          <span className="badge-soft">Standard</span>
         </div>
         {benchmark && (
-          <BreakdownRows
-            scenario={scenario}
-            breakdown={benchmark}
-            ctrPct={defaultCtrPct}
-            agentPct={defaultAgentPct}
-            agentLabel={agentLabel}
-            nights={nights}
-          />
+          <>
+            <div className="pricing-deal-grid">
+              <span />
+              <span className="pricing-deal-col">Daily Rate</span>
+              <span className="pricing-deal-col">Total Stay</span>
+              <span className="pricing-deal-rowlabel">Guest pays</span>
+              <span className="pricing-deal-val">{fmtRand(benchmark.clientPriceExclVat)}</span>
+              <span className="pricing-deal-val">{negNights ? fmtRand(benchmark.clientPriceExclVat * negNights) : '—'}</span>
+              <span className="pricing-deal-rowlabel">Owner gets</span>
+              <span className="pricing-deal-val">{fmtRand(benchmark.ownerNet)}</span>
+              <span className="pricing-deal-val">{negNights ? fmtRand(benchmark.ownerNet * negNights) : '—'}</span>
+            </div>
+            <button type="button" className="pricing-deal-more" onClick={() => setBaseDetail(v => !v)}>
+              {baseDetail ? '▾' : '▸'} Margins &amp; splits
+            </button>
+            {baseDetail && (
+              <div className="pricing-deal-grid pricing-deal-grid--split">
+                <span className="pricing-deal-col">Split</span>
+                <span className="pricing-deal-col">%</span>
+                <span className="pricing-deal-col">Daily</span>
+                <span className="pricing-deal-col">Total</span>
+                <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--ctr" />CTR keeps</span>
+                <span className="pricing-deal-pctcell pricing-deal-pctcell--ro">{defaultCtrPct}%</span>
+                <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(benchmark.ctrTake)}</span>
+                <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(benchmark.ctrTake * negNights) : '—'}</span>
+                {scenario === 'agent' && (
+                  <>
+                    <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--agent" />{agentLabel}</span>
+                    <span className="pricing-deal-pctcell pricing-deal-pctcell--ro">{defaultAgentPct}%</span>
+                    <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(benchmark.agentTake)}</span>
+                    <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(benchmark.agentTake * negNights) : '—'}</span>
+                  </>
+                )}
+                {scenario === 'platform' && benchmark.platformFees > 0 && (
+                  <>
+                    <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--platform" />Platform fee</span>
+                    <span className="pricing-deal-pctcell pricing-deal-pctcell--ro">{activeChannel ? activeChannel.platform_fee_pct : 0}%</span>
+                    <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(benchmark.platformFees)}</span>
+                    <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(benchmark.platformFees * negNights) : '—'}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* Negotiate — editable inputs + live negotiated result with deltas */}
-      <div className="detail-modal-section">
-        <div className="detail-modal-section-heading">Negotiate</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Guest will pay</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              className="form-input"
-              value={targetGuest}
-              onChange={(e) => setTargetGuest(e.target.value)}
-              placeholder={benchmark ? `R ${Math.round(benchmark.clientPriceExclVat).toLocaleString()}` : ''}
-              min={0}
-              step="100"
-            />
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">CTR margin %</label>
-            <input
-              type="number"
-              inputMode="numeric"
-              className="form-input"
-              value={overrideCtr}
-              onChange={(e) => setOverrideCtr(e.target.value)}
-              placeholder={String(defaultCtrPct)}
-              min={0}
-              max={100}
-              step="1"
-            />
-          </div>
-          {scenario === 'agent' && (
-            <>
-              <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label">Agent commission %</label>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  className="form-input"
-                  value={overrideAgent}
-                  onChange={(e) => setOverrideAgent(e.target.value)}
-                  placeholder={String(defaultAgentPct)}
-                  min={0}
-                  max={100}
-                  step="1"
-                />
-              </div>
-              <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label">Specific agent</label>
-                <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
-                  <option value="">Generic agent ({GENERIC_AGENT_PCT}%)</option>
-                  {agents.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.default_commission_pct}%)</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
-          {scenario === 'platform' && channels.length > 0 && (
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Platform</label>
-              <select className="form-input" value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)}>
-                {channels.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.platform_name} ({c.platform_fee_pct}%{c.platform_fixed_fee > 0 ? ` + ${fmtRand(c.platform_fixed_fee)}` : ''})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+      {/* Negotiate — tap any figure to drive it; the rest follow. Applies on Save. */}
+      <div className="detail-modal-section pricing-deal-card pricing-deal-card--active">
+        <div className="pricing-deal-head">
+          <span className="pricing-deal-title">Negotiate</span>
+          <span className="badge-soft">Applies on save</span>
         </div>
-
-        {/* Negotiated result */}
         {negotiated && (
-          <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
-            <BreakdownRows
-              scenario={scenario}
-              breakdown={negotiated}
-              ctrPct={effCtrPct}
-              agentPct={effAgentPct}
-              agentLabel={agentLabel}
-              compareTo={overridesActive ? benchmark : null}
-              nights={nights}
-            />
-          </div>
+          <>
+            <div className="pricing-deal-grid">
+              <span className={`pricing-deal-hint${negField ? ' pricing-deal-hint--active' : ''}`}>
+                {negField
+                  ? `Setting ${negField === 'gn' || negField === 'gt' ? 'guest' : 'owner'} ${negField === 'gn' || negField === 'on' ? 'daily' : 'stay'}`
+                  : 'Tap a figure to set it'}
+              </span>
+              <span className="pricing-deal-col">Daily Rate</span>
+              <span className="pricing-deal-col">Total Stay</span>
+
+              <span className="pricing-deal-rowlabel">Guest pays</span>
+              <MoneyCell isDriver={negField === 'gn'} text={negText} derived={negDerived('gn')}
+                onActivate={() => activateNeg('gn')} onText={setNegText} />
+              <MoneyCell isDriver={negField === 'gt'} text={negText} derived={negDerived('gt')} disabled={!negNights}
+                onActivate={() => activateNeg('gt')} onText={setNegText} />
+
+              <span className="pricing-deal-rowlabel">Owner gets</span>
+              <MoneyCell isDriver={negField === 'on'} text={negText} derived={negDerived('on')}
+                onActivate={() => activateNeg('on')} onText={setNegText} />
+              <MoneyCell isDriver={negField === 'ot'} text={negText} derived={negDerived('ot')} disabled={!negNights}
+                onActivate={() => activateNeg('ot')} onText={setNegText} />
+            </div>
+            <button type="button" className="pricing-deal-more" onClick={() => setNegDetail(v => !v)}>
+              {negDetail ? '▾' : '▸'} Margins &amp; splits
+            </button>
+            {negDetail && (
+              <div className="pricing-deal-detail-pane">
+                <div className="pricing-deal-grid pricing-deal-grid--split">
+                  <span className="pricing-deal-col">Split</span>
+                  <span className="pricing-deal-col">%</span>
+                  <span className="pricing-deal-col">Daily</span>
+                  <span className="pricing-deal-col">Total</span>
+
+                  <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--ctr" />CTR keeps</span>
+                  <span className="pricing-deal-stepper">
+                    <button type="button" className="pricing-deal-stepbtn" onClick={() => setOverrideCtr(String(Math.max(0, effCtrPct - 1)))} aria-label="Lower CTR margin">−</button>
+                    <span className="pricing-deal-stepval">{effCtrPct}%</span>
+                    <button type="button" className="pricing-deal-stepbtn" onClick={() => setOverrideCtr(String(Math.min(100, effCtrPct + 1)))} aria-label="Raise CTR margin">+</button>
+                  </span>
+                  <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(negotiated.ctrTake)}</span>
+                  <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(negotiated.ctrTake * negNights) : '—'}</span>
+
+                  {scenario === 'agent' && (
+                    <>
+                      <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--agent" />{agentLabel}</span>
+                      <span className="pricing-deal-stepper">
+                        <button type="button" className="pricing-deal-stepbtn" onClick={() => setOverrideAgent(String(Math.max(0, effAgentPct - 1)))} aria-label="Lower agent commission">−</button>
+                        <span className="pricing-deal-stepval">{effAgentPct}%</span>
+                        <button type="button" className="pricing-deal-stepbtn" onClick={() => setOverrideAgent(String(Math.min(100, effAgentPct + 1)))} aria-label="Raise agent commission">+</button>
+                      </span>
+                      <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(negotiated.agentTake)}</span>
+                      <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(negotiated.agentTake * negNights) : '—'}</span>
+                    </>
+                  )}
+                  {scenario === 'platform' && negotiated.platformFees > 0 && (
+                    <>
+                      <span className="pricing-deal-rowlabel"><span className="pricing-deal-dot pricing-deal-dot--platform" />Platform fee</span>
+                      <span className="pricing-deal-pctcell pricing-deal-pctcell--ro">{activeChannel ? activeChannel.platform_fee_pct : 0}%</span>
+                      <span className="pricing-deal-val pricing-deal-val--mini">{fmtRand(negotiated.platformFees)}</span>
+                      <span className="pricing-deal-val pricing-deal-val--mini">{negNights ? fmtRand(negotiated.platformFees * negNights) : '—'}</span>
+                    </>
+                  )}
+                </div>
+                {(scenario === 'agent' || (scenario === 'platform' && channels.length > 0)) && (
+                  <div className="pricing-deal-levers">
+                    {scenario === 'agent' && (
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Specific agent</label>
+                        <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
+                          <option value="">Generic agent ({GENERIC_AGENT_PCT}%)</option>
+                          {agents.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} ({a.default_commission_pct}%)</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {scenario === 'platform' && channels.length > 0 && (
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Platform</label>
+                        <select className="form-input" value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)}>
+                          {channels.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.platform_name} ({c.platform_fee_pct}%{c.platform_fixed_fee > 0 ? ` + ${fmtRand(c.platform_fixed_fee)}` : ''})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
       </>
@@ -1010,6 +1154,6 @@ export default function PricingDashboard({
           </button>
         )}
       </div>
-    </>
+    </div>
   );
 }
