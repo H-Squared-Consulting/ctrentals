@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Property Brochure</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
@@ -170,11 +172,18 @@
       '}',
       '.br-hero-content { position: relative; z-index: 1; }',
       '.br-hero-brand {',
-      '  color: var(--gold); font-size: 20px; letter-spacing: 4px; font-weight: 600;',
-      '  text-transform: uppercase; margin-bottom: 16px;',
-      '  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);',
+      '  color: var(--gold); font-size: 22px; letter-spacing: 6px; font-weight: 800;',
+      '  text-transform: uppercase; margin-bottom: 14px; line-height: 1.1;',
+      '  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7), 0 0 2px rgba(0, 0, 0, 0.4);',
       '}',
-      '@media (max-width: 640px) { .br-hero-brand { font-size: 16px; letter-spacing: 3px; } }',
+      /* Logo image variant of the hero brand mark. The source PNG is
+         black-on-transparent; inverted via filter so it reads as white
+         on the dark photo gradient. */
+      '.br-hero-logo {',
+      '  display: block; height: 56px; width: auto; margin: 0 auto 16px;',
+      '  filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,0.5));',
+      '}',
+      '@media (max-width: 640px) { .br-hero-brand { font-size: 18px; letter-spacing: 4px; margin-bottom: 10px; } .br-hero-logo { height: 44px; } }',
       '.br-hero-title {',
       '  color: var(--white); font-size: 38px; line-height: 1.2;',
       '  background: linear-gradient(90deg, var(--white) 0%, var(--white) 40%, var(--gold-light) 50%, var(--white) 60%, var(--white) 100%);',
@@ -393,6 +402,9 @@
 
       /* ── Section 8: FOOTER ── */
       '.br-footer { background: var(--linen); padding: 40px; text-align: center; }',
+      '.br-footer-logo {',
+      '  display: block; height: 64px; width: auto; margin: 0 auto 12px;',
+      '}',
       '.br-footer-brand {',
       '  color: var(--gold); font-size: 13px; letter-spacing: 3px;',
       '  text-transform: uppercase; margin-bottom: 6px;',
@@ -590,6 +602,8 @@
     // Branded variant shows the company label above the property name; the
     // neutral (agent-share) variant keeps the hero clean so nothing on the
     // brochure leaks the company brand to the agent's client.
+    // Hero brand mark stays as the gold "SOUTHERN ESCAPES" wordmark
+    // above the property name. The logo image lives in the footer only.
     if (BRAND_MODE === 'direct') {
       html += '<div class="br-hero-brand">Southern Escapes</div>';
     }
@@ -815,8 +829,7 @@
     // Section 8: FOOTER — branded on the company domain, neutral elsewhere
     html += '<footer class="br-footer">';
     if (BRAND_MODE === 'direct') {
-      html += '<div class="br-footer-brand">Southern Escapes</div>';
-      html += '<div class="br-footer-tagline">Cape Town Holiday Rentals</div>';
+      html += '<img class="br-footer-logo" src="/brochure-assets/se-logo.png" alt="Southern Escapes">';
       html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' Southern Escapes. All rights reserved.</div>';
     } else {
       html += '<div class="br-footer-copy">&copy; ' + new Date().getFullYear() + ' All rights reserved.</div>';
