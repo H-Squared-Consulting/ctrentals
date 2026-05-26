@@ -22,6 +22,7 @@ import { useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
+import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -65,10 +66,15 @@ interface Props {
   user: any;
   partnerId: string;
   initialMode?: 'view' | 'edit';
+  /** Optional live notifier — fires whenever the user changes the
+   *  property dropdown inside the modal. The Calendar view uses it to
+   *  re-anchor its grid to the new house while the user is still
+   *  editing, so the visual context tracks the form. */
+  onPropertyIdChange?: (propertyId: string) => void;
 }
 
 export default function BlockModal({
-  block, properties, onClose, onSave, supabase, user, partnerId, initialMode,
+  block, properties, onClose, onSave, supabase, user, partnerId, initialMode, onPropertyIdChange,
 }: Props) {
   const toast = useToast();
   const isNew = !block.id;
@@ -103,6 +109,24 @@ export default function BlockModal({
 
     setSaving(true);
     try {
+      // Refuse to create a block that overlaps an existing booking or
+      // block on the same property — the calendar treats both kinds as
+      // "occupied", so silently double-booking would let the dashboard
+      // lie about availability.
+      const conflict = await findBookingConflict({
+        supabase,
+        partnerId,
+        propertyId: form.property_id,
+        checkIn: form.check_in,
+        checkOut: form.check_out,
+        excludeId: block.id,
+      });
+      if (conflict) {
+        toast.error(`Dates clash with ${describeConflict(conflict)}`);
+        setSaving(false);
+        return;
+      }
+
       // bookings rows with kind='block' reuse the schema — guest /
       // payment / platform columns are null. We mirror the reason
       // label into guest_name so the calendar bar's existing label
@@ -232,7 +256,10 @@ export default function BlockModal({
             <select
               className="form-input"
               value={form.property_id}
-              onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+              onChange={(e) => {
+                setForm({ ...form, property_id: e.target.value });
+                onPropertyIdChange?.(e.target.value);
+              }}
               disabled={!isNew || fieldsDisabled}
               title={!isNew ? 'Property is fixed once the block is created — delete and recreate to move it.' : undefined}
             >

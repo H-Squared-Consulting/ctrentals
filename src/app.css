@@ -100,7 +100,9 @@ body {
   border-right: 1px solid rgba(255,255,255,0.06);
 }
 .sidebar-brand {
-  padding: 18px 20px 16px;
+  padding: 18px 22px 16px;
+  display: flex;
+  justify-content: flex-start;
 }
 .sidebar-brand-link {
   font-size: 1rem;
@@ -108,8 +110,17 @@ body {
   color: var(--color-accent);
   text-decoration: none;
   letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
 }
 .sidebar-brand-link:hover { color: #fff; }
+.sidebar-brand-logo {
+  display: block;
+  max-width: 100%;
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
 
 .sidebar-nav {
   flex: 1;
@@ -225,6 +236,53 @@ body {
   font-family: inherit;
 }
 .sidebar-signout:hover { color: #fff; }
+
+/* Collapse toggle — always visible, labelled, lives at the bottom of
+ * the sidebar so it's obvious how to shrink/expand the nav. */
+.sidebar-collapse-toggle {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.85);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sidebar-collapse-toggle:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.sidebar-collapse-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+  width: 14px;
+  text-align: center;
+}
+
+/* Collapsed state — narrow sidebar, icon-only nav. */
+.sidebar.is-collapsed { width: 64px; }
+.sidebar.is-collapsed .sidebar-brand { padding: 14px 8px 12px; }
+.sidebar.is-collapsed .sidebar-brand-logo { height: 28px; }
+.sidebar.is-collapsed .sidebar-nav { padding: 4px 6px 12px; }
+.sidebar.is-collapsed .sidebar-link { justify-content: center; padding: 8px 6px; }
+.sidebar.is-collapsed .sidebar-link-label,
+.sidebar.is-collapsed .sidebar-chevron,
+.sidebar.is-collapsed .sidebar-soon-tag,
+.sidebar.is-collapsed .sidebar-user,
+.sidebar.is-collapsed .sidebar-signout,
+.sidebar.is-collapsed .sidebar-children,
+.sidebar.is-collapsed .sidebar-collapse-label { display: none; }
+.sidebar.is-collapsed .sidebar-link-icon { width: auto; font-size: 1.05rem; }
+.sidebar.is-collapsed .sidebar-footer { padding: 10px 6px 16px; align-items: center; }
+.sidebar.is-collapsed .sidebar-collapse-toggle {
+  justify-content: center;
+  padding: 8px;
+  width: 100%;
+}
 
 /* ── Main ── */
 .main-content {
@@ -1356,10 +1414,43 @@ select.form-input { cursor: pointer; }
 }
 
 .property-card__footer {
-  padding: 8px 16px 10px;
+  padding: 8px 12px 10px;
   border-top: 1px solid var(--border-light);
   display: flex;
   justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+/* Each action keeps an icon + label pair. The card declares itself a
+   size container so the footer can scale gracefully with the card's
+   *actual* width (not the window's). Three tiers:
+     > 360px      — comfortable labels with room
+     280–360px    — tight labels, smaller font (still readable)
+     ≤ 280px      — icons only
+   No window-width media queries; the card adapts to whatever grid it
+   ends up in. */
+.property-card { container-type: inline-size; }
+.property-card__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.property-card__action-icon { line-height: 1; }
+@container (max-width: 360px) {
+  .property-card__action {
+    padding: 4px 6px;
+    gap: 3px;
+    font-size: 0.6875rem;
+  }
+}
+@container (max-width: 280px) {
+  .property-card__action-label { display: none; }
+  .property-card__action { padding: 4px 6px; gap: 0; }
 }
 
 /* ===== Pricing Engine ===== */
@@ -1679,8 +1770,8 @@ select.form-input { cursor: pointer; }
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 4px;
+  padding: 6px;
   overflow-y: auto;
 }
 .ops-board-empty {
@@ -1692,15 +1783,15 @@ select.form-input { cursor: pointer; }
 }
 .ops-board-card {
   background: var(--surface);
-  border-radius: 6px;
-  padding: 9px 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  border-radius: 5px;
+  padding: 7px 10px 7px 12px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
   cursor: pointer;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
   border: 1px solid var(--border-light);
 }
 .ops-board-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
   transform: translateY(-1px);
   border-color: var(--border);
 }
@@ -1725,22 +1816,20 @@ select.form-input { cursor: pointer; }
 /* Deal type accents — 4px left stripe so the agent/direct split reads
    even when scanning a packed column. Pairs with the tag below to
    work for colour-blind users too (colour AND text). */
+/* Type signal is a 4px left stripe + a soft full-card wash so the
+   agent/direct/platform split reads at a glance on a packed board.
+   Washes are kept light so client/property text still dominates. */
 .ops-board-card--agent {
   border-left: 4px solid #6366F1; /* indigo, matches Agent tag */
-  /* Full-card lavender wash matching direct's intensity (was a
-     fading gradient that left the body looking near-white — agent
-     cards effectively blended with direct ones on a packed board).
-     Slightly stronger than direct's teal so the indigo reads through
-     the busier background. */
-  background: rgba(99, 102, 241, 0.11);
+  background: rgba(99, 102, 241, 0.09);
 }
 .ops-board-card--direct {
   border-left: 4px solid #14B8A6; /* teal, distinct from agent indigo */
-  /* Full-card subtle green wash so direct cards are unmissable at
-     a glance even on a packed board. Tinted enough to read as
-     "different" but not so much that it competes with the status
-     pills + tags inside the card. */
-  background: rgba(20, 184, 166, 0.08);
+  background: rgba(20, 184, 166, 0.07);
+}
+.ops-board-card--platform {
+  border-left: 4px solid #F59E0B; /* amber */
+  background: rgba(245, 158, 11, 0.09);
 }
 /* Deal state accents — applied alongside type for sent-but-stalled,
    won, lost. State accent takes the right side so type stripe stays
@@ -1765,7 +1854,7 @@ select.form-input { cursor: pointer; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 .ops-board-card-client {
   font-weight: 600;
@@ -1795,8 +1884,8 @@ select.form-input { cursor: pointer; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 2px;
-  margin-bottom: 4px;
+  margin-top: 1px;
+  margin-bottom: 2px;
 }
 .ops-board-card-meta {
   font-size: 0.6875rem;
@@ -1804,7 +1893,7 @@ select.form-input { cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .ops-board-card-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2997,6 +3086,19 @@ button.ops-board-card-tag--clickable:active {
 .bookings-calendar-grid--gcal .bookings-calendar-day:hover {
   border-color: var(--color-primary);
   background: var(--color-primary-pale, #F3F6FB);
+}
+/* Occupied days don't accept gap clicks — the event bar handles its own
+   click. Drop the pointer affordance so the user doesn't expect a tile
+   to be interactive when it would just duplicate-clash. */
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked {
+  cursor: default;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked:hover {
+  border-color: var(--border-light);
+  background: #fff;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day--locked.bookings-calendar-day--muted:hover {
+  background: var(--bg);
 }
 .bookings-calendar-event {
   position: absolute;

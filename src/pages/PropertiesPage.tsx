@@ -534,8 +534,7 @@ export default function PropertiesPage() {
                 </div>
                 <div className="property-card__footer">
                   <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: '0.75rem' }}
+                    className="btn btn-ghost property-card__action"
                     onClick={(e) => {
                       e.stopPropagation();
                       const url = property.listing_urls?.guidebook?.trim();
@@ -545,34 +544,36 @@ export default function PropertiesPage() {
                     }}
                     title="Open digital guidebook"
                   >
-                    📖 Guidebook
+                    <span className="property-card__action-icon" aria-hidden>📖</span>
+                    <span className="property-card__action-label">Guidebook</span>
                   </button>
                   <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: '0.75rem' }}
+                    className="btn btn-ghost property-card__action"
                     onClick={(e) => { e.stopPropagation(); setPricingProperty(property); }}
+                    title="Pricing"
                   >
-                    💰 Pricing
+                    <span className="property-card__action-icon" aria-hidden>💰</span>
+                    <span className="property-card__action-label">Pricing</span>
                   </button>
                   <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: '0.75rem' }}
+                    className="btn btn-ghost property-card__action"
                     onClick={(e) => {
                       e.stopPropagation();
                       navigate(`/operations/bookings?view=calendar&propertyId=${property.id}`);
                     }}
                     title="View this property's booking calendar"
                   >
-                    📅 Bookings
+                    <span className="property-card__action-icon" aria-hidden>📅</span>
+                    <span className="property-card__action-label">Bookings</span>
                   </button>
                   {property.is_published && (
                     <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '0.75rem' }}
+                      className="btn btn-ghost property-card__action"
                       onClick={(e) => { e.stopPropagation(); setSharingProperty(property); }}
                       title="Brochure — pick branded or agent variant to share"
                     >
-                      🔗 Brochure
+                      <span className="property-card__action-icon" aria-hidden>🔗</span>
+                      <span className="property-card__action-label">Brochure</span>
                     </button>
                   )}
                 </div>

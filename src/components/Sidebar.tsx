@@ -89,14 +89,29 @@ export default function Sidebar() {
   // tidy. Users open what they want by clicking.
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
+  // Whole-sidebar collapse. Persisted to localStorage so the choice
+  // sticks across refreshes/sessions.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('sidebar.collapsed') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('sidebar.collapsed', collapsed ? '1' : '0'); } catch {}
+  }, [collapsed]);
+
   function toggle(key: string) {
     setOpen(prev => ({ ...prev, [key]: !prev[key] }));
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="sidebar-brand">
-        <NavLink to="/dashboard" className="sidebar-brand-link">Southern Escapes</NavLink>
+        <NavLink to="/dashboard" className="sidebar-brand-link" aria-label="Southern Escapes">
+          <img
+            src="/brochure-assets/se-logo.png"
+            alt="Southern Escapes"
+            className="sidebar-brand-logo"
+          />
+        </NavLink>
       </div>
 
       {/* Always-visible search affordance under the brand. Sits in
@@ -166,6 +181,16 @@ export default function Sidebar() {
       <div className="sidebar-footer">
         <div className="sidebar-user" title={user?.email}>{user?.email}</div>
         <button className="sidebar-signout" onClick={signOut}>Sign out</button>
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          onClick={() => setCollapsed(c => !c)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <span className="sidebar-collapse-icon" aria-hidden>{collapsed ? '»' : '«'}</span>
+          <span className="sidebar-collapse-label">{collapsed ? 'Expand' : 'Collapse'}</span>
+        </button>
       </div>
     </aside>
   );

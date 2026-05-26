@@ -126,6 +126,9 @@ interface EnquirySide {
    *  Only meaningful when source === 'platform'. Surfaced as a small
    *  clickable icon on the deal card and inline on the deal modal. */
   source_url: string | null;
+  /** Sub-channel for platform-sourced enquiries: 'airbnb' | 'vrbo'.
+   *  Drives the locked channel selection in the proposal pricing flow. */
+  platform_channel: string | null;
   /** Agent-portal multi-property pick — the property ids the agent
    *  ticked when submitting the enquiry on /q/:token. Used by the
    *  deal modal's "Generate proposals for these N →" CTA to pre-tick
@@ -616,6 +619,7 @@ export default function PipelinePage() {
         guests_options: e.guests_options ?? null,
         source: e.source ?? null,
         source_url: e.source_url ?? null,
+        platform_channel: e.platform_channel ?? null,
         requested_property_ids: e.requested_property_ids ?? null,
         is_agent: !!e.is_agent,
         agent_id: e.agent_id ?? null,
@@ -652,7 +656,13 @@ export default function PipelinePage() {
       // Deal-level is_agent surfaces the Agent tag on cards. True when
       // the enquiry was explicitly raised on behalf of a guest OR any
       // existing proposal is agent-flagged (older data, pre-flag).
-      is_agent: !!e.is_agent || (e.proposals || []).some((p: any) => p.is_agent),
+      // Platform deals stay independent: an Airbnb / VRBO enquiry is
+      // always a Platform deal at the card level, even if its proposals
+      // happen to be agent-flagged (legacy data). The Platform tag
+      // takes priority in the card render too.
+      is_agent: e.source === 'platform'
+        ? false
+        : (!!e.is_agent || (e.proposals || []).some((p: any) => p.is_agent)),
     }));
 
     const fromStandalone: Deal[] = (standaloneRes.data || []).map((p: any) => {
@@ -963,6 +973,7 @@ export default function PipelinePage() {
           notes: e.notes,
           source: e.source,
           source_url: e.source_url,
+          platform_channel: (e as any).platform_channel ?? null,
           // Carry the enquiry's agent context so the match modal +
           // the PricingModal it opens land in the right scenario.
           // Without these the per-row default snapshot + Edit pricing
@@ -1486,6 +1497,12 @@ export default function PipelinePage() {
                 // per-night R-amount. Pulled from the host deal.
                 _checkIn: openDeal?.deal.check_in ?? p.check_in ?? null,
                 _checkOut: openDeal?.deal.check_out ?? p.check_out ?? null,
+                // Parent enquiry's platform context — drives the locked
+                // platform channel + scenario in the dashboard so an
+                // older direct-saved proposal under a platform enquiry
+                // shows the correct breakdown on Edit Pricing.
+                _enquirySource: openDeal?.deal.enquiry?.source ?? null,
+                _enquiryPlatformChannel: (openDeal?.deal.enquiry as any)?.platform_channel ?? null,
               });
             }
           }}
@@ -1510,6 +1527,10 @@ export default function PipelinePage() {
               .eq('id', openProposal.pricing_proposal_id)
               .single();
             if (data) {
+              // Look up parent enquiry's platform context so older proposals
+              // saved as 'direct' under a platform enquiry open with the
+              // correct platform breakdown.
+              const parentDeal = deals.find(d => d.enquiry?.id === openProposal.enquiry_id);
               setEditPricingFor({
                 ...data,
                 _propertyName: openProposal.property_name,
@@ -1517,6 +1538,8 @@ export default function PipelinePage() {
                 // Same per-stay totals carrier as the deal-modal path.
                 _checkIn: openProposal.check_in ?? null,
                 _checkOut: openProposal.check_out ?? null,
+                _enquirySource: parentDeal?.enquiry?.source ?? null,
+                _enquiryPlatformChannel: (parentDeal?.enquiry as any)?.platform_channel ?? null,
               });
               setOpenProposal(null);
             }
@@ -2039,7 +2062,15 @@ function InboxRowImpl({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: D
     : ageDays >= 10 ? 'ops-board-card-days--hot' : '';
   // The type stripe carries over so the agent/direct visual marker
   // is consistent with what cards show in other columns.
-  const typeClass = deal.is_agent ? 'ops-board-card--agent' : 'ops-board-card--direct';
+  // Platform takes precedence in the visual classification: a platform
+  // enquiry is never also an agent enquiry, but the source check is
+  // cheap and we want yellow to win unambiguously. Direct is the
+  // residual case.
+  const typeClass = deal.enquiry?.source === 'platform'
+    ? 'ops-board-card--platform'
+    : deal.is_agent
+      ? 'ops-board-card--agent'
+      : 'ops-board-card--direct';
   return (
     <div
       data-deal-id={deal.enquiry?.id}
@@ -2211,7 +2242,15 @@ function DealCardImpl({
   // the type is unmissable even when scanning a packed column. The
   // matching tag below repeats the info in words for the dumbest-user
   // model — colour AND text both work, redundantly.
-  const typeClass = deal.is_agent ? 'ops-board-card--agent' : 'ops-board-card--direct';
+  // Platform takes precedence in the visual classification: a platform
+  // enquiry is never also an agent enquiry, but the source check is
+  // cheap and we want yellow to win unambiguously. Direct is the
+  // residual case.
+  const typeClass = deal.enquiry?.source === 'platform'
+    ? 'ops-board-card--platform'
+    : deal.is_agent
+      ? 'ops-board-card--agent'
+      : 'ops-board-card--direct';
   // Stalled / won / lost / expired get their own subtle accent on
   // top of the type stripe — colour cue without changing layout.
   const stateClass =
@@ -2286,10 +2325,14 @@ function DealCardImpl({
       )}
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
-        {deal.is_agent
-          ? <span className="ops-board-card-tag ops-board-card-tag--agent">🤝 Agent</span>
-          : deal.enquiry?.source === 'platform'
-            ? <span className="ops-board-card-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>🔗 Platform</span>
+        {/* Source-of-origin tag. Platform takes precedence over Agent so
+            an Airbnb/VRBO enquiry with an agent-tied proposal still reads
+            as "Platform" on the card — the platform is the origin of the
+            deal, the agent is a downstream attribution. */}
+        {deal.enquiry?.source === 'platform'
+          ? <span className="ops-board-card-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>🔗 Platform</span>
+          : deal.is_agent
+            ? <span className="ops-board-card-tag ops-board-card-tag--agent">🤝 Agent</span>
             : <span className="ops-board-card-tag ops-board-card-tag--direct">👤 Direct</span>}
         {/* When the enquiry was tagged as Platform with a back-link,
             show a tiny 🔗 button that opens the conversation thread
@@ -2981,6 +3024,12 @@ function DealDetailModal({
     guest_name: e?.guest_name ?? '',
     guest_email: e?.guest_email ?? '',
     guest_phone: e?.guest_phone ?? '',
+    // Platform-source enquiries: the team often gets the conversation URL
+    // wrong on first capture (paste a Gmail thread instead of the Airbnb
+    // host inbox). Expose both fields here so they can be corrected
+    // without bouncing back to the create flow.
+    platform_channel: (e as any)?.platform_channel ?? '',
+    source_url: e?.source_url ?? '',
   }), [deal.key]);
   const [form, setForm] = useState(initialForm);
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
@@ -3082,7 +3131,11 @@ function DealDetailModal({
         // view) still get a usable single value, while the arrays
         // power the tighter property match .in() filter.
         guests_total:     form.guests_total ?? 1,
-        bedrooms_needed:  form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : (form.bedrooms_needed ?? 1),
+        // bedrooms_needed mirrors the smallest of the multi-select so legacy
+        // single-value readers keep working; null when no bedroom filter
+        // was set so the match modal treats it as "any" rather than
+        // silently filtering down to 1-bed properties.
+        bedrooms_needed:  form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : (form.bedrooms_needed ?? null),
         guests_options:   null,
         bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
         budget_min: form.budget_min,
@@ -3091,6 +3144,16 @@ function DealDetailModal({
         guest_name: guestName,
         guest_email: guestEmail,
         guest_phone: guestPhone,
+        // Platform URL — editable on the deal modal for source='platform'
+        // enquiries so the team can fix a wrong conversation URL without
+        // recreating the enquiry. The `platform_channel` field is
+        // deliberately NOT in this payload: it's locked at creation
+        // because the ref-code prefix (A### / V###) and every linked
+        // proposal's channel depend on it. Untouched on direct / agent
+        // enquiries (source stays null).
+        ...(e.source === 'platform' ? {
+          source_url: (form.source_url || '').trim() || null,
+        } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', e.id);
 
@@ -3545,6 +3608,49 @@ function DealDetailModal({
           )
         );
 
+        // Platform section — only renders when the enquiry was captured
+        // as source='platform'. Lets the team fix a wrong conversation
+        // URL or flip Airbnb↔VRBO without leaving the deal modal.
+        const platformSection = e?.source === 'platform' ? (
+          <DetailModalSection heading="Platform">
+            <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+              <div className="form-grid-2">
+                <div className="form-group">
+                  <label className="form-label">
+                    Platform
+                    <span style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--text-light)' }}>🔒 fixed at creation</span>
+                  </label>
+                  {/* Platform is locked once the enquiry is created — the
+                      ref-code prefix (A### / V###) and every linked
+                      proposal's pricing channel both depend on it. To
+                      change it the team has to delete the enquiry and
+                      recreate it under the new platform. */}
+                  <select
+                    className="form-input"
+                    value={form.platform_channel || ''}
+                    disabled
+                    title="Locked — platform decides the ref-code prefix and the pricing channel; delete + recreate the enquiry to change it"
+                  >
+                    <option value="">— pick —</option>
+                    <option value="airbnb">Airbnb</option>
+                    <option value="vrbo">VRBO</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Conversation URL</label>
+                  <input
+                    type="url"
+                    className="form-input"
+                    value={form.source_url || ''}
+                    onChange={ev => update('source_url', ev.target.value)}
+                    placeholder="https://www.airbnb.co.za/hosting/messages/…"
+                  />
+                </div>
+              </div>
+            </fieldset>
+          </DetailModalSection>
+        ) : null;
+
         const staySection = (
           <DetailModalSection heading="Stay details">
             <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
@@ -3769,8 +3875,8 @@ function DealDetailModal({
         );
 
         return hasProposals
-          ? <>{subjectSection}{proposalsSection}{clientSection}{staySection}</>
-          : <>{subjectSection}{clientSection}{staySection}{proposalsSection}</>;
+          ? <>{subjectSection}{proposalsSection}{clientSection}{platformSection}{staySection}</>
+          : <>{subjectSection}{clientSection}{platformSection}{staySection}{proposalsSection}</>;
       })()}
       {/* Confirmation gate for proposal deletion — destructive, can't
           be undone, and (when it's the last proposal) flips the deal

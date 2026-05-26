@@ -19,6 +19,7 @@ import { useToast } from '../components/ToastProvider';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
+import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -60,7 +61,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange,
 }: {
   booking: any;
   properties: any[];
@@ -72,6 +73,9 @@ export default function BookingModal({
   initialMode?: 'view' | 'edit';
   isBlocked?: boolean;
   onToggleBlocked?: () => void;
+  /** Fired when the user changes the property dropdown so the
+   *  Calendar view behind can re-anchor live. */
+  onPropertyIdChange?: (propertyId: string) => void;
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -155,6 +159,25 @@ export default function BookingModal({
 
     setSaving(true);
     try {
+      // Block double-booking the same property. Cancelled bookings vacate
+      // their dates so we skip the check when the user is *saving* a
+      // cancellation — the new state won't occupy the calendar anyway.
+      if (form.status !== 'cancelled') {
+        const conflict = await findBookingConflict({
+          supabase,
+          partnerId,
+          propertyId: form.property_id,
+          checkIn: form.check_in,
+          checkOut: form.check_out,
+          excludeId: booking.id,
+        });
+        if (conflict) {
+          toast.error(`Dates clash with ${describeConflict(conflict)}`);
+          setSaving(false);
+          return;
+        }
+      }
+
       // For blocks: strip guest / payment / platform fields. The reason
       // label lives in guest_name (re-purposed) so the calendar bar still
       // has something to render. Status stays 'confirmed' so the block
@@ -371,7 +394,10 @@ export default function BookingModal({
             <select
               className="form-input"
               value={form.property_id}
-              onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+              onChange={(e) => {
+                setForm({ ...form, property_id: e.target.value });
+                onPropertyIdChange?.(e.target.value);
+              }}
             >
               <option value="">Select a property…</option>
               {properties.map((p: any) => (
