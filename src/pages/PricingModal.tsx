@@ -81,8 +81,15 @@ export default function PricingModal({
   const [saving, setSaving] = useState(false);
 
   const isEdit = Boolean(editPricingProposal);
+  // Pure calculator mode = no enquiry, no edit, not the match-flow
+  // snapshot return. Renders without an action button — proposals
+  // can't be raised from here any more (they must hang off an
+  // enquiry), so this surface is just for playing with pricing.
+  const isCalculatorOnly = !enquiryPrefill && !isEdit && !onSnapshotReady;
 
-  // ── Create-mode handler: hand the snapshot off to CreateProposalModal ──
+  // Hand the snapshot off to CreateProposalModal. Only used when
+  // an enquiry context exists (enquiryPrefill set) — otherwise the
+  // action button is hidden and this handler never fires.
   function handleCreateProposal(snap: PricingSnapshot) {
     setCreatingFromSnapshot(snap);
   }
@@ -186,14 +193,19 @@ export default function PricingModal({
           // "(any agent)" — frustrating when we already know who.
           initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
           lockScenario={lockScenario}
-          // Three modes:
+          // Three modes drive the action button. The fourth — pure
+          // calculator (isCalculatorOnly) — passes undefined so no
+          // button renders; the modal is view-only in that case.
           //   onSnapshotReady set → snapshot-only (return + close, no DB write)
           //   isEdit              → in-place save (UPDATE existing pricing_proposal)
-          //   default             → hand off to CreateProposalModal for full create flow
+          //   enquiryPrefill set  → hand off to CreateProposalModal for full create flow
+          //   else                → no action button (calculator only)
           onCreateProposal={
-            onSnapshotReady
-              ? (snap: PricingSnapshot) => { onSnapshotReady(snap); onClose(); }
-              : (isEdit ? handleSavePricing : handleCreateProposal)
+            isCalculatorOnly
+              ? undefined
+              : onSnapshotReady
+                ? (snap: PricingSnapshot) => { onSnapshotReady(snap); onClose(); }
+                : (isEdit ? handleSavePricing : handleCreateProposal)
           }
           actionLabel={
             onSnapshotReady

@@ -18,8 +18,16 @@ import SendBrochurePicker from './SendBrochurePicker';
 import NewProposalLauncher from './NewProposalLauncher';
 import BookingModal from '../pages/BookingModal';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
+import { openGlobalSearch } from '../lib/globalSearchEvents';
+import { useModalStack } from '../contexts/ModalStackContext';
 
 export default function Fab() {
+  // When the global search modal is open the FAB visually
+  // overlaps its bottom-right corner. Drop the FAB behind the
+  // modal in that case so the search panel reads as a clean
+  // surface (it sits on top of everything else).
+  const modalStack = useModalStack();
+  const behindModal = !!modalStack?.searchOpen;
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [proposalLauncherOpen, setProposalLauncherOpen] = useState(false);
@@ -59,17 +67,21 @@ export default function Fab() {
     setBookingOpen(true);
   }
 
-  function trigger(action: 'enquiry' | 'proposal' | 'booking' | 'brochure') {
+  function trigger(action: 'enquiry' | 'proposal' | 'booking' | 'brochure' | 'search') {
     setOpen(false);
     if (action === 'enquiry') navigate('/enquiry/new');
     else if (action === 'proposal') setProposalLauncherOpen(true);
     else if (action === 'booking') openBooking();
     else if (action === 'brochure') setPickerOpen(true);
+    // The global search modal is owned by GlobalSearchLauncher
+    // (mounted once at the layout level); we just dispatch the
+    // open event so the FAB stays a pure dispatcher.
+    else if (action === 'search') openGlobalSearch({ scope: 'properties' });
   }
 
   return (
     <>
-      <div className="fab-root" ref={rootRef}>
+      <div className={`fab-root ${behindModal ? 'fab-root--behind-modal' : ''}`.trim()} ref={rootRef}>
         {open && (
           <div className="fab-menu" role="menu">
             <button className="fab-action" onClick={() => trigger('enquiry')}>
@@ -87,6 +99,13 @@ export default function Fab() {
             <button className="fab-action" onClick={() => trigger('brochure')}>
               <span className="fab-action-icon">📄</span>
               <span className="fab-action-label">Send brochure</span>
+            </button>
+            {/* Search sits at the bottom of the fan-out — it's the
+                only non-creation action, so a visual break (last
+                position) separates it from the New… buttons above. */}
+            <button className="fab-action" onClick={() => trigger('search')}>
+              <span className="fab-action-icon">🔍</span>
+              <span className="fab-action-label">Search properties</span>
             </button>
           </div>
         )}

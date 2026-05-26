@@ -2,9 +2,10 @@
  * HomePage — the landing page.
  *
  * v1 deliberately minimal:
- *   - Quick actions for the most common things (new enquiry, proposal,
- *     booking, brochure share). Same set as the FAB so the entry point
- *     is consistent.
+ *   - Quick actions for the most common things (new enquiry, booking,
+ *     brochure share). Same set as the FAB so the entry point is
+ *     consistent. Standalone "New proposal" is intentionally omitted —
+ *     every proposal must be raised against an enquiry.
  *   - A placeholder section inviting the team to tell us what else
  *     should live here. The full design (Today / Action queue / Stale
  *     items / etc) gets built after we've actually heard from the
@@ -19,7 +20,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { CT_RENTALS_PARTNER_ID } from './constants';
-import NewProposalLauncher from '../components/NewProposalLauncher';
 import SendBrochurePicker from '../components/SendBrochurePicker';
 import BookingModal from './BookingModal';
 
@@ -28,7 +28,6 @@ export default function HomePage() {
   const { setPageTitle } = useLayout();
   const navigate = useNavigate();
 
-  const [proposalLauncherOpen, setProposalLauncherOpen] = useState(false);
   const [brochurePickerOpen, setBrochurePickerOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingProperties, setBookingProperties] = useState<any[]>([]);
@@ -63,9 +62,6 @@ export default function HomePage() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-primary" onClick={() => navigate('/enquiry/new')}>
             💬 New enquiry
-          </button>
-          <button className="btn btn-outline" onClick={() => setProposalLauncherOpen(true)}>
-            📝 New proposal
           </button>
           <button className="btn btn-outline" onClick={openBooking}>
             📅 New booking
@@ -103,10 +99,6 @@ export default function HomePage() {
           gets rebuilt around your answers — nothing here is fixed.
         </p>
       </div>
-
-      {proposalLauncherOpen && (
-        <NewProposalLauncher onClose={() => setProposalLauncherOpen(false)} />
-      )}
 
       {brochurePickerOpen && (
         <SendBrochurePicker onClose={() => setBrochurePickerOpen(false)} />

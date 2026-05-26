@@ -10,13 +10,14 @@ import { useEffect, type ReactNode } from 'react';
 import { useLayout } from '../contexts/LayoutContext';
 
 const TITLES: Record<string, string> = {
-  pricing: 'Pricing',
-  seasons: 'Seasons',
-  platforms: 'Platforms',
-  agents: 'Agents',
+  pricing:        'Pricing',
+  'price-tiers':  'Price tiers',
+  seasons:        'Seasons',
+  platforms:      'Platforms',
+  agents:         'Agents',
 };
 
-export default function SettingsPage({ tab, children }: { tab: 'pricing' | 'seasons' | 'platforms' | 'agents'; children: ReactNode }) {
+export default function SettingsPage({ tab, children }: { tab: 'pricing' | 'price-tiers' | 'seasons' | 'platforms' | 'agents'; children: ReactNode }) {
   const { setPageTitle } = useLayout();
   useEffect(() => { setPageTitle(TITLES[tab] || 'Settings'); }, [setPageTitle, tab]);
   return <>{children}</>;

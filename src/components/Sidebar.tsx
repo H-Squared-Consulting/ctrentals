@@ -14,8 +14,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { openGlobalSearch } from '../lib/globalSearchEvents';
 
-type NavChild = { to: string; label: string };
+/** Sub-nav row. `restrictedTo` (when set) hides the entry from
+ *  everyone except the listed emails — used for admin-only
+ *  surfaces that would confuse the wider team. */
+type NavChild = { to: string; label: string; restrictedTo?: string[] };
+
+/** Emails allowed to see admin-only sidebar entries. Centralised so
+ *  new admin surfaces just reuse the same allowlist. */
+const ADMIN_ONLY_EMAILS = [
+  'jordon@hsquared-consulting.com',
+  'jordon.harrod2003@gmail.com',
+];
 type NavItem = {
   to: string;
   label: string;
@@ -47,8 +58,9 @@ const NAV: NavItem[] = [
     label: 'Settings',
     icon: '⚙️',
     children: [
-      { to: '/settings/pricing',   label: 'Pricing' },
-      { to: '/settings/seasons',   label: 'Seasons' },
+      { to: '/settings/pricing',     label: 'Pricing' },
+      { to: '/settings/price-tiers', label: 'Price tiers', restrictedTo: ADMIN_ONLY_EMAILS },
+      { to: '/settings/seasons',     label: 'Seasons' },
       { to: '/settings/platforms', label: 'Platforms' },
       { to: '/settings/agents',    label: 'Agents' },
     ],
@@ -87,6 +99,21 @@ export default function Sidebar() {
         <NavLink to="/dashboard" className="sidebar-brand-link">Southern Escapes</NavLink>
       </div>
 
+      {/* Always-visible search affordance under the brand. Sits in
+          the sidebar (not main-content) so it never clashes with
+          page-header filters / counters on per-page boards. ⌘K
+          opens the same modal from anywhere. */}
+      <button
+        type="button"
+        className="sidebar-search"
+        onClick={() => openGlobalSearch({ scope: 'properties' })}
+        title="Search anything · ⌘K"
+      >
+        <span aria-hidden>🔍</span>
+        <span className="sidebar-search__label">Search</span>
+        <kbd className="sidebar-search__shortcut">⌘K</kbd>
+      </button>
+
       <nav className="sidebar-nav">
         {NAV.map(item => {
           const isActive = matches(location.pathname, item);
@@ -118,16 +145,18 @@ export default function Sidebar() {
                 <span className={`sidebar-chevron ${isOpen ? 'is-open' : ''}`} aria-hidden>›</span>
               </button>
               <div className={`sidebar-children ${isOpen ? 'is-open' : ''}`}>
-                {item.children.map(child => (
-                  <NavLink
-                    key={child.to}
-                    to={child.to}
-                    end
-                    className={({ isActive: childActive }) => `sidebar-child ${childActive ? 'is-active' : ''}`}
-                  >
-                    {child.label}
-                  </NavLink>
-                ))}
+                {item.children
+                  .filter(child => !child.restrictedTo || child.restrictedTo.includes(user?.email ?? ''))
+                  .map(child => (
+                    <NavLink
+                      key={child.to}
+                      to={child.to}
+                      end
+                      className={({ isActive: childActive }) => `sidebar-child ${childActive ? 'is-active' : ''}`}
+                    >
+                      {child.label}
+                    </NavLink>
+                  ))}
               </div>
             </div>
           );

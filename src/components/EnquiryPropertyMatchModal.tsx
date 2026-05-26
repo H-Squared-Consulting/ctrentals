@@ -33,6 +33,7 @@ import { initialsForEmail } from '../lib/userInitials';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import { syncEnquiryFromProposal } from '../lib/statusSync';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
+import { searchProperties } from '../lib/propertySearch';
 import PricingModal from '../pages/PricingModal';
 import type { PricingSnapshot } from './PricingDashboard';
 
@@ -359,58 +360,34 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       setLoadError(null);
       try {
       const year = new Date().getFullYear();
-      // Property filter — bedrooms exact-match against the multi-
-      // select array, plus availability on the requested dates.
-      // Guests count is deliberately NOT applied here; in practice
-      // a property that sleeps more is still a valid quote, and
-      // filtering it out hides good matches from the team.
-      // Build the bedrooms filter when the caller actually has one.
-      // Agent-portal enquiries skip the bedrooms question entirely
-      // (the agent already picked specific properties) so both
-      // `bedrooms_options` and `bedrooms_needed` come through as
-      // null — in that case we drop the .in() filter and show every
-      // available property. Without this skip the .in([null]) query
-      // returned an empty list and the modal showed "No matching
-      // properties available for these dates" even though the
-      // agent's picks were waiting in requested_property_ids.
+      // Hand the filter step over to the shared searchProperties()
+      // helper — one source of truth for "what properties match
+      // this enquiry?" across the platform (GlobalSearchModal,
+      // EnquiryForm preview, this match modal). Bedrooms + dates
+      // + price + restrict-to-IDs all map straight through. The
+      // helper also returns the per-night dailyRate, which we
+      // index below for the pricing snapshot phase that's
+      // specific to this modal.
       const bedFilterRaw = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
         ? enquiry.bedrooms_options
         : (enquiry.bedrooms_needed != null ? [enquiry.bedrooms_needed] : null);
-      const restrictMode = !!(restrictToIds && restrictToIds.length > 0);
-      let propsQuery = supabase
-        .from('partner_properties')
-        .select('id, property_name, suburb, city, bedrooms, sleeps, hero_image_url, is_published, is_archived')
-        .eq('partner_id', CT_RENTALS_PARTNER_ID)
-        .eq('is_published', true)
-        .order('property_name');
-      if (restrictMode) {
-        // Agent-portal "Generate proposals" path — only show the
-        // exact houses the agent named. The bedrooms filter is
-        // intentionally skipped here: the agent's pick already
-        // expresses the brief, and the agent might have picked a
-        // 5-bed when a 4-bed-only filter would have excluded it.
-        propsQuery = propsQuery.in('id', restrictToIds as string[]);
-      } else if (bedFilterRaw && bedFilterRaw.length > 0) {
-        propsQuery = propsQuery.in('bedrooms', bedFilterRaw);
-      }
-      // Agent enquiries pull the picked agent's default commission so
-      // we can apply it to every per-property default snapshot. One
-      // extra query, batched into the same Promise.all so it doesn't
-      // serialise after the property list.
+      const searchPromise = searchProperties(supabase, {
+        bedrooms: bedFilterRaw && bedFilterRaw.length > 0 ? bedFilterRaw : undefined,
+        checkIn:  enquiry.check_in,
+        checkOut: enquiry.check_out,
+        priceMin: enquiry.budget_min ?? null,
+        priceMax: enquiry.budget_max ?? null,
+        restrictToIds: restrictToIds ?? null,
+      });
+      // Seasons + agent are STILL fetched locally — they feed the
+      // per-row pricing snapshot computation which is specific to
+      // this modal (not part of the filter step). Batched into
+      // the same Promise.all so we keep the four-round-trip budget.
       const agentQuery = enquiry.is_agent && enquiry.agent_id
         ? supabase.from('agents').select('id, default_commission_pct').eq('id', enquiry.agent_id).maybeSingle()
         : Promise.resolve({ data: null });
-      const [propRes, bookingsRes, baselinesRes, seasonsRes, agentRes] = await Promise.all([
-        propsQuery,
-        supabase
-          .from('bookings')
-          .select('property_id, check_in, check_out, kind, status')
-          .lt('check_in', enquiry.check_out)
-          .gt('check_out', enquiry.check_in),
-        supabase
-          .from('baselines')
-          .select('property_id, year, daily_rate')
-          .eq('year', year),
+      const [searched, seasonsRes, agentRes] = await Promise.all([
+        searchPromise,
         supabase
           .from('seasons')
           .select('id, key, name, multiplier, date_ranges, sort_order')
@@ -421,13 +398,19 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
 
       if (cancelled) return;
 
-      const props = (propRes.data || []).filter((p: any) => !p.is_archived) as PropertyRow[];
-      const busyPropertyIds = new Set(
-        (bookingsRes.data || [])
-          .filter((b: any) => b.status !== 'cancelled')
-          .map((b: any) => b.property_id)
-      );
-      const free = props.filter(p => !busyPropertyIds.has(p.id));
+      // Map searchProperties' flat result shape back onto the
+      // PropertyRow this component already renders against — keeps
+      // the rest of the file (search box, selected-set logic,
+      // pricing snapshots, save flow) untouched.
+      const free: PropertyRow[] = searched.map((p) => ({
+        id: p.id,
+        property_name: p.name,
+        suburb: p.suburb,
+        city: p.city,
+        bedrooms: p.bedrooms,
+        sleeps: p.sleeps,
+        hero_image_url: p.heroImageUrl,
+      }));
       setProperties(free);
       // Pre-tick any caller-supplied selections that survived the
       // bedrooms + availability filters. Agent-portal flow lands
@@ -450,10 +433,21 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       }
       setLoading(false);
 
-      // Index baselines by property_id for O(1) per-row lookup.
+      // Build a per-property baseline lookup from searchProperties'
+      // returned daily rate (it already pulled baselines.daily_rate
+      // for the current year as part of the filter step). Same
+      // BaselineRow shape the snapshot builders expect — year is
+      // canonical "current year" since searchProperties scopes to
+      // that, and property_id is the FK column it filtered on.
       const baselineByProperty = new Map<string, BaselineRow>();
-      for (const b of (baselinesRes.data || []) as BaselineRow[]) {
-        baselineByProperty.set(b.property_id, b);
+      for (const p of searched) {
+        if (p.dailyRate != null) {
+          baselineByProperty.set(p.id, {
+            property_id: p.id,
+            year,
+            daily_rate: p.dailyRate,
+          });
+        }
       }
       const seasons = (seasonsRes.data as SeasonRow[]) || [];
 

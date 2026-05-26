@@ -735,13 +735,18 @@ body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.35);
+  /* Stronger dim + blur so page content behind the modal isn't
+     visible at all. Tuned for the two-modal layout: when the
+     search modal docks alongside the deal modal, the gaps
+     between / around the two should read as a single dark
+     surface, not a peek-through. */
+  background: rgba(15, 23, 42, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 200;
   padding: 16px;
-  backdrop-filter: blur(1px);
+  backdrop-filter: blur(4px);
 }
 .modal {
   background: var(--surface);
@@ -2027,6 +2032,52 @@ button.ops-board-card-tag--clickable:active {
   overflow: hidden;
   box-shadow: 0 24px 60px rgba(0,0,0,0.22), 0 8px 16px rgba(0,0,0,0.08);
   max-height: 92vh;
+  /* Transition opacity for the fade-when-not-focused state. The
+     overlay container handles the layout transition between
+     placement variants below. */
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+/* Right-docked placement — selectable via data-placement="right"
+   on the overlay container. Drops the dim backdrop so the
+   partner modal underneath stays visible, slides the modal to
+   the right edge, and lets pointer events pass through the
+   surrounding overlay so the partner stays interactive. */
+.modal-overlay[data-placement="right"] {
+  background: transparent;
+  backdrop-filter: none;
+  justify-content: flex-end;
+  padding-right: 24px;
+  pointer-events: none;
+  z-index: 250;
+}
+.modal-overlay[data-placement="right"] .action-modal {
+  pointer-events: auto;
+}
+/* Animate the overlay's justify-content shift via a transform on
+   the modal — centered → right is a left-to-right slide. */
+.modal-overlay {
+  transition: background 0.22s ease, backdrop-filter 0.22s ease;
+}
+.action-modal--side {
+  width: 480px !important;
+  max-width: calc(100vw - 32px);
+}
+.action-modal--faded {
+  opacity: 0.55;
+  cursor: pointer;
+}
+.action-modal--faded:hover {
+  opacity: 0.75;
+}
+/* Slide left to make room for a right-docked partner modal
+   (matches .detail-modal--shifted-left). */
+.action-modal--shifted-left {
+  transform: translateX(-240px);
+}
+@media (max-width: 1280px) {
+  .action-modal--shifted-left {
+    transform: translateX(-180px);
+  }
 }
 .action-modal-header {
   display: flex;
@@ -2108,6 +2159,26 @@ button.ops-board-card-tag--clickable:active {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 24px 60px rgba(0,0,0,0.22), 0 8px 16px rgba(0,0,0,0.08);
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+.detail-modal--faded {
+  opacity: 0.55;
+  cursor: pointer;
+}
+.detail-modal--faded:hover {
+  opacity: 0.75;
+}
+/* When the global search modal docks on the right, slide the
+   centered detail modal leftward so the two don't visually
+   overlap. Shift is sized so the deal modal's right edge clears
+   the 480px search panel + 24px gutter on common laptop widths. */
+.detail-modal--shifted-left {
+  transform: translateX(-240px);
+}
+@media (max-width: 1280px) {
+  .detail-modal--shifted-left {
+    transform: translateX(-180px);
+  }
 }
 .detail-modal-accent {
   height: 5px;
@@ -3407,6 +3478,146 @@ button.ops-board-card-tag--clickable:active {
 }
 
 /* ===== Floating Action Button (FAB) — quick-actions menu ===== */
+/* ── Price range (dual-thumb slider) ─────────────────────────────
+   Two native <input type="range"> elements stacked on the same
+   track. Each is invisible-track (just the thumb is styled). A
+   third div on top draws the highlighted band between the two
+   thumbs. Pointer-events on the inputs are disabled on the track
+   but enabled on the thumb (the only way to make both thumbs
+   independently draggable on the same axis). */
+.price-range {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.price-range__labels {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: var(--text);
+  font-weight: 500;
+}
+.price-range__divider {
+  color: var(--text-light);
+}
+.price-range__basis {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  font-weight: 400;
+}
+.price-range__track-wrap {
+  position: relative;
+  height: 26px;
+}
+.price-range__track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transform: translateY(-50%);
+}
+.price-range__track--active {
+  background: var(--color-primary);
+  z-index: 1;
+}
+.price-range__thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none; /* re-enabled on the thumb via the pseudo-element rule below */
+  -webkit-appearance: none;
+  appearance: none;
+  z-index: 2;
+}
+.price-range__thumb:focus { outline: none; }
+.price-range__thumb::-webkit-slider-runnable-track { background: transparent; border: none; height: 100%; }
+.price-range__thumb::-moz-range-track { background: transparent; border: none; height: 100%; }
+.price-range__thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 1px 4px rgba(15, 76, 117, 0.30);
+  cursor: grab;
+  margin-top: 0;
+}
+.price-range__thumb:active::-webkit-slider-thumb { cursor: grabbing; }
+.price-range__thumb::-moz-range-thumb {
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 1px 4px rgba(15, 76, 117, 0.30);
+  cursor: grab;
+}
+/* Max thumb sits on top so it stays grabbable when the two thumbs
+   are right next to each other at the high end. */
+.price-range__thumb--max { z-index: 3; }
+
+/* ── Sidebar global-search pill ──────────────────────────────────
+   Lives between the brand wordmark and the nav items, so the
+   "search anything" affordance is always one glance from the
+   user's eye-line without competing with per-page headers /
+   counters in the main content area. Visually mirrors a command-
+   palette trigger (icon + label + shortcut kbd). */
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - var(--s-4) * 2);
+  margin: 0 var(--s-4) var(--s-4);
+  padding: 8px 10px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.sidebar-search:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: #fff;
+}
+.sidebar-search:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.sidebar-search__label {
+  flex: 1;
+  text-align: left;
+  font-weight: 500;
+}
+.sidebar-search__shortcut {
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.60);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
+  padding: 2px 6px;
+  letter-spacing: 0.02em;
+}
+
 .fab-root {
   position: fixed;
   right: var(--s-5);
@@ -3416,6 +3627,14 @@ button.ops-board-card-tag--clickable:active {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--s-2);
+}
+/* When the global search modal is docked alongside a primary
+   modal, drop the FAB beneath the modal layer so the search
+   panel's bottom-right corner reads cleanly. Modal overlay sits
+   at z-index 200 (250 when right-docked); 150 keeps the FAB
+   above page content but below either modal. */
+.fab-root--behind-modal {
+  z-index: 150;
 }
 .fab-trigger {
   width: 56px;

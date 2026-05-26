@@ -8,7 +8,7 @@
  * proposals.enquiry_id.
  */
 
-import { useState, FormEvent, useEffect, useRef } from 'react';
+import { useState, FormEvent, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
@@ -17,7 +17,9 @@ import DateInput from '../components/DateInput';
 import NumericMultiSelect from '../components/NumericMultiSelect';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import NightCount from '../components/NightCount';
+import PriceRangeFilter from '../components/PriceRangeFilter';
 import { useToast } from '../components/ToastProvider';
+import { useModalStack } from '../contexts/ModalStackContext';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import { nextDirectEnquiryRefCode, nextAgentEnquiryRefCode } from '../lib/refCodes';
@@ -55,7 +57,33 @@ export function EnquiryForm() {
   const location = useLocation();
   const toast = useToast();
 
+  // Register in the global modal stack so the search panel docks
+  // to the side (rather than fighting for the center) if the user
+  // opens it while filling out an enquiry.
+  const modalStack = useModalStack();
+  useEffect(() => {
+    if (!modalStack) return;
+    modalStack.setEnquiryOpen(true);
+    return () => modalStack.setEnquiryOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const isFaded = !!modalStack?.searchOpen && modalStack?.focused === 'search';
+  const focusSelf = () => modalStack?.focus('enquiry');
+
   const [form, setForm] = useState(EMPTY_FORM);
+  /** Budget slider basis — purely a display preference on this
+   *  form; the budget_min / budget_max we persist are always
+   *  per-night (the canonical representation across the platform).
+   *  Mirrors what the global search modal stores locally. */
+  const [budgetBasis, setBudgetBasis] = useState<'night' | 'stay'>('night');
+  /** Derived stay length for the per-stay budget toggle. Falls
+   *  back to 0 (toggle disabled) until both dates are valid. */
+  const enquiryNights = useMemo(() => {
+    if (!form.check_in || !form.check_out) return 0;
+    const ms = new Date(form.check_out).getTime() - new Date(form.check_in).getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    return Math.round(ms / 86_400_000);
+  }, [form.check_in, form.check_out]);
   const [saving, setSaving] = useState(false);
   const [savedEnquiry, setSavedEnquiry] = useState<EnquiryPrefill | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
@@ -569,6 +597,8 @@ export function EnquiryForm() {
             </>
           }
           onClose={close}
+          faded={isFaded}
+          onActivate={focusSelf}
         >
           <div style={{ textAlign: 'center', padding: '20px 8px' }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 8, color: 'var(--success)' }}>✓</div>
@@ -598,6 +628,8 @@ export function EnquiryForm() {
         title="New enquiry"
         subtitle="Capture an incoming guest enquiry"
         width={760}
+        faded={isFaded}
+        onActivate={focusSelf}
         primaryAction={
           // Direct enquiries are the quick-entry path — the team
           // often takes a phone call and just needs to drop a name
@@ -1000,17 +1032,30 @@ export function EnquiryForm() {
         </Section>
 
         <Section title="Context" subtitle="Optional. Useful for matching the right property">
-          <div className="enquiry-grid-3">
-            <Field label="Nationality">
-              <input className="form-input" name="nationality" value={form.nationality} onChange={handleChange} placeholder="e.g. UK" />
-            </Field>
-            <Field label="Budget min (ZAR)">
-              <input className="form-input" name="budget_min" type="number" min="0" value={form.budget_min} onChange={handleChange} placeholder="—" />
-            </Field>
-            <Field label="Budget max (ZAR)">
-              <input className="form-input" name="budget_max" type="number" min="0" value={form.budget_max} onChange={handleChange} placeholder="—" />
-            </Field>
-          </div>
+          <Field label="Nationality">
+            <input className="form-input" name="nationality" value={form.nationality} onChange={handleChange} placeholder="e.g. UK" />
+          </Field>
+
+          {/* Budget — same dual-thumb slider the global search uses
+              so an enquiry created here matches a property the same
+              way regardless of where the search happens. Storage is
+              still budget_min / budget_max as per-night R values on
+              the enquiries row; the slider's basis toggle is local
+              to this form (not persisted). */}
+          <Field label="Budget" style={{ marginTop: 12 }}>
+            <PriceRangeFilter
+              min={form.budget_min ? Number(form.budget_min) : null}
+              max={form.budget_max ? Number(form.budget_max) : null}
+              nights={enquiryNights}
+              basis={budgetBasis}
+              onChange={(min, max) => setForm(prev => ({
+                ...prev,
+                budget_min: min != null ? String(min) : '',
+                budget_max: max != null ? String(max) : '',
+              }))}
+              onBasisChange={setBudgetBasis}
+            />
+          </Field>
 
           <Field label="Notes" style={{ marginTop: 12 }}>
             <textarea className="form-input" name="notes" rows={3} value={form.notes} onChange={handleChange} placeholder="Anything else worth knowing. Special requests, source of lead, etc." />
