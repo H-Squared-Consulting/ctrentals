@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Questrial&family=Pacifico&family=Montserrat:wght@800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Questrial&family=Yellowtail&family=Montserrat:wght@900&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="loading-screen"></div>
@@ -171,23 +171,34 @@
       '  background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%);',
       '}',
       '.br-hero-content { position: relative; z-index: 1; }',
-      /* Hero wordmark — mirrors the Southern Escapes logo type:
-         "Southern" in a flowing brush script (Pacifico) + "Escapes" in
-         a bold sans (Montserrat 800). No icon — the type does the
-         brand work. Strong drop-shadow + halo keep the gold readable
-         on light photo backgrounds. */
+      /* Hero wordmark — mirrors the Southern Escapes logo:
+         "Southern" in Yellowtail (brush script, mid-grey) + "Escapes"
+         in Montserrat 900 (heavy sans, pure black). A bright white
+         text-shadow gives both halves a halo so the dark/grey ink
+         stays legible over any photo (the logo itself is flat ink on
+         a white background — we recreate that contrast with the halo
+         instead of forcing the hero photo to dim). */
       '.br-hero-brand {',
-      '  display: flex; align-items: baseline; gap: 10px;',
-      '  margin-bottom: 14px; line-height: 1; color: var(--gold);',
-      '  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7), 0 0 2px rgba(0, 0, 0, 0.4);',
+      '  display: flex; align-items: baseline; gap: 6px;',
+      '  margin-bottom: 14px; line-height: 1;',
       '}',
+      /* Colors sampled directly from Logo_Pack/Logo_PNG.png:
+         "Southern" stroke = #6D6D6D, "ESCAPES" stroke = #000.
+         The exact display font is shipped as outlined paths in the
+         supplied SVG/PNG, so Google Fonts can only approximate —
+         Yellowtail is the closest free brush script with the
+         "closed-S, flowing-t" character of the original. */
       '.br-hero-brand-script {',
-      '  font-family: "Pacifico", cursive; font-size: 40px; font-weight: 400;',
-      '  letter-spacing: 0; transform: translateY(2px);',
+      '  font-family: "Yellowtail", cursive; font-weight: 400;',
+      '  font-size: 36px; color: #6D6D6D; letter-spacing: 0;',
+      '  transform: translateY(2px);',
+      '  text-shadow: 0 0 12px rgba(255,255,255,0.95), 0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.25);',
       '}',
       '.br-hero-brand-sans {',
-      '  font-family: "Montserrat", -apple-system, sans-serif; font-weight: 800;',
-      '  font-size: 28px; letter-spacing: 4px; text-transform: uppercase;',
+      '  font-family: "Montserrat", -apple-system, sans-serif; font-weight: 900;',
+      '  font-size: 22px; color: #000; letter-spacing: 1px;',
+      '  text-transform: uppercase;',
+      '  text-shadow: 0 0 12px rgba(255,255,255,0.95), 0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.25);',
       '}',
       /* Logo image variant of the hero brand mark. The source PNG is
          black-on-transparent; inverted via filter so it reads as white
@@ -197,9 +208,9 @@
       '  filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,0.5));',
       '}',
       '@media (max-width: 640px) {',
-      '  .br-hero-brand { gap: 7px; margin-bottom: 10px; }',
-      '  .br-hero-brand-script { font-size: 30px; }',
-      '  .br-hero-brand-sans   { font-size: 22px; letter-spacing: 3px; }',
+      '  .br-hero-brand { gap: 5px; margin-bottom: 10px; }',
+      '  .br-hero-brand-script { font-size: 26px; }',
+      '  .br-hero-brand-sans   { font-size: 17px; letter-spacing: 1px; }',
       '  .br-hero-logo { height: 44px; }',
       '}',
       '.br-hero-title {',
