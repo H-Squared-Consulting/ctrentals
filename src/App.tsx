@@ -29,6 +29,10 @@ import PriceListPage from './pages/PriceListPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import AgentPortalPage from './pages/AgentPortalPage';
+import GuidebookPage from './pages/GuidebookPage';
+import GuidebookEmergencyPage from './pages/GuidebookEmergencyPage';
+import GuidebookListPage from './pages/GuidebookListPage';
+import GuidebookEditorPage from './pages/GuidebookEditorPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -157,7 +161,12 @@ export function App() {
   // through regardless of host.
   const isAgentPortalRoute = typeof window !== 'undefined'
     && window.location.pathname.startsWith('/q/');
-  if (!isAdminHost() && !isAgentPortalRoute) {
+  // Public guidebook viewer also renders on any host so guests can
+  // open /g/:slug straight from their confirmation email regardless
+  // of which domain hosts the app.
+  const isGuidebookRoute = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/g/');
+  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute) {
     return <ComingSoon />;
   }
 
@@ -171,12 +180,22 @@ export function App() {
           chrome, renders on any host (e.g. southernescapes.co.za/q/...). */}
       <Route path="/q/:token" element={<AgentPortalPage />} />
 
+      {/* Public per-property guidebook. Slug-addressed (e.g. /g/montrose-terrace),
+          no auth, no admin chrome. RLS limits anon reads to is_published rows.
+          Emergency lives at /g/:slug/emergency — deep-linkable + reachable via the FAB. */}
+      <Route path="/g/:slug"           element={<GuidebookPage />} />
+      <Route path="/g/:slug/emergency" element={<GuidebookEmergencyPage />} />
+
       {/* Home */}
       <Route path="/dashboard" element={<Page><HomePage /></Page>} />
       <Route path="/price-list" element={<Page><PriceListPage /></Page>} />
 
       {/* Properties + Brochures */}
       <Route path="/properties" element={<Page><PropertiesPage /></Page>} />
+
+      {/* Guidebooks — admin editor (the public guest viewer is /g/:slug). */}
+      <Route path="/guidebooks"      element={<Page><GuidebookListPage /></Page>} />
+      <Route path="/guidebooks/:id"  element={<Page><GuidebookEditorPage /></Page>} />
       {/* Brochures lived as a sibling of Properties. Removed from the
           nav because it duplicated the property card's Copy / Preview
           actions; redirect the URL so old bookmarks still land somewhere

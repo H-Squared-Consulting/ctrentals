@@ -377,6 +377,24 @@ body {
   border-color: #25D366;
 }
 .btn-whatsapp:hover { background: #128C7E; border-color: #128C7E; }
+
+/* Tap-to-call — used by the guidebook host card. Brand blue, contrasts
+   with the WhatsApp green so users tell them apart at a glance. */
+.btn-tel {
+  background: var(--color-primary);
+  color: #fff;
+  border: 1px solid var(--color-primary);
+}
+.btn-tel:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+
+/* Emergency variant — used by the FAB, quick-actions emergency chip,
+   and the Emergency page's national-line buttons. Solid danger red. */
+.btn-emergency {
+  background: var(--color-danger);
+  color: #fff;
+  border: 1px solid var(--color-danger);
+}
+.btn-emergency:hover { background: #B91C1C; border-color: #B91C1C; color: #fff; }
 /* Brand-blue outline. Same shape as the WhatsApp variant for visual
  * pairing on contact cards and similar two-channel CTAs. */
 .btn-outline-primary {
@@ -4979,3 +4997,2375 @@ button.ops-board-card-tag--clickable:active {
   line-height: 1.5;
 }
 .pricing-deal-summary strong { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ================================================================
+   Guidebook (public viewer at /g/:slug)
+   ------------------------------------------------------------------
+   Magazine-grade layout that mirrors the brochure visual language:
+   Questrial body, Yellowtail + Montserrat 900 wordmark, gold rule
+   accents, a centered canvas with a soft drop-shadow, and section
+   eyebrows + ledes for a designed feel. Lives outside the admin
+   chrome so it stays clean on any host.
+   ================================================================ */
+.gb-page {
+  --gb-gold: var(--color-primary);
+  --gb-gold-soft: var(--color-primary-bg);
+  --gb-ink: #1a1a1a;
+  --gb-ink-mid: #444;
+  --gb-ink-soft: #6B6B6B;
+  --gb-linen: #F4F0EA;
+  --gb-cream: #FBF8F4;
+  --gb-paper: #FFFFFF;
+  min-height: 100vh;
+  background: var(--gb-linen);
+  color: var(--gb-ink);
+  font-family: 'Questrial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.65;
+}
+.gb-page * { box-sizing: border-box; }
+
+/* Loading & not-found ─────────────────────────────────────────────── */
+.gb-loading-wrap {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh;
+  background: var(--color-secondary);
+  color: #fff;
+}
+.gb-loading-spinner {
+  width: 42px; height: 42px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: gb-spin 1s linear infinite;
+}
+@keyframes gb-spin { to { transform: rotate(360deg); } }
+.gb-loading-text {
+  margin-top: 18px;
+  font-size: 0.8125rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.8);
+}
+
+/* Hero ────────────────────────────────────────────────────────────── */
+.gb-hero {
+  position: relative;
+  min-height: clamp(420px, 70vh, 640px);
+  background: var(--color-secondary);
+  background-size: cover;
+  background-position: center;
+  color: #fff;
+  display: flex; align-items: flex-end;
+  padding: clamp(40px, 6vw, 80px) clamp(24px, 6vw, 80px) clamp(80px, 10vw, 140px);
+  overflow: hidden;
+}
+.gb-hero-inner { position: relative; z-index: 1; max-width: 900px; }
+.gb-hero-brand {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 28px; line-height: 1;
+}
+.gb-hero-brand-script {
+  font-family: 'Yellowtail', cursive;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 400;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0,0,0,0.45);
+  transform: translateY(2px);
+}
+.gb-hero-brand-sans {
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 900;
+  font-size: clamp(16px, 2.2vw, 22px);
+  letter-spacing: 0.15em;
+  color: #fff;
+  text-transform: uppercase;
+  text-shadow: 0 2px 18px rgba(0,0,0,0.45);
+}
+.gb-hero-eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+.gb-hero-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: clamp(2.4rem, 6vw, 4.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: #fff;
+  margin-bottom: 18px;
+  text-shadow: 0 2px 24px rgba(0,0,0,0.35);
+}
+.gb-hero-meta {
+  font-size: clamp(0.875rem, 1.2vw, 1rem);
+  color: rgba(255,255,255,0.9);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+.gb-hero-scroll-cue {
+  position: absolute;
+  bottom: 32px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  color: rgba(255,255,255,0.7);
+}
+.gb-hero-scroll-line {
+  width: 1px; height: 36px;
+  background: linear-gradient(to bottom, transparent, currentColor);
+}
+.gb-hero-scroll-label {
+  font-size: 0.625rem; letter-spacing: 0.32em; text-transform: uppercase;
+}
+
+/* Sticky in-page nav ──────────────────────────────────────────────── */
+.gb-nav {
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(255,255,255,0.97);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+}
+.gb-nav-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gb-nav-tabs {
+  display: flex; gap: 4px;
+  flex: 1; min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.gb-nav-tabs::-webkit-scrollbar { display: none; }
+.gb-nav-link {
+  appearance: none;
+  background: transparent; border: none;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--gb-ink-soft);
+  padding: 18px 16px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.gb-nav-link:hover { color: var(--gb-ink); }
+.gb-nav-link.is-active {
+  color: var(--gb-gold);
+  border-bottom-color: var(--gb-gold);
+}
+
+/* Canvas ──────────────────────────────────────────────────────────── */
+.gb-canvas {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--gb-paper);
+  box-shadow: 0 4px 60px rgba(0,0,0,0.06);
+}
+@media (min-width: 1100px) {
+  .gb-canvas { margin: -64px auto 56px; border-radius: 4px; }
+}
+
+/* Generic section frame ─────────────────────────────────────────── *
+ * Padding was clamp(56,7vw,96) — generous magazine rhythm but it
+ * left ~150px of whitespace between every section, doubling the
+ * total scroll length. Tightened to clamp(32,4vw,56) so the page
+ * still breathes but stops feeling endless. */
+.gb-section {
+  padding: clamp(32px, 4vw, 56px) clamp(20px, 5vw, 60px);
+  position: relative;
+}
+.gb-section--cream { background: var(--gb-cream); }
+.gb-section--white { background: var(--gb-paper); }
+.gb-section--linen { background: var(--gb-linen); }
+
+.gb-section-head { text-align: center; margin-bottom: 24px; }
+.gb-eyebrow {
+  font-size: 0.625rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--gb-gold);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.gb-section-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 500;
+  font-size: clamp(1.625rem, 3.2vw, 2.125rem);
+  letter-spacing: -0.01em;
+  color: var(--gb-ink);
+  line-height: 1.1;
+  margin-bottom: 10px;
+}
+.gb-rule {
+  width: 44px; height: 2px;
+  background: var(--gb-gold);
+  margin: 0 auto 12px;
+}
+.gb-section-lede {
+  max-width: 560px;
+  margin: 0 auto;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--gb-ink-mid);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+}
+
+/* Shared prose styling for any *_html field ───────────────────────── */
+.gb-prose {
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--gb-ink-mid);
+}
+.gb-prose p { margin-bottom: 12px; }
+.gb-prose p:last-child { margin-bottom: 0; }
+.gb-prose strong { font-weight: 600; color: var(--gb-ink); }
+.gb-prose em { font-style: italic; color: var(--gb-ink-mid); }
+.gb-prose ul { margin: 8px 0 12px 20px; padding-left: 8px; }
+.gb-prose ul li { margin-bottom: 4px; }
+.gb-prose a { color: var(--gb-gold); text-decoration: none; border-bottom: 1px solid currentColor; }
+
+/* ── Arrival ─────────────────────────────────────────────────────── */
+.gb-arrival-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 720px) {
+  .gb-arrival-grid { grid-template-columns: 1fr; }
+}
+.gb-arrival-card {
+  background: var(--gb-paper);
+  border: 1px solid rgba(0,0,0,0.07);
+  border-radius: 6px;
+  padding: clamp(18px, 2.4vw, 24px);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  display: flex; flex-direction: column; gap: 10px;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.gb-arrival-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+.gb-arrival-card--full { grid-column: 1 / -1; }
+.gb-arrival-card--wifi { background: linear-gradient(180deg, var(--gb-paper) 0%, var(--gb-cream) 100%); }
+.gb-arrival-icon {
+  width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gb-cream, #FBF8F2);
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.05);
+  font-size: 22px;
+  line-height: 1;
+}
+.gb-arrival-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--gb-ink);
+  letter-spacing: -0.005em;
+}
+
+/* WiFi card specifics */
+.gb-wifi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+@media (max-width: 480px) { .gb-wifi-grid { grid-template-columns: 1fr; } }
+.gb-wifi-field {
+  background: var(--gb-gold-soft);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.gb-wifi-label {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gb-gold);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.gb-wifi-value {
+  font-size: 1.0625rem;
+  font-weight: 500;
+  color: var(--gb-ink);
+  user-select: all;
+}
+.gb-wifi-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gb-wifi-notes { margin-top: 6px; font-style: italic; font-size: 0.875rem; }
+
+/* ── Your Stay (House manual) ────────────────────────────────────── */
+.gb-manual-groups {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex; flex-direction: column;
+  gap: 28px;
+}
+.gb-manual-group {
+  display: flex; flex-direction: column;
+  gap: 10px;
+}
+.gb-manual-group-head {
+  display: flex; align-items: center;
+  gap: 14px;
+  margin-bottom: 2px;
+}
+.gb-manual-group-eyebrow {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--gb-ink);
+  flex-shrink: 0;
+}
+.gb-manual-group-num {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+  color: var(--gb-gold);
+  text-transform: none;
+}
+.gb-manual-group-rule {
+  flex: 1; height: 1px;
+  background: rgba(0,0,0,0.12);
+}
+
+.gb-manual-list {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.gb-manual-card {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 14px;
+  background: var(--gb-paper);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 6px;
+  padding: clamp(16px, 2.4vw, 22px);
+  align-items: flex-start;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+
+/* v2 card — photo-first variant with native <details> collapse on
+   mobile, always-open on desktop. Replaces the old number-column
+   grid (numbering now lives on the group eyebrow instead). */
+.gb-manual-card--v2 {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+.gb-manual-card--v2:hover {
+  box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.12);
+}
+.gb-manual-photo {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--border-light);
+}
+.gb-manual-details {
+  padding: 14px 18px 16px;
+}
+.gb-manual-summary {
+  display: grid;
+  grid-template-columns: 36px 1fr 22px;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.gb-manual-summary::-webkit-details-marker { display: none; }
+.gb-manual-summary-icon {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gb-cream, #FBF8F2);
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.05);
+  font-size: 18px;
+  line-height: 1;
+}
+.gb-manual-summary-icon svg { width: 18px; height: 18px; }
+.gb-manual-summary-text { min-width: 0; }
+.gb-manual-summary .gb-manual-category {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gb-gold);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.gb-manual-summary .gb-manual-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.0625rem;
+  color: var(--gb-ink);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+}
+.gb-manual-summary-chevron {
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--text-light);
+  transition: transform 0.18s ease;
+  justify-self: end;
+}
+.gb-manual-details[open] .gb-manual-summary-chevron { transform: rotate(90deg); }
+.gb-manual-body { margin-top: 12px; padding-left: 48px; }
+@media (max-width: 520px) {
+  .gb-manual-body { padding-left: 0; }
+}
+
+/* Desktop — JS in ManualGroups forces every <details> to [open] so
+   the body shows unconditionally. CSS just hides the chevron and
+   drops the pointer cursor so the summary doesn't read as clickable. */
+@media (min-width: 769px) {
+  .gb-manual-details { padding-bottom: 18px; }
+  .gb-manual-details .gb-manual-summary { cursor: default; }
+  .gb-manual-summary-chevron { display: none; }
+}
+@media (max-width: 560px) {
+  .gb-manual-card { grid-template-columns: 1fr; gap: 12px; }
+}
+.gb-manual-num {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 2.25rem;
+  color: var(--gb-gold);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  opacity: 0.55;
+}
+.gb-manual-body-wrap { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gb-manual-icon {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gb-gold-soft);
+  color: var(--gb-gold);
+  border-radius: 50%;
+  margin-bottom: 2px;
+}
+.gb-manual-head { margin-bottom: 4px; }
+.gb-manual-category {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gb-gold);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.gb-manual-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+  color: var(--gb-ink);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+}
+
+/* ── Explore (recommendations) ───────────────────────────────────── */
+.gb-rec-group { margin-bottom: 56px; }
+.gb-rec-group:last-child { margin-bottom: 0; }
+.gb-rec-group-head {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 22px;
+}
+.gb-rec-group-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.625rem;
+  letter-spacing: -0.005em;
+  color: var(--gb-ink);
+  flex-shrink: 0;
+}
+.gb-rec-group-rule {
+  flex: 1; height: 1px;
+  background: rgba(0,0,0,0.12);
+}
+
+.gb-rec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+}
+.gb-rec-card {
+  background: var(--gb-paper);
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.06);
+  display: flex; flex-direction: column;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.gb-rec-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.10);
+}
+/* First card in each category becomes the featured (wider) card to give
+   each section a magazine-cover feel rather than a uniform grid. */
+.gb-rec-card--featured {
+  grid-column: span 2;
+  flex-direction: row;
+}
+@media (max-width: 720px) {
+  .gb-rec-card--featured { grid-column: span 1; flex-direction: column; }
+}
+.gb-rec-image {
+  width: 100%;
+  height: 200px;
+  background-size: cover;
+  background-position: center;
+  background-color: #eee;
+  position: relative;
+}
+.gb-rec-card--featured .gb-rec-image {
+  width: 55%;
+  height: auto;
+  min-height: 280px;
+}
+@media (max-width: 720px) {
+  .gb-rec-card--featured .gb-rec-image { width: 100%; height: 220px; min-height: 0; }
+}
+.gb-rec-image--placeholder {
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--gb-cream), var(--gb-linen));
+  color: var(--gb-gold);
+  font-size: 36px;
+}
+.gb-rec-body {
+  padding: 22px 24px 24px;
+  display: flex; flex-direction: column; gap: 10px;
+  flex: 1;
+}
+.gb-rec-card--featured .gb-rec-body {
+  padding: 32px clamp(24px, 4vw, 40px);
+  justify-content: center;
+}
+.gb-rec-cat-pill {
+  font-size: 0.625rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gb-gold);
+  font-weight: 700;
+}
+.gb-rec-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  color: var(--gb-ink);
+  letter-spacing: -0.005em;
+}
+.gb-rec-card--featured .gb-rec-name { font-size: 1.625rem; }
+.gb-rec-description {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--gb-ink-mid);
+}
+.gb-rec-card--featured .gb-rec-description { font-size: 0.9375rem; }
+.gb-rec-meta {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 0.8125rem;
+}
+.gb-rec-address {
+  display: flex; align-items: flex-start; gap: 8px;
+  color: var(--gb-ink-soft);
+  line-height: 1.4;
+}
+.gb-rec-address svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
+.gb-rec-address .gb-emoji { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.gb-rec-link {
+  display: inline-flex; align-items: center;
+  color: var(--gb-gold);
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  font-size: 0.8125rem;
+  margin-top: 2px;
+}
+.gb-rec-link:hover { color: var(--color-primary-hover); }
+
+.gb-empty {
+  text-align: center;
+  color: var(--gb-ink-soft);
+  font-style: italic;
+  padding: 40px 0;
+}
+
+/* Footer — mirrors Logo_Pack/footer.png. Actual brand mark on a cream
+   wash with a tight copyright line beneath. */
+.gb-footer {
+  background: var(--gb-cream, #FBF8F2);
+  color: var(--gb-ink-soft, #6B6B6B);
+  text-align: center;
+  padding: clamp(40px, 5vw, 64px) clamp(24px, 5vw, 48px);
+  border-top: 1px solid rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.gb-footer-logo {
+  display: block;
+  width: auto;
+  height: clamp(56px, 7vw, 84px);
+  max-width: 320px;
+  object-fit: contain;
+}
+.gb-footer-copy {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--gb-ink-soft, #6B6B6B);
+  font-weight: 500;
+}
+
+/* ================================================================
+   Guidebooks — admin list + editor
+   ------------------------------------------------------------------
+   Uses the existing admin chrome (data-table, form-*, btn-*, status-
+   badge, empty-state). The editor borrows the detail-modal visual
+   language (accent strip + sticky topbar) but lives as a full page.
+   ================================================================ */
+
+/* List row */
+.gb-list-row-property {
+  display: flex; align-items: center; gap: 12px;
+  min-width: 0;
+}
+.gb-list-row-thumb {
+  width: 40px; height: 28px;
+  border-radius: 4px;
+  background-size: cover; background-position: center;
+  background-color: var(--border-light);
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+.gb-list-row-thumb--blank { background: linear-gradient(135deg, var(--color-primary-bg), #fff); }
+.gb-list-row-name { font-weight: 600; color: var(--text); }
+.gb-list-slug {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.gb-list-actions { display: inline-flex; gap: 6px; }
+
+/* Editor — page chrome */
+.gb-editor {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.gb-editor-strip {
+  height: 5px;
+  background: var(--color-primary);
+}
+
+.gb-editor-topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky; top: 0; z-index: 5;
+  flex-wrap: wrap;
+}
+.gb-editor-back {
+  background: transparent; border: none;
+  color: var(--text-secondary);
+  font-size: 0.8125rem; font-weight: 500;
+  cursor: pointer; padding: 4px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.gb-editor-back:hover { background: var(--bg); color: var(--text); }
+.gb-editor-topbar-title {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1; min-width: 0;
+  flex-wrap: wrap;
+}
+.gb-editor-topbar-name {
+  font-size: 1.125rem; font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+.gb-editor-topbar-slug {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.gb-editor-topbar-actions {
+  display: inline-flex; gap: 8px;
+}
+
+/* Editor — two-pane body */
+.gb-editor-body {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 480px;
+}
+@media (max-width: 768px) {
+  .gb-editor-body { grid-template-columns: 1fr; }
+}
+.gb-editor-nav {
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  padding: 16px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+@media (max-width: 768px) {
+  .gb-editor-nav {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+.gb-editor-nav-link {
+  appearance: none;
+  background: transparent; border: none;
+  font-family: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+.gb-editor-nav-link:hover { background: var(--surface); color: var(--text); }
+.gb-editor-nav-link.is-active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.gb-editor-nav-label { flex: 1; min-width: 0; }
+.gb-editor-nav-future {
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.gb-editor-nav-link.is-active .gb-editor-nav-future {
+  color: var(--color-primary);
+  background: var(--surface);
+  border-color: var(--color-primary-light);
+}
+
+/* Editor — right panel */
+.gb-editor-panel {
+  padding: 24px 28px 32px;
+  min-width: 0;
+}
+@media (max-width: 600px) { .gb-editor-panel { padding: 18px 16px 24px; } }
+.gb-editor-section { display: flex; flex-direction: column; gap: 20px; }
+.gb-editor-section-head { display: flex; flex-direction: column; gap: 4px; }
+.gb-editor-section-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+.gb-editor-section-lede {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-width: 640px;
+}
+
+.gb-editor-hero-preview {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 480px;
+}
+.gb-editor-hero-preview img {
+  width: 100%; height: auto; display: block;
+}
+
+.gb-editor-preview-actions {
+  display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* Status-badge semantic variants — used by the guidebook list & editor
+   (Published / Draft / Unsaved). Cheap colour set mirrors the
+   .ops-status-pill semantic ramp. */
+.status-badge--success { background: var(--success-bg); color: #065F46; }
+.status-badge--warning { background: #FEF3C7; color: #92400E; }
+.status-badge--danger  { background: var(--error-bg); color: #991B1B; }
+.status-badge--info    { background: var(--info-bg); color: #1E40AF; }
+
+/* Small helper text below a form input. Matches the form-label hierarchy
+   (lowercase, regular weight, lighter colour, slightly smaller). */
+.form-hint {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  line-height: 1.45;
+}
+.form-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+
+/* Compact "X items" indicator next to the list-search pill. */
+.list-count {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+/* ================================================================
+   Guidebook — Quick-actions strip + Host card + Toast (PR #3)
+   ================================================================ */
+
+/* Hero wordmark — bumped to Pacifico per design guide §3.2. Yellowtail
+   remains as the fallback so older caches still render. */
+.gb-page .gb-hero-brand-script { font-family: 'Pacifico', 'Yellowtail', cursive; }
+
+/* Emoji glyph baseline — colour emojis ignore currentColor so we just
+   ensure consistent line-height + vertical alignment wherever they
+   land. */
+.gb-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-style: normal;
+}
+
+/* Quick-actions wrap sits between the hero and the sticky nav. The
+   strip itself uses negative top margin so it visually rests against
+   the hero's lower edge (brochure "tab strip" treatment). The wrap
+   is the canvas-width container so the chips align with the canvas. */
+.gb-qa-wrap {
+  position: relative;
+  z-index: 5;
+  max-width: 900px;
+  margin: -36px auto 0;
+  padding: 0 16px;
+}
+@media (min-width: 768px) { .gb-qa-wrap { padding: 0 28px; } }
+
+.gb-qa-strip {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.04);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.gb-qa-strip::-webkit-scrollbar { display: none; }
+@media (min-width: 768px) {
+  .gb-qa-strip { justify-content: center; flex-wrap: wrap; overflow-x: visible; }
+}
+
+.gb-qa-chip {
+  appearance: none;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  min-height: 44px;        /* WCAG / HIG tap target */
+  background: var(--gb-cream, #FBF8F2);
+  border: 1px solid rgba(0,0,0,0.05);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gb-ink, #1a1a1a);
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.gb-qa-chip:hover {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+.gb-qa-chip:active { transform: translateY(1px); }
+.gb-qa-chip svg { width: 18px; height: 18px; flex-shrink: 0; }
+.gb-qa-chip-label { line-height: 1; }
+.gb-qa-chip.is-expanded {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.gb-qa-chip--emergency {
+  background: var(--error-bg);
+  border-color: rgba(220,38,38,0.25);
+  color: #991B1B;
+}
+.gb-qa-chip--emergency:hover {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+.gb-qa-chip--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.gb-qa-chip--disabled:hover {
+  background: var(--gb-cream, #FBF8F2);
+  border-color: rgba(0,0,0,0.05);
+  color: var(--gb-ink, #1a1a1a);
+}
+
+/* WiFi reveal panel — slides open under the strip when the WiFi chip
+   is tapped. Keeps the row/copy pattern from the brochure WiFi card. */
+.gb-qa-wifi-panel {
+  margin-top: 8px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+  display: flex; flex-direction: column; gap: 10px;
+  animation: gb-fade-in 0.18s ease both;
+}
+@keyframes gb-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.gb-qa-wifi-row {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .gb-qa-wifi-row { grid-template-columns: 1fr auto; }
+  .gb-qa-wifi-row .gb-qa-wifi-label { grid-column: 1 / -1; }
+}
+.gb-qa-wifi-label {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.gb-qa-wifi-value {
+  font-size: 1.0625rem;
+  font-weight: 500;
+  color: var(--gb-ink, #1a1a1a);
+  user-select: all;
+  word-break: break-all;
+}
+.gb-qa-wifi-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gb-qa-copy {
+  appearance: none;
+  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 10px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.gb-qa-copy:hover { background: var(--bg); color: var(--text); }
+.gb-qa-copy svg { width: 14px; height: 14px; }
+.gb-qa-copy--primary {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+.gb-qa-copy--primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); color: #fff; }
+
+/* Home section — keeps generous breathing room (this is the "welcome
+   landing", first thing the guest reads after the hero). Other
+   sections stay compressed; Home is deliberately taller. */
+.gb-section--home {
+  padding-top:    clamp(48px, 6vw, 80px);
+  padding-bottom: clamp(40px, 5vw, 64px);
+}
+
+/* Host card — centred. Photo or initials, name eyebrow, welcome prose
+   in Playfair italic, Call + WhatsApp buttons. */
+.gb-host-card {
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 14px;
+}
+.gb-host-card-photo {
+  width: 96px; height: 96px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-primary-bg);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 3px solid var(--gb-paper, #fff);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+}
+.gb-host-card-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gb-host-card-initials {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.75rem;
+  color: var(--color-primary);
+  letter-spacing: 0.02em;
+}
+.gb-host-card-name {
+  font-size: 0.6875rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--gb-gold, #d4af37);
+  font-weight: 700;
+}
+.gb-host-card-welcome {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--text);
+  max-width: 520px;
+}
+.gb-host-card-welcome p { margin-bottom: 12px; }
+.gb-host-card-welcome p:last-child { margin-bottom: 0; }
+.gb-host-card-actions {
+  margin-top: 6px;
+  display: flex; gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+}
+.gb-host-card-actions .btn {
+  padding: 12px 18px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.gb-host-card-actions .btn svg { width: 18px; height: 18px; }
+@media (max-width: 480px) {
+  .gb-host-card-actions { flex-direction: column; }
+  .gb-host-card-actions .btn { width: 100%; }
+}
+
+/* Live toast — used by copy buttons + quick-action feedback. */
+.gb-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--color-secondary);
+  color: #fff;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5000;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.gb-toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Drop the original hero scroll cue overlap with the quick-actions
+   strip on narrow screens — moves the cue up so the strip's drop
+   shadow doesn't crash into the cue's bottom edge. */
+@media (max-width: 600px) {
+  .gb-hero-scroll-cue { bottom: 56px; }
+}
+
+/* ================================================================
+   Guidebook PR #4 — Directions card, refined WiFi card,
+   persistent FAB + host chip, Emergency page.
+   ================================================================ */
+
+/* WiFi card — now full-width inside Arrival so each row gets proper
+   breathing room. Each row is a 3-column grid: small uppercase label
+   on the left, the big monospace value in the middle, copy button on
+   the right. Stacks on narrow screens so the value never gets squashed. */
+.gb-wifi-rows {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.gb-wifi-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  background: var(--gb-cream, #FBF8F2);
+  border: 1px solid rgba(0,0,0,0.05);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.gb-wifi-row-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.gb-wifi-row-value {
+  font-size: 1.0625rem;
+  font-weight: 500;
+  color: var(--gb-ink, #1a1a1a);
+  user-select: all;
+  min-width: 0;
+  word-break: break-word;
+}
+@media (max-width: 520px) {
+  .gb-wifi-row {
+    grid-template-columns: 1fr auto;
+    row-gap: 6px;
+  }
+  .gb-wifi-row-label { grid-column: 1 / -1; }
+}
+
+/* Directions card — full-width arrival card with map + CTAs + collapse. */
+.gb-arrival-card--directions { gap: 16px; }
+.gb-directions-address {
+  font-size: 0.9375rem;
+  color: var(--gb-ink, #1a1a1a);
+  font-weight: 500;
+  margin-top: -4px;
+}
+.gb-directions-map {
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--border-light);
+  border: 1px solid var(--border);
+}
+.gb-directions-actions {
+  display: flex; gap: 10px;
+  flex-wrap: wrap;
+}
+.gb-directions-actions .btn svg { width: 18px; height: 18px; }
+@media (max-width: 480px) {
+  .gb-directions-actions { flex-direction: column; }
+  .gb-directions-actions .btn { width: 100%; }
+}
+.gb-directions-details {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.gb-directions-details summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gb-ink-soft);
+  list-style: none;
+}
+.gb-directions-details summary::-webkit-details-marker { display: none; }
+.gb-directions-details summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.18s ease;
+  color: var(--gb-gold, #d4af37);
+}
+.gb-directions-details[open] summary::before { transform: rotate(90deg); }
+.gb-directions-details summary:hover { color: var(--gb-ink); }
+.gb-directions-details .gb-prose { margin-top: 10px; }
+
+/* ── Persistent Emergency FAB ─────────────────────────────────── *
+ * Bottom-right on mobile, fixed. On wide viewports the same FAB sits
+ * in the top-right header zone with a translucent backing so it
+ * doesn't dominate. Always one tap away. */
+.gb-fab {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  padding: 14px 18px;
+  z-index: 90;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.gb-fab svg { width: 20px; height: 20px; }
+.gb-fab-label { line-height: 1; }
+.gb-fab:hover { transform: translateY(-2px); }
+.gb-fab:active { transform: translateY(0); }
+
+.gb-fab--emergency {
+  background: var(--color-danger);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(220,38,38,0.45);
+  bottom: 18px;
+  right: 18px;
+}
+.gb-fab--emergency:hover {
+  background: #B91C1C;
+  box-shadow: 0 12px 28px rgba(220,38,38,0.50);
+}
+
+/* Tablet+ — anchor the FAB to the top-right and shrink padding so it
+   reads as a header chip rather than a giant button. */
+@media (min-width: 1024px) {
+  .gb-fab--emergency {
+    top: 16px;
+    right: 20px;
+    bottom: auto;
+    padding: 10px 14px;
+    font-size: 0.75rem;
+    box-shadow: 0 4px 14px rgba(220,38,38,0.35);
+  }
+  .gb-fab--emergency svg { width: 16px; height: 16px; }
+}
+
+/* ── Persistent host-contact chip ─────────────────────────────── *
+ * Slides into view bottom-left on mobile after the user scrolls past
+ * the hero/host card. Pinned chip in the top-right on desktop. */
+.gb-host-chip {
+  position: fixed;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 999px;
+  padding: 6px 10px 6px 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 80;
+  opacity: 0;
+  transform: translateY(20px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.gb-host-chip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.gb-host-chip-avatar {
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-primary-bg);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--color-primary);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+}
+.gb-host-chip-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.gb-host-chip-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gb-ink, #1a1a1a);
+}
+.gb-host-chip-action {
+  width: 36px; height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.gb-host-chip-action svg { width: 18px; height: 18px; }
+.gb-host-chip-action:hover { background: var(--color-primary-hover); transform: translateY(-1px); }
+.gb-host-chip-action--wa { background: #25D366; }
+.gb-host-chip-action--wa:hover { background: #128C7E; }
+@media (max-width: 480px) {
+  .gb-host-chip-name { display: none; }
+}
+@media (min-width: 1024px) {
+  .gb-host-chip {
+    top: 16px;
+    left: auto;
+    right: calc(20px + 160px); /* sits to the left of the Emergency FAB */
+    bottom: auto;
+  }
+}
+
+/* ================================================================
+   Emergency page
+   ================================================================ */
+.gb-emergency-page {
+  background: var(--gb-paper, #fff);
+}
+.gb-emergency-header {
+  background: linear-gradient(180deg, #FEF2F2 0%, #FFFFFF 100%);
+  padding: clamp(40px, 6vw, 80px) clamp(20px, 5vw, 48px) clamp(28px, 4vw, 44px);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.gb-emergency-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 16px;
+  padding: 6px 10px;
+  margin-left: -10px;
+  border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.gb-emergency-back svg { width: 16px; height: 16px; }
+.gb-emergency-back:hover { background: rgba(0,0,0,0.04); color: var(--gb-ink, #1a1a1a); }
+.gb-emergency-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: clamp(2.25rem, 5vw, 3.25rem);
+  letter-spacing: -0.01em;
+  color: var(--color-danger);
+  line-height: 1.05;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.gb-emergency-lede {
+  max-width: 560px;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.gb-emergency-main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: clamp(24px, 4vw, 40px) clamp(20px, 5vw, 32px) 120px;
+  display: flex; flex-direction: column;
+  gap: 16px;
+}
+
+.gb-emergency-block {
+  background: var(--gb-paper, #fff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: clamp(20px, 3vw, 28px);
+  box-shadow: var(--shadow-sm);
+}
+.gb-emergency-block--critical {
+  border: 1px solid #FECACA;
+  background: linear-gradient(180deg, #FFF6F6 0%, #FFFFFF 100%);
+}
+.gb-emergency-block-head { margin-bottom: 14px; }
+.gb-emergency-block-eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-danger);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.gb-emergency-block-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+  color: var(--gb-ink, #1a1a1a);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+}
+.gb-emergency-block-sub {
+  margin-top: 4px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.gb-emergency-block-empty {
+  font-size: 0.875rem;
+  color: var(--text-light);
+  font-style: italic;
+}
+.gb-emergency-block-footnote {
+  margin-top: 14px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.gb-emergency-inline-tel {
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+.gb-emergency-actions {
+  display: flex; gap: 10px;
+  flex-wrap: wrap;
+}
+.gb-emergency-actions .btn { padding: 12px 18px; font-size: 0.9375rem; font-weight: 600; }
+.gb-emergency-actions .btn svg { width: 18px; height: 18px; }
+.gb-emergency-btn-big {
+  flex: 1 1 220px;
+  min-height: 48px;
+}
+@media (max-width: 480px) {
+  .gb-emergency-btn-big { flex: 1 1 100%; }
+}
+
+/* Shut-offs */
+.gb-shutoff-list {
+  display: flex; flex-direction: column; gap: 14px;
+  margin-top: 6px;
+}
+.gb-shutoff-card {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  align-items: flex-start;
+}
+@media (max-width: 480px) {
+  .gb-shutoff-card { grid-template-columns: 80px 1fr; gap: 12px; padding: 12px; }
+}
+.gb-shutoff-photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--border-light);
+  border-radius: 8px;
+}
+.gb-shutoff-photo--placeholder {
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #FFF6F6, var(--gb-cream, #FBF8F2));
+  font-size: 32px;
+}
+.gb-shutoff-photo--placeholder svg { width: 28px; height: 28px; }
+.gb-shutoff-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gb-shutoff-eyebrow {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.gb-shutoff-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.0625rem;
+  color: var(--gb-ink, #1a1a1a);
+  letter-spacing: -0.005em;
+}
+
+/* ================================================================
+   Guidebook PR #5 — Admin House Manual panel + TipTap editor
+   ================================================================ */
+.gb-mp {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 18px;
+  align-items: flex-start;
+}
+@media (max-width: 900px) {
+  .gb-mp { grid-template-columns: 1fr; }
+}
+.gb-mp-list {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.gb-mp-list-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.gb-mp-list-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.gb-mp-list-sub {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  margin-top: 2px;
+}
+.gb-mp-list .btn { padding: 6px 10px; font-size: 0.75rem; }
+.gb-mp-rows {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.gb-mp-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.gb-mp-row:hover { border-color: var(--color-primary-light); }
+.gb-mp-row.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+.gb-mp-row-main {
+  appearance: none;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+  min-width: 0;
+}
+.gb-mp-row-cat {
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.gb-mp-row-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gb-mp-row-actions {
+  display: inline-flex;
+  border-left: 1px solid var(--border);
+}
+.gb-mp-row-icon {
+  appearance: none;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  width: 28px; height: 100%;
+  min-height: 36px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.gb-mp-row-icon:hover { background: var(--bg); color: var(--text); }
+.gb-mp-row-icon--danger { color: var(--color-danger); }
+.gb-mp-row-icon--danger:hover { background: var(--error-bg); color: #991B1B; }
+
+.gb-mp-editor {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  min-height: 320px;
+}
+.gb-mp-editor-inner {
+  display: flex; flex-direction: column;
+  gap: 18px;
+}
+.gb-mp-editor-head { display: flex; flex-direction: column; gap: 4px; }
+.gb-mp-editor-eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  font-weight: 600;
+}
+.gb-mp-editor-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+.gb-mp-icon-preview {
+  margin-top: 6px;
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 18px;
+}
+.gb-mp-editor-actions {
+  display: flex; justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* TipTap toolbar + content area. Plain, matches the form-input
+   palette so it sits naturally inside the editor card. */
+.tiptap-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.tiptap-wrap:focus-within {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 0 2px rgba(50,130,184,0.08);
+}
+.tiptap-toolbar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.tiptap-toolbar-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-width: 28px;
+  line-height: 1.4;
+}
+.tiptap-toolbar-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
+.tiptap-toolbar-btn.is-active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border-color: var(--color-primary-light);
+}
+.tiptap-toolbar-sep {
+  width: 1px; height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.tiptap-content { padding: 10px 12px; min-height: 120px; }
+.tiptap-content .ProseMirror {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text);
+  outline: none;
+}
+.tiptap-content .ProseMirror:focus { outline: none; }
+.tiptap-content .ProseMirror p { margin: 0 0 8px; }
+.tiptap-content .ProseMirror p:last-child { margin-bottom: 0; }
+.tiptap-content .ProseMirror ul,
+.tiptap-content .ProseMirror ol { margin: 4px 0 8px 22px; padding-left: 4px; }
+.tiptap-content .ProseMirror li { margin-bottom: 2px; }
+.tiptap-content .ProseMirror h3 {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 12px 0 6px;
+}
+.tiptap-content .ProseMirror a { color: var(--color-primary); }
+.tiptap-empty {
+  padding: 16px;
+  color: var(--text-light);
+  font-size: 0.8125rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ================================================================
+   Guidebook PR #6 — Recommendations: chips, view toggle, Mapbox.
+   ================================================================ */
+.gb-explore-controls {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+/* Filter chip row — horizontal scroll on mobile, wraps on tablet+. */
+.gb-chip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 4px 0;
+  flex: 1; min-width: 0;
+}
+.gb-chip-row::-webkit-scrollbar { display: none; }
+@media (min-width: 768px) {
+  .gb-chip-row { flex-wrap: wrap; overflow: visible; }
+}
+.gb-chip {
+  appearance: none;
+  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gb-ink, #1a1a1a);
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.08);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.gb-chip:hover { background: var(--gb-cream, #FBF8F2); border-color: rgba(0,0,0,0.16); }
+.gb-chip.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.gb-chip-count {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  background: rgba(0,0,0,0.06);
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+.gb-chip.is-active .gb-chip-count {
+  background: rgba(255,255,255,0.22);
+  color: #fff;
+}
+
+/* List / Map view toggle — segmented control. */
+.gb-view-toggle {
+  display: inline-flex;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 999px;
+  padding: 3px;
+  flex-shrink: 0;
+}
+.gb-view-toggle-btn {
+  appearance: none;
+  font-family: inherit;
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.gb-view-toggle-btn:hover { color: var(--gb-ink, #1a1a1a); }
+.gb-view-toggle-btn.is-active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* Card actions row — Open in Maps / Website / Show on map. */
+.gb-rec-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  margin-top: 4px;
+}
+.gb-rec-pin-btn {
+  appearance: none;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.gb-rec-pin-btn:hover { background: var(--color-primary); color: #fff; }
+
+/* Map view wrapper, popover, fallbacks. */
+.gb-explore-map-wrap {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: var(--gb-paper, #fff);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+}
+.gb-recmap {
+  display: block;
+  background: var(--border-light);
+}
+.gb-recmap-empty {
+  padding: 32px;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  background: var(--gb-cream, #FBF8F2);
+}
+.gb-recmap-empty code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.gb-recmap-overlay {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+
+/* Popover anchored bottom-left on the map showing the selected pin's
+   rec card. Mobile-first: full-bleed bottom sheet that doesn't cover
+   the property pin. Desktop: floating card on the lower-left. */
+.gb-recmap-popover {
+  position: absolute;
+  left: 12px; right: 12px;
+  bottom: 12px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column;
+  gap: 8px;
+}
+@media (min-width: 768px) {
+  .gb-recmap-popover { left: 16px; right: auto; max-width: 360px; }
+}
+.gb-recmap-popover-close {
+  position: absolute;
+  top: 8px; right: 10px;
+  appearance: none;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.gb-recmap-popover-close:hover { background: var(--bg); color: var(--text); }
+.gb-recmap-popover .gb-rec-name { font-size: 1.0625rem; }
+.gb-recmap-popover .gb-rec-description {
+  font-size: 0.8125rem;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ================================================================
+   Guidebook PR #7 — ⌘K Search (pill + modal + result highlight)
+   ================================================================ */
+
+/* Pill in the sticky nav. Compact on mobile (icon only), wider on
+   tablet+ with "Search" label and a faint ⌘K kbd hint. */
+.gb-search-pill {
+  appearance: none;
+  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: var(--gb-cream, #FBF8F2);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.gb-search-pill:hover {
+  background: var(--gb-paper, #fff);
+  border-color: var(--color-primary-light);
+  color: var(--gb-ink, #1a1a1a);
+}
+.gb-search-pill-label { display: none; }
+.gb-search-pill-kbd {
+  display: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  background: var(--gb-paper, #fff);
+  color: var(--text-light);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+@media (min-width: 600px) {
+  .gb-search-pill { padding: 7px 12px 7px 14px; }
+  .gb-search-pill-label { display: inline; }
+  .gb-search-pill-kbd   { display: inline; margin-left: 4px; }
+}
+
+/* Modal overlay — full-screen on mobile, centred 640px shell on
+   tablet+. Higher z-index than the FAB so it visually wins. */
+.gb-search-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0;
+}
+@media (min-width: 768px) {
+  .gb-search-overlay {
+    align-items: flex-start;
+    padding: 64px 16px 16px;
+  }
+}
+.gb-search-shell {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  background: var(--gb-paper, #fff);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  animation: gb-search-pop 0.18s ease-out both;
+}
+@keyframes gb-search-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+@media (min-width: 768px) {
+  .gb-search-shell {
+    border-radius: 12px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.22), 0 8px 16px rgba(0,0,0,0.08);
+    max-height: calc(100vh - 96px);
+  }
+}
+
+.gb-search-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.gb-search-icon { font-size: 18px; line-height: 1; opacity: 0.7; }
+.gb-search-input {
+  flex: 1; min-width: 0;
+  border: none; outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 1.0625rem;
+  font-weight: 400;
+  color: var(--gb-ink, #1a1a1a);
+}
+.gb-search-input::placeholder { color: var(--text-placeholder); }
+.gb-search-hint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  color: var(--text-light);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  /* Phones don't have an Esc key — hide on small screens. */
+  display: none;
+}
+@media (min-width: 768px) {
+  .gb-search-hint { display: inline-block; }
+}
+
+/* Tappable close — primarily for mobile (no Esc key) but visible
+   everywhere as a redundant affordance. ≥44×44 hit target. */
+.gb-search-close {
+  appearance: none;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  cursor: pointer;
+  width: 36px; height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.gb-search-close:hover { background: var(--bg); color: var(--gb-ink, #1a1a1a); }
+
+.gb-search-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0;
+}
+.gb-search-section {
+  padding: 14px 18px 4px;
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-light);
+}
+
+.gb-search-result {
+  appearance: none;
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 36px 1fr 24px;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 18px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.gb-search-result.is-active {
+  background: var(--color-primary-bg);
+  border-left-color: var(--color-primary);
+}
+.gb-search-result-icon {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gb-cream, #FBF8F2);
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+.gb-search-result-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gb-search-result-source {
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.gb-search-result-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--gb-ink, #1a1a1a);
+  line-height: 1.3;
+}
+.gb-search-result-body {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gb-search-result-enter {
+  align-self: center;
+  font-size: 0.875rem;
+  color: var(--text-light);
+  opacity: 0;
+}
+.gb-search-result.is-active .gb-search-result-enter { opacity: 1; color: var(--color-primary); }
+
+.gb-search-empty {
+  padding: 36px 24px;
+  text-align: center;
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.gb-search-empty-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--gb-ink, #1a1a1a);
+}
+.gb-search-empty-body {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.gb-search-footer {
+  display: none;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.6875rem;
+  color: var(--text-light);
+  gap: 10px;
+  align-items: center;
+}
+.gb-search-footer kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.625rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin: 0 4px 0 0;
+}
+@media (min-width: 768px) {
+  .gb-search-footer { display: flex; }
+}
+
+/* Brief outline flash on the section the search jumped to. Calls out
+   the destination without being jarring. */
+@keyframes gb-search-flash-anim {
+  0%   { box-shadow: inset 0 0 0 0 rgba(15,76,117,0); }
+  15%  { box-shadow: inset 0 0 0 3px rgba(15,76,117,0.35); }
+  100% { box-shadow: inset 0 0 0 0 rgba(15,76,117,0); }
+}
+.gb-search-flash {
+  animation: gb-search-flash-anim 1.6s ease-out;
+}
+
+/* ================================================================
+   Guidebook PR #8 — Departure (checklist + progress + check-out)
+   ================================================================ */
+
+/* Big check-out time card sits above the checklist. Gold rule under
+   the time so it reads with the same magazine cadence as section
+   heads — but warmer, since it's the "headline" of Departure. */
+.gb-departure-time {
+  max-width: 760px;
+  margin: 0 auto 18px;
+  text-align: center;
+  padding: 22px 24px;
+  background: var(--gb-paper, #fff);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.gb-departure-time-eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--gb-gold, #d4af37);
+  margin-bottom: 4px;
+}
+.gb-departure-time-value {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  letter-spacing: -0.01em;
+  color: var(--gb-ink, #1a1a1a);
+  line-height: 1.1;
+}
+
+/* Checklist card */
+.gb-checklist-card {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.gb-checklist-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.gb-checklist-sub {
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.gb-checklist-reset {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Slim progress bar — fills as items get ticked. */
+.gb-checklist-progress {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 6px 0 14px;
+}
+.gb-checklist-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gb-gold, #d4af37), var(--color-primary));
+  border-radius: 999px;
+  transition: width 0.28s ease;
+}
+
+.gb-checklist {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 2px;
+}
+.gb-checklist-item {
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+.gb-checklist-item:hover { background: var(--gb-cream, #FBF8F2); }
+
+.gb-checklist-label {
+  display: grid;
+  grid-template-columns: 26px auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  min-height: 48px;          /* WCAG / HIG tap target */
+}
+/* Hide the real checkbox but keep it in the focus order. */
+.gb-checklist-input {
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  pointer-events: none;
+}
+.gb-checklist-box {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gb-paper, #fff);
+  border: 1.6px solid rgba(0,0,0,0.25);
+  border-radius: 6px;
+  color: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.gb-checklist-input:focus-visible + .gb-checklist-box {
+  outline: 2px solid var(--color-primary-light);
+  outline-offset: 2px;
+}
+.gb-checklist-item.is-done .gb-checklist-box {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+.gb-checklist-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+.gb-checklist-text {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--gb-ink, #1a1a1a);
+  line-height: 1.45;
+  transition: color 0.18s ease, opacity 0.18s ease;
+}
+.gb-checklist-item.is-done .gb-checklist-text {
+  color: var(--text-light);
+  text-decoration: line-through;
+  text-decoration-color: rgba(0,0,0,0.25);
+  opacity: 0.7;
+}
+
+/* "Safe travels" closer — only renders when all items are checked. */
+.gb-checklist-done {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: var(--success-bg);
+  border: 1px solid #A7F3D0;
+  border-radius: 8px;
+  display: flex; align-items: center; gap: 12px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #065F46;
+  animation: gb-checklist-pop 0.32s ease-out both;
+}
+.gb-checklist-done-emoji { font-size: 22px; }
+@keyframes gb-checklist-pop {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Admin Departure panel — checklist row editor. */
+.gb-dep-checklist-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.gb-dep-checklist-rows {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.gb-dep-checklist-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.gb-dep-checklist-emoji {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 18px;
+}
+.gb-dep-checklist-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 8px;
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .gb-dep-checklist-fields { grid-template-columns: 1fr; }
+}
+.gb-dep-checklist-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+

@@ -38,6 +38,9 @@ type NavItem = {
   // Marks the section as not yet live. Renders faded with a "Soon" pill.
   // Still clickable so curious clicks land on the placeholder page.
   comingSoon?: boolean;
+  // Hide from everyone except the listed emails. URL access stays open
+  // — this is sidebar visibility only, not a route guard.
+  restrictedTo?: string[];
 };
 
 const NAV: NavItem[] = [
@@ -49,6 +52,7 @@ const NAV: NavItem[] = [
   // redirect so stale bookmarks don't 404.
   { to: '/operations/bookings',    label: 'Bookings',   icon: '📅' },
   { to: '/properties',             label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
+  { to: '/guidebooks',             label: 'Guidebooks', icon: '📖', restrictedTo: ADMIN_ONLY_EMAILS },
   { to: '/crm/people',             label: 'People',     icon: '👥', aliases: ['/crm/home-owners'] },
   { to: '/crm/guests',             label: 'Guests',     icon: '🛏' },
   { to: '/finance',                label: 'Finance',    icon: '💰', comingSoon: true },
@@ -130,7 +134,9 @@ export default function Sidebar() {
       </button>
 
       <nav className="sidebar-nav">
-        {NAV.map(item => {
+        {NAV
+          .filter(item => !item.restrictedTo || item.restrictedTo.includes(user?.email ?? ''))
+          .map(item => {
           const isActive = matches(location.pathname, item);
           const isOpen = !!open[item.to];
           if (!item.children) {
