@@ -12,6 +12,7 @@ import { SkeletonGrid } from '../components/Skeleton';
 import { useToast } from '../components/ToastProvider';
 import MultiPicker from '../components/MultiPicker';
 import { CT_RENTALS_PARTNER_ID, PROPERTY_TYPE_OPTIONS } from './constants';
+import { peakDirectGuestRate } from '../lib/displayRate';
 
 interface Property extends DataRow {
   id: string;
@@ -30,6 +31,10 @@ interface Property extends DataRow {
   amenity_tags: string[] | null;
   is_published: boolean;
   is_archived: boolean;
+  /** 'system' = baseline-driven, 'fixed' = property_fixed_rates carries
+   *  the per-season guest rate directly. Drives which source the card
+   *  displays as Direct. */
+  pricing_mode: 'system' | 'fixed' | null;
   // Operational link bag — same JSONB column the External listing URLs
   // editor writes to. `guidebook` is reserved for the hostful.ly /
   // similar back-of-house digital guide for the property.
@@ -87,16 +92,18 @@ export default function PropertiesPage() {
 
   useEffect(() => { setPageTitle('Properties'); }, [setPageTitle]);
 
-  // Property → 2026 daily rate from baselines. Loaded once alongside the
-  // property list; the card displays the current-year daily rate, which
-  // is the team's source of truth (price_from on the property record is
-  // a separate placeholder field that pre-dated the baselines table).
-  const [dailyRateById, setDailyRateById] = useState<Record<string, number>>({});
+  // Property → peak Direct guest rate (matching /price-list's
+  // Direct column). System-mode properties: directGuestRate(baseline).
+  // Fixed-mode properties: the peak property_fixed_rates.guest_rate
+  // for the current year. Computed once on load via the canonical
+  // helper so the cards never disagree with the Price List.
+  const [directRateById, setDirectRateById] = useState<Record<string, number>>({});
 
   async function loadProperties() {
     try {
       setLoading(true);
-      const [pRes, bRes] = await Promise.all([
+      const year = new Date().getFullYear();
+      const [pRes, bRes, seasonRes] = await Promise.all([
         supabase
           .from('partner_properties')
           .select('*')
@@ -105,16 +112,47 @@ export default function PropertiesPage() {
         supabase
           .from('baselines')
           .select('property_id, daily_rate')
-          .eq('year', new Date().getFullYear()),
+          .eq('year', year),
+        // Resolve the Peak season's id so we can grab the fixed-mode
+        // guest rate for that season specifically (a property can be
+        // Fixed-mode with different guest rates per season).
+        supabase
+          .from('seasons')
+          .select('id, key')
+          .eq('partner_id', CT_RENTALS_PARTNER_ID),
       ]);
-      if (bRes.data) {
-        const m: Record<string, number> = {};
-        for (const b of bRes.data) m[b.property_id] = Number(b.daily_rate);
-        setDailyRateById(m);
-      }
+      const peakSeasonId = (seasonRes.data || []).find((s: any) => s.key === 'peak')?.id ?? null;
+      const fixedRes = peakSeasonId
+        ? await supabase
+            .from('property_fixed_rates')
+            .select('property_id, guest_rate')
+            .eq('year', year)
+            .eq('season_id', peakSeasonId)
+        : { data: [] as Array<{ property_id: string; guest_rate: number }> };
+
+      const baselineById: Record<string, number> = {};
+      for (const b of (bRes.data || [])) baselineById[b.property_id] = Number(b.daily_rate);
+      const fixedById: Record<string, number> = {};
+      for (const f of ((fixedRes as any).data || [])) fixedById[f.property_id] = Number(f.guest_rate);
+
       const { data, error } = pRes;
       if (error) throw error;
-      setProperties((data as Property[]) || []);
+      const props = (data as Property[]) || [];
+
+      // Compute the displayed Direct rate via the same helper the
+      // Price List page uses — pricing-mode aware, no duplicated
+      // arithmetic.
+      const directById: Record<string, number> = {};
+      for (const p of props) {
+        const rate = peakDirectGuestRate({
+          pricingMode: p.pricing_mode ?? null,
+          baselineDailyRate: baselineById[p.id],
+          fixedPeakGuestRate: fixedById[p.id],
+        });
+        if (rate != null) directById[p.id] = rate;
+      }
+      setDirectRateById(directById);
+      setProperties(props);
     } catch (err) {
       console.error('Error loading properties:', err);
     } finally {
@@ -197,8 +235,8 @@ export default function PropertiesPage() {
       let av: number | string | null;
       let bv: number | string | null;
       if (field === 'dailyrate') {
-        av = dailyRateById[a.id] ?? null;
-        bv = dailyRateById[b.id] ?? null;
+        av = directRateById[a.id] ?? null;
+        bv = directRateById[b.id] ?? null;
       } else {
         av = (a as Property)[field as keyof Property] as number | string | null;
         bv = (b as Property)[field as keyof Property] as number | string | null;
@@ -211,7 +249,7 @@ export default function PropertiesPage() {
       return String(av).localeCompare(String(bv)) * mult;
     });
     return list;
-  }, [filteredProperties, sortKey, dailyRateById]);
+  }, [filteredProperties, sortKey, directRateById]);
 
   const filtersActive = !!(bedCounts.length || bathCounts.length || sleepCounts.length || suburbFilter.length);
   function clearFilters() {
@@ -241,16 +279,16 @@ export default function PropertiesPage() {
       render: (row: DataRow) => (row as Property).sleeps ?? '-',
     },
     {
-      // Reads the same baselines source as the card view (dailyRateById),
-      // so the table no longer shows the legacy partner_properties.price_from
-      // that wasn't being updated when daily rates changed in the Pricing
-      // page or the editor.
-      key: 'daily_rate', label: 'Daily Rate', align: 'right' as const, sortable: true, hideOnMobile: true,
+      // Direct guest rate at peak season — same source as the card
+      // view and as /price-list. For system-mode properties this
+      // is directGuestRate(baseline); for fixed-mode it's the peak
+      // property_fixed_rates.guest_rate row.
+      key: 'daily_rate', label: 'Direct rate', align: 'right' as const, sortable: true, hideOnMobile: true,
       render: (row: DataRow) => {
         const p = row as Property;
-        const daily = dailyRateById[p.id];
-        if (!daily) return <span className="text-light">-</span>;
-        return `${p.price_currency || 'ZAR'} ${Number(daily).toLocaleString('en-ZA', { maximumFractionDigits: 0 })} / night`;
+        const rate = directRateById[p.id];
+        if (!rate) return <span className="text-light">-</span>;
+        return `${p.price_currency || 'ZAR'} ${Number(rate).toLocaleString('en-ZA', { maximumFractionDigits: 0 })} / night`;
       },
     },
     {
@@ -484,12 +522,12 @@ export default function PropertiesPage() {
                     )}
                   </div>
                   {(() => {
-                    const daily = dailyRateById[property.id];
-                    if (!daily || daily <= 0) return null;
+                    const rate = directRateById[property.id];
+                    if (!rate || rate <= 0) return null;
                     return (
                       <div className="property-card__price">
-                        {property.price_currency || 'ZAR'} {Number(daily).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                        <span className="property-card__price-label"> / night</span>
+                        {property.price_currency || 'ZAR'} {Number(rate).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        <span className="property-card__price-label"> / night · direct</span>
                       </div>
                     );
                   })()}
@@ -552,7 +590,7 @@ export default function PropertiesPage() {
           // Inject daily_rate from the baselines map so DataTable's built-in
           // column sort can compare on the same value the render uses; the
           // existing nulls-last behaviour in DataTable handles missing rates.
-          data={filteredProperties.map(p => ({ ...p, daily_rate: dailyRateById[p.id] ?? null }))}
+          data={filteredProperties.map(p => ({ ...p, daily_rate: directRateById[p.id] ?? null }))}
           loading={false}
           searchable={false}
           defaultSort={{ key: 'bedrooms', direction: 'desc' }}

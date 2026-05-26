@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { useLayout } from './contexts/LayoutContext';
+import { ModalStackProvider } from './contexts/ModalStackContext';
 import { LoginPage } from './pages/LoginPage';
 import PropertiesPage from './pages/PropertiesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
@@ -9,6 +10,7 @@ import BookingCalendarPage from './pages/BookingCalendarPage';
 import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 import Fab from './components/Fab';
+import GlobalSearchLauncher from './components/GlobalSearchLauncher';
 import Sidebar from './components/Sidebar';
 import SectionPlaceholder from './pages/SectionPlaceholder';
 import PipelinePage from './pages/PipelinePage';
@@ -22,10 +24,15 @@ import HomeOwnersPage from './pages/HomeOwnersPage';
 import SeasonTagsPage from './pages/SeasonTagsPage';
 import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 import FinancePricingPage from './pages/FinancePricingPage';
+import PriceTiersPage from './pages/PriceTiersPage';
 import PriceListPage from './pages/PriceListPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import AgentPortalPage from './pages/AgentPortalPage';
+import GuidebookPage from './pages/GuidebookPage';
+import GuidebookEmergencyPage from './pages/GuidebookEmergencyPage';
+import GuidebookListPage from './pages/GuidebookListPage';
+import GuidebookEditorPage from './pages/GuidebookEditorPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -38,20 +45,30 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const { pageTitle, pageHeaderSlot, pageHeaderHidden } = useLayout();
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <main className="main-content">
-        {!pageHeaderHidden && (
-          <div className={`page-header ${pageHeaderSlot ? 'page-header--slot' : ''}`}>
-            {pageHeaderSlot ? pageHeaderSlot : <h1>{pageTitle}</h1>}
+    // ModalStackProvider coordinates the global search modal's
+    // placement when another primary surface (e.g. the deal modal)
+    // is also open — see contexts/ModalStackContext.tsx.
+    <ModalStackProvider>
+      <div className="app-layout">
+        <Sidebar />
+        <main className="main-content">
+          {!pageHeaderHidden && (
+            <div className={`page-header ${pageHeaderSlot ? 'page-header--slot' : ''}`}>
+              {pageHeaderSlot ? pageHeaderSlot : <h1>{pageTitle}</h1>}
+            </div>
+          )}
+          <div className="page-content">
+            {children}
           </div>
-        )}
-        <div className="page-content">
-          {children}
-        </div>
-      </main>
-      <Fab />
-    </div>
+        </main>
+        <Fab />
+        {/* Always-visible global search — top-right pill + ⌘K
+            shortcut. Mounted ONCE here so the modal state, keyboard
+            listener and pill all live in one place; the FAB's
+            "Search properties" action fires the same open event. */}
+        <GlobalSearchLauncher />
+      </div>
+    </ModalStackProvider>
   );
 }
 
@@ -144,7 +161,12 @@ export function App() {
   // through regardless of host.
   const isAgentPortalRoute = typeof window !== 'undefined'
     && window.location.pathname.startsWith('/q/');
-  if (!isAdminHost() && !isAgentPortalRoute) {
+  // Public guidebook viewer also renders on any host so guests can
+  // open /g/:slug straight from their confirmation email regardless
+  // of which domain hosts the app.
+  const isGuidebookRoute = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/g/');
+  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute) {
     return <ComingSoon />;
   }
 
@@ -158,12 +180,22 @@ export function App() {
           chrome, renders on any host (e.g. southernescapes.co.za/q/...). */}
       <Route path="/q/:token" element={<AgentPortalPage />} />
 
+      {/* Public per-property guidebook. Slug-addressed (e.g. /g/montrose-terrace),
+          no auth, no admin chrome. RLS limits anon reads to is_published rows.
+          Emergency lives at /g/:slug/emergency — deep-linkable + reachable via the FAB. */}
+      <Route path="/g/:slug"           element={<GuidebookPage />} />
+      <Route path="/g/:slug/emergency" element={<GuidebookEmergencyPage />} />
+
       {/* Home */}
       <Route path="/dashboard" element={<Page><HomePage /></Page>} />
       <Route path="/price-list" element={<Page><PriceListPage /></Page>} />
 
       {/* Properties + Brochures */}
       <Route path="/properties" element={<Page><PropertiesPage /></Page>} />
+
+      {/* Guidebooks — admin editor (the public guest viewer is /g/:slug). */}
+      <Route path="/guidebooks"      element={<Page><GuidebookListPage /></Page>} />
+      <Route path="/guidebooks/:id"  element={<Page><GuidebookEditorPage /></Page>} />
       {/* Brochures lived as a sibling of Properties. Removed from the
           nav because it duplicated the property card's Copy / Preview
           actions; redirect the URL so old bookmarks still land somewhere
@@ -208,6 +240,7 @@ export function App() {
       {/* Settings */}
       <Route path="/settings" element={<Navigate to="/settings/pricing" replace />} />
       <Route path="/settings/pricing" element={<Page><SettingsPage tab="pricing"><FinancePricingPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/price-tiers" element={<Page><SettingsPage tab="price-tiers"><PriceTiersPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/seasons" element={<Page><SettingsPage tab="seasons"><SeasonTagsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/platforms" element={<Page><SettingsPage tab="platforms"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/channels" element={<Navigate to="/settings/platforms" replace />} />

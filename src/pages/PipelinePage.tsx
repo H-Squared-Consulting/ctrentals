@@ -49,6 +49,8 @@ import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
 import EnquiryPropertyMatchModal from '../components/EnquiryPropertyMatchModal';
 import NumericMultiSelect from '../components/NumericMultiSelect';
+import PriceRangeFilter from '../components/PriceRangeFilter';
+import { useModalStack } from '../contexts/ModalStackContext';
 import { initialsForEmail, TEAM_INITIALS, type TeamInitials } from '../lib/userInitials';
 
 // ─── Data shapes ────────────────────────────────────────────────────────
@@ -938,7 +940,11 @@ export default function PipelinePage() {
 
   // ── Handlers ──
   function startQuote(d: Deal) {
-    setOpenDeal(null);
+    // Keep openDeal set — the deal modal is hidden while the match
+    // modal is up (see the conditional render below) but remains in
+    // state, so the match-modal "← Back" lands the user right back
+    // in the deal they came from instead of dropping all the way
+    // out to the kanban.
     if (d.enquiry) {
       // Enquiry-attached: use the new property match flow so the
       // filtered + priced + checkbox UX is the same as enquiry
@@ -1426,8 +1432,11 @@ export default function PipelinePage() {
         />
       )}
 
-      {/* Deal detail */}
-      {openDeal && (
+      {/* Deal detail. Hidden while the match modal is up so the
+          two don't stack-overlap; openDeal stays in state so the
+          match modal's Back button drops the user straight back
+          into this deal. */}
+      {openDeal && !matchForExisting && (
         <DealDetailModal
           deal={openDeal.deal}
           initialMode={openDeal.mode}
@@ -2918,6 +2927,23 @@ function DealDetailModal({
 
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
 
+  // Register this modal in the global modal stack so the search
+  // modal (if it opens alongside) can dock to the side instead of
+  // fighting for the center. Cleared on unmount → the search re-
+  // centers automatically.
+  const modalStack = useModalStack();
+  useEffect(() => {
+    if (!modalStack) return;
+    modalStack.setDealOpen(true);
+    return () => modalStack.setDealOpen(false);
+    // setDealOpen is stable (useCallback) — ESLint can't see that
+    // through the context boundary, hence the disable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const focusedModal = modalStack?.focused;
+  const isFaded = !!modalStack?.searchOpen && focusedModal === 'search';
+  const focusSelf = () => modalStack?.focus('deal');
+
   // Auto-focus a specific input on mount when the caller asked for it
   // (e.g. accept-blocker → "Add guest details"). Two RAFs: the first
   // lets the modal mount + body render, the second waits a paint so
@@ -3008,6 +3034,20 @@ function DealDetailModal({
   const [form, setForm] = useState(initialForm);
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
   const fieldsDisabled = mode === 'view';
+  /** Budget slider basis — purely a display preference. Storage is
+   *  always per-night (form.budget_min / form.budget_max). */
+  const [budgetBasis, setBudgetBasis] = useState<'night' | 'stay'>('night');
+  /** Stay length in nights for the per-stay budget toggle. Tracks
+   *  the form's live dates so editing check_in / check_out updates
+   *  the slider scale immediately. */
+  const dealBudgetNights = useMemo(() => {
+    const ci = form.check_in;
+    const co = form.check_out;
+    if (!ci || !co) return 0;
+    const ms = new Date(co).getTime() - new Date(ci).getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    return Math.round(ms / 86_400_000);
+  }, [form.check_in, form.check_out]);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -3444,6 +3484,8 @@ function DealDetailModal({
       footerActions={footerActions}
       footerHint={footerHint}
       onClose={onClose}
+      faded={isFaded}
+      onActivate={focusSelf}
     >
       {/* Section ordering is hasProposals-driven: when the deal has at
           least one proposal, surface them first (that's what the user
@@ -3678,16 +3720,24 @@ function DealDetailModal({
                   </div>
                 )}
                 {e && (
-                  <>
-                    <div className="form-group">
-                      <label className="form-label">Budget min</label>
-                      <input type="number" className="form-input" value={form.budget_min ?? ''} onChange={ev => update('budget_min', ev.target.value ? Number(ev.target.value) : null)} />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Budget max</label>
-                      <input type="number" className="form-input" value={form.budget_max ?? ''} onChange={ev => update('budget_max', ev.target.value ? Number(ev.target.value) : null)} />
-                    </div>
-                  </>
+                  // Budget — same dual-thumb slider the global
+                  // search + new-enquiry form use. Spans both
+                  // grid columns so the labels + toggle have
+                  // room to breathe. Storage is still per-night
+                  // budget_min / budget_max on the enquiries row.
+                  <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                    <label className="form-label">Budget</label>
+                    <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+                      <PriceRangeFilter
+                        min={form.budget_min ?? null}
+                        max={form.budget_max ?? null}
+                        nights={dealBudgetNights}
+                        basis={budgetBasis}
+                        onChange={(min, max) => setForm(prev => ({ ...prev, budget_min: min, budget_max: max }))}
+                        onBasisChange={setBudgetBasis}
+                      />
+                    </fieldset>
+                  </div>
                 )}
               </div>
               <div className="form-group" style={{ marginTop: 4 }}>

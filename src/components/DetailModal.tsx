@@ -17,6 +17,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useDirty } from '../lib/dirtyState';
 import { useBodyScrollLock } from '../lib/useBodyScrollLock';
+import { useModalStack } from '../contexts/ModalStackContext';
 
 export type DetailModalMode = 'view' | 'edit';
 
@@ -51,6 +52,21 @@ interface DetailModalProps {
   children: ReactNode;
   /** Close handler. */
   onClose: () => void;
+  /** Renders the modal at reduced opacity to signal it's the
+   *  background surface in a multi-modal layout (e.g. when the
+   *  global search modal opens alongside on the right). The
+   *  caller wires `onActivate` to bring this modal back into
+   *  focus on click. */
+  faded?: boolean;
+  /** Click handler on the modal body — only used when `faded`
+   *  is true, so a tap on the dimmed surface promotes it to
+   *  the focused modal. */
+  onActivate?: () => void;
+  /** Slide the modal leftward (smoothly) to make room for a
+   *  side-docked partner modal (the global search panel). When
+   *  omitted, DetailModal auto-shifts whenever the global search
+   *  is open — pass `false` to opt out, `true` to force-on. */
+  shifted?: boolean;
 }
 
 /** Section wrapper for content inside the modal body. Use the heading slot
@@ -87,7 +103,27 @@ export default function DetailModal({
   footerHint,
   children,
   onClose,
+  faded = false,
+  onActivate,
+  shifted,
 }: DetailModalProps) {
+  // Default: any centered DetailModal shifts left when the
+  // global search panel is open, so the two sit side-by-side
+  // instead of overlapping. Callers can force-on or opt-out by
+  // passing `shifted` explicitly.
+  const modalStack = useModalStack();
+  const shouldShift = shifted ?? !!modalStack?.searchOpen;
+
+  // Register as a centered "primary" in the modal stack on mount
+  // — keeps the search panel right-docked while this modal is on
+  // screen, and triggers re-center when it closes. DetailModal is
+  // never the search itself, so no skip flag needed.
+  useEffect(() => {
+    if (!modalStack) return;
+    modalStack.pushPrimary();
+    return () => modalStack.popPrimary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Stop the page underneath scrolling while the modal is open.
   // Centralised here so every DetailModal consumer gets it for free.
   useBodyScrollLock();
@@ -121,9 +157,21 @@ export default function DetailModal({
   const showEditButton = mode === 'view' && canEdit && onModeChange;
   const showSaveCancel = mode === 'edit' && onSave;
 
+  // When the modal is faded (background surface in a multi-modal
+  // layout) we suppress the overlay click-to-close — the user
+  // can still hit X / Esc, but a stray click on the dim partner
+  // (the global search modal sitting on the right) shouldn't
+  // accidentally dismiss this one. The inline onClick promotes
+  // this modal back to focused on activation.
   return (
-    <div className="modal-overlay" onClick={requestClose}>
-      <div className="detail-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={faded ? undefined : requestClose}>
+      <div
+        className={`detail-modal ${faded ? 'detail-modal--faded' : ''} ${shouldShift ? 'detail-modal--shifted-left' : ''}`.replace(/\s+/g, ' ').trim()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (faded && onActivate) onActivate();
+        }}
+      >
         <div className="detail-modal-accent" style={{ background: accentColour }} />
         <div className="detail-modal-header">
           <div className="detail-modal-header-text">
