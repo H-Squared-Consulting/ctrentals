@@ -123,6 +123,11 @@ interface Props {
    *  agent scenario. Used when raising a proposal from an agent enquiry —
    *  the agent's already known, no need for the user to re-pick. */
   initialAgentId?: string | null;
+  /** Sub-channel from a platform enquiry (`'airbnb'` | `'vrbo'`). When
+   *  set, the channel is resolved against `channel_defaults.platform_name`
+   *  (case-insensitive) and locked — the user can't switch channels
+   *  because the platform was decided at enquiry capture. */
+  initialPlatformChannel?: string | null;
   onCreateProposal?: (snapshot: PricingSnapshot) => void;
   actionLabel?: string;
   saving?: boolean;
@@ -337,6 +342,7 @@ export default function PricingDashboard({
   nights, // stay length, forwarded to BreakdownRows for total-stay sub-lines
   initialSnapshot,
   initialAgentId,
+  initialPlatformChannel,
   onCreateProposal,
   actionLabel = 'Create proposal from this',
   saving = false,
@@ -359,8 +365,16 @@ export default function PricingDashboard({
   // (the channel picker) is skipped because the snapshot already
   // tells us which channel was used.
   const hydrate = initialSnapshot ?? null;
+  // Platform context wins over a snapshot's saved scenario. Older proposals
+  // raised against a platform enquiry were stored as 'direct' because the
+  // pre-platform pricing flow defaulted to direct; when the caller hands us
+  // a platform channel context (initialPlatformChannel) we treat that as
+  // authoritative so Edit Pricing on those proposals lands on the platform
+  // breakdown with the correct fee structure.
   const [scenario, setScenario] = useState<ScenarioType | null>(
-    (hydrate?.scenario_type as ScenarioType) ?? initialScenario ?? null,
+    initialPlatformChannel
+      ? 'platform'
+      : (hydrate?.scenario_type as ScenarioType) ?? initialScenario ?? null,
   );
   /** Season selection is a SeasonKey ('peak' / 'high' / 'shoulder' /
    *  'winter') for the new 4-tier model. Default to 'peak' (the anchor).
@@ -447,8 +461,24 @@ export default function PricingDashboard({
             notes: d.notes,
             created_at: d.created_at,
           })));
-          if (channelRes.data.length > 0 && !selectedChannelId) {
-            setSelectedChannelId(channelRes.data[0].id);
+          if (channelRes.data.length > 0) {
+            // Platform enquiries pick the channel by name (case-insensitive)
+            // so the dashboard lands on the channel the user already chose
+            // at enquiry capture. This OVERRIDES any saved channel on the
+            // hydrated snapshot — older proposals were sometimes saved
+            // against the wrong channel (default), and the enquiry-side
+            // pick is the source of truth.
+            const locked = (initialPlatformChannel || '').toLowerCase();
+            if (locked) {
+              const matched = channelRes.data.find((d: any) => (d.platform_name || '').toLowerCase() === locked);
+              if (matched) {
+                setSelectedChannelId(matched.id);
+              } else if (!selectedChannelId) {
+                setSelectedChannelId(channelRes.data[0].id);
+              }
+            } else if (!selectedChannelId) {
+              setSelectedChannelId(channelRes.data[0].id);
+            }
           }
         }
       } catch (err) {
@@ -950,8 +980,17 @@ export default function PricingDashboard({
             )}
             {scenario === 'platform' && channels.length > 0 && (
               <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label">Platform</label>
-                <select className="form-input" value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)}>
+                <label className="form-label">
+                  Platform
+                  {initialPlatformChannel && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--text-light)' }}>🔒 from enquiry</span>}
+                </label>
+                <select
+                  className="form-input"
+                  value={selectedChannelId}
+                  onChange={(e) => setSelectedChannelId(e.target.value)}
+                  disabled={!!initialPlatformChannel}
+                  title={initialPlatformChannel ? 'Locked — platform was set on the enquiry' : undefined}
+                >
                   {channels.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.platform_name} ({c.platform_fee_pct}%{c.platform_fixed_fee > 0 ? ` + ${fmtRand(c.platform_fixed_fee)}` : ''})
@@ -1128,8 +1167,17 @@ export default function PricingDashboard({
                     )}
                     {scenario === 'platform' && channels.length > 0 && (
                       <div className="form-group" style={{ margin: 0 }}>
-                        <label className="form-label">Platform</label>
-                        <select className="form-input" value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)}>
+                        <label className="form-label">
+                          Platform
+                          {initialPlatformChannel && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--text-light)' }}>🔒 from enquiry</span>}
+                        </label>
+                        <select
+                          className="form-input"
+                          value={selectedChannelId}
+                          onChange={(e) => setSelectedChannelId(e.target.value)}
+                          disabled={!!initialPlatformChannel}
+                          title={initialPlatformChannel ? 'Locked — platform was set on the enquiry' : undefined}
+                        >
                           {channels.map(c => (
                             <option key={c.id} value={c.id}>
                               {c.platform_name} ({c.platform_fee_pct}%{c.platform_fixed_fee > 0 ? ` + ${fmtRand(c.platform_fixed_fee)}` : ''})

@@ -1471,7 +1471,28 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               .eq('id', selectedProposal.pricing_proposal_id)
               .single();
             if (data) {
-              setEditPricingFor(data);
+              // Parent enquiry's platform context — locks the channel +
+              // forces scenario='platform' when the proposal was raised
+              // on an Airbnb/VRBO enquiry (drives PricingDashboard's
+              // disabled platform dropdown).
+              let enquirySource: string | null = null;
+              let enquiryPlatformChannel: string | null = null;
+              if (selectedProposal.enquiry_id) {
+                const { data: enq } = await supabase
+                  .from('enquiries')
+                  .select('source, platform_channel')
+                  .eq('id', selectedProposal.enquiry_id)
+                  .maybeSingle();
+                if (enq) {
+                  enquirySource = enq.source ?? null;
+                  enquiryPlatformChannel = (enq as any).platform_channel ?? null;
+                }
+              }
+              setEditPricingFor({
+                ...data,
+                _enquirySource: enquirySource,
+                _enquiryPlatformChannel: enquiryPlatformChannel,
+              });
               setSelectedProposal(null);
             }
           }}

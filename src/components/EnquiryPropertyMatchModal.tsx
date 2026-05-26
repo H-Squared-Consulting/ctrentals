@@ -28,7 +28,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { calculatePricing, CTR_DEFAULT, fmtRand } from '../lib/pricingEngine';
-import { nextDirectEnquiryRefCode, nextProposalRefCodeFor, nextAgentProposalRefCode } from '../lib/refCodes';
+import { nextDirectEnquiryRefCode, nextProposalRefCodeFor, nextAgentProposalRefCode, nextPlatformEnquiryRefCode, type PlatformChannel } from '../lib/refCodes';
 import { initialsForEmail } from '../lib/userInitials';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import { syncEnquiryFromProposal } from '../lib/statusSync';
@@ -108,6 +108,10 @@ export interface PendingEnquiry {
   is_agent?: boolean;
   agent_id?: string | null;
   ref_code?: string | null;
+  /** Platform sub-channel when `source === 'platform'`. Drives the
+   *  A### / V### ref-code stream and ends up persisted on the
+   *  enquiry row so the deal card can show the right affordance. */
+  platform_channel?: PlatformChannel | null;
   /** Disclosed guest details for an agent enquiry. When the agent
    *  hasn't shared them yet these stay null and a "Valued Guest"
    *  placeholder is used at the proposal level. Direct enquiries
@@ -241,6 +245,71 @@ function buildDefaultDirectSnapshot(
       ctrTake: breakdown.ctrTake,
       agentTake: 0,
       platformFees: 0,
+      clientPriceExclVat: breakdown.clientPriceExclVat,
+      vatAmount: 0,
+      clientPriceInclVat: breakdown.clientPriceExclVat,
+      adjustedBaseline: breakdown.adjustedBaseline,
+      totalMarginPct: breakdown.totalMarginPct,
+      effectiveCtrMarginPct: breakdown.effectiveCtrMarginPct,
+      effectiveTotalMarkupPct: breakdown.effectiveTotalMarkupPct,
+    },
+  } as any;
+}
+
+/** Platform-scenario sibling of buildDefaultDirectSnapshot — same
+ *  batched-data signature with platform fees applied on top. Used for
+ *  enquiries with source='platform' so the per-row indicative price
+ *  on the picker matches what Edit Pricing will show. */
+function buildDefaultPlatformSnapshot(
+  baselineRow: BaselineRow | null,
+  seasons: SeasonRow[],
+  args: { propertyId: string; channelId: string | null; platformFeePct: number; platformFixedFee: number },
+): PricingSnapshot | null {
+  if (!baselineRow) return null;
+  const baseline = Number(baselineRow.daily_rate) || 0;
+  if (baseline <= 0) return null;
+
+  const seasonRow = seasons.find(s => s.key === 'peak') || seasons[0] || null;
+  const seasonMultiplier = seasonRow ? Number(seasonRow.multiplier) : 1;
+  const ctrPct = CTR_DEFAULT.platform;
+
+  const breakdown = calculatePricing({
+    baseline,
+    scenarioType: 'platform',
+    ctrPct,
+    agentPct: 0,
+    seasonMultiplier,
+    platformFeePct: args.platformFeePct,
+    platformFixedFee: args.platformFixedFee,
+    reducedBaseline: null,
+    reducedCtrPct: null,
+    reducedAgentPct: null,
+    solveFor: 'guest',
+    targetGuestPrice: null,
+    vatEnabled: false,
+    vatRatePct: 0,
+  } as any);
+
+  return {
+    propertyId: args.propertyId,
+    scenarioType: 'platform',
+    agentId: null,
+    agents: [],
+    channelId: args.channelId,
+    baseline,
+    totalMarginPct: ctrPct,
+    ctrPct,
+    agentPct: 0,
+    reducedBaseline: null,
+    reducedCtrPct: null,
+    reducedAgentPct: null,
+    seasonTag: seasonRow?.name || 'peak',
+    seasonMultiplier,
+    breakdown: {
+      ownerNet: breakdown.ownerNet,
+      ctrTake: breakdown.ctrTake,
+      agentTake: 0,
+      platformFees: breakdown.platformFees,
       clientPriceExclVat: breakdown.clientPriceExclVat,
       vatAmount: 0,
       clientPriceInclVat: breakdown.clientPriceExclVat,
@@ -400,7 +469,18 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       const agentQuery = enquiry.is_agent && enquiry.agent_id
         ? supabase.from('agents').select('id, default_commission_pct').eq('id', enquiry.agent_id).maybeSingle()
         : Promise.resolve({ data: null });
-      const [propRes, bookingsRes, baselinesRes, seasonsRes, agentRes] = await Promise.all([
+      // Platform enquiries also need the channel_defaults row that matches
+      // their platform_channel ('airbnb' / 'vrbo') so the per-row indicative
+      // price on the picker includes the right platform fee.
+      const channelQuery = enquiry.source === 'platform' && enquiry.platform_channel
+        ? supabase.from('channel_defaults')
+            .select('id, platform_name, fee_pct, fixed_fee')
+            .eq('partner_id', CT_RENTALS_PARTNER_ID)
+            .eq('is_active', true)
+            .ilike('platform_name', enquiry.platform_channel)
+            .maybeSingle()
+        : Promise.resolve({ data: null });
+      const [propRes, bookingsRes, baselinesRes, seasonsRes, agentRes, channelRes] = await Promise.all([
         propsQuery,
         supabase
           .from('bookings')
@@ -417,6 +497,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
           .eq('partner_id', CT_RENTALS_PARTNER_ID)
           .order('sort_order'),
         agentQuery,
+        channelQuery,
       ]);
 
       if (cancelled) return;
@@ -458,28 +539,41 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       const seasons = (seasonsRes.data as SeasonRow[]) || [];
 
       // Synchronous compute per property — no awaits, no fan-out.
-      // Pick agent vs direct snapshot per enquiry mode so the team
-      // sees the right indicative pricing on the picker rows BEFORE
-      // they tick anything.
+      // Pick agent / platform / direct snapshot per enquiry mode so the
+      // team sees the right indicative pricing on the picker rows BEFORE
+      // they tick anything. Platform takes precedence over agent so an
+      // Airbnb/VRBO enquiry with an agent context still prices via the
+      // platform path (the agent flag won't apply at the proposal level).
       const out: Record<string, PricingSnapshot | null> = {};
-      const isAgentMode = !!(enquiry.is_agent && enquiry.agent_id);
+      const isPlatformMode = enquiry.source === 'platform' && !!channelRes.data;
+      const isAgentMode = !isPlatformMode && !!(enquiry.is_agent && enquiry.agent_id);
       const agentPct = isAgentMode
         ? (agentRes.data?.default_commission_pct != null
             ? Number(agentRes.data.default_commission_pct)
             : GENERIC_AGENT_PCT)
         : 0;
+      const platformChannel = channelRes.data;
       for (const p of free) {
         const baseline = baselineByProperty.get(p.id) ?? null;
-        out[p.id] = isAgentMode
-          ? buildDefaultAgentSnapshot(baseline, seasons, {
-              propertyId: p.id,
-              agentId: enquiry.agent_id as string,
-              agentPct,
-            })
-          : buildDefaultDirectSnapshot(baseline, seasons, {
-              propertyId: p.id,
-              checkIn: enquiry.check_in,
-            });
+        if (isPlatformMode && platformChannel) {
+          out[p.id] = buildDefaultPlatformSnapshot(baseline, seasons, {
+            propertyId: p.id,
+            channelId: platformChannel.id,
+            platformFeePct: Number(platformChannel.fee_pct) || 0,
+            platformFixedFee: Number(platformChannel.fixed_fee) || 0,
+          });
+        } else if (isAgentMode) {
+          out[p.id] = buildDefaultAgentSnapshot(baseline, seasons, {
+            propertyId: p.id,
+            agentId: enquiry.agent_id as string,
+            agentPct,
+          });
+        } else {
+          out[p.id] = buildDefaultDirectSnapshot(baseline, seasons, {
+            propertyId: p.id,
+            checkIn: enquiry.check_in,
+          });
+        }
       }
       setDefaults(out);
       } catch (err: any) {
@@ -494,7 +588,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
     // hits Retry (loadAttempt bump). bedrooms_options included so
     // multi-select changes on the host don't get stale results.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out, enquiry.is_agent, enquiry.agent_id, JSON.stringify(enquiry.bedrooms_options ?? []), JSON.stringify(restrictToIds ?? []), loadAttempt]);
+  }, [supabase, enquiry.bedrooms_needed, enquiry.guests_total, enquiry.check_in, enquiry.check_out, enquiry.is_agent, enquiry.agent_id, enquiry.source, enquiry.platform_channel, JSON.stringify(enquiry.bedrooms_options ?? []), JSON.stringify(restrictToIds ?? []), loadAttempt]);
 
   // Search filter (name + suburb) applied on the matched set.
   const filtered = useMemo(() => {
@@ -554,15 +648,24 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
         if (updErr) throw updErr;
         enq = updated;
       } else {
-        // Agent enquiries pre-supply a ref_code (AHH/N) computed
-        // client-side; direct enquiries generate the next D### here.
-        // guest_* mirrors client_* for direct (recipient = guest)
-        // but is the optionally-disclosed guest for agent (may be
-        // null; downstream surfaces "Valued Guest" placeholder).
+        // Ref-code source-of-truth:
+        //   Agent    — pre-supplied AHH/N (computed in EnquiryForm)
+        //   Platform — pre-supplied A###/V### (EnquiryForm) or compute
+        //              now from platform_channel as a safety net
+        //   Direct   — fresh D### generated right here
         const isAgentEnquiry = !!enquiry.is_agent;
-        const refCode = isAgentEnquiry && enquiry.ref_code
-          ? enquiry.ref_code
-          : await nextDirectEnquiryRefCode(supabase);
+        const isPlatformEnquiry = enquiry.source === 'platform';
+        const platformChannel = (enquiry as any).platform_channel as PlatformChannel | null | undefined;
+        let refCode: string;
+        if (isAgentEnquiry && enquiry.ref_code) {
+          refCode = enquiry.ref_code;
+        } else if (isPlatformEnquiry && enquiry.ref_code) {
+          refCode = enquiry.ref_code;
+        } else if (isPlatformEnquiry && platformChannel) {
+          refCode = await nextPlatformEnquiryRefCode(supabase, platformChannel);
+        } else {
+          refCode = await nextDirectEnquiryRefCode(supabase);
+        }
         const guestName  = isAgentEnquiry ? (enquiry.guest_name ?? null) : enquiry.client_name;
         const guestEmail = isAgentEnquiry ? (enquiry.guest_email ?? null) : enquiry.client_email;
         const guestPhone = isAgentEnquiry ? (enquiry.guest_phone ?? null) : enquiry.client_phone;
@@ -594,6 +697,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             notes: enquiry.notes,
             source: enquiry.source,
             source_url: enquiry.source_url,
+            platform_channel: isPlatformEnquiry ? (platformChannel ?? null) : null,
             created_by_initials: initialsForEmail(user?.email),
           })
           .select('id, ref_code')
@@ -994,6 +1098,8 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
               guest_name:  enquiry.guest_name  ?? null,
               guest_email: enquiry.guest_email ?? null,
               guest_phone: enquiry.guest_phone ?? null,
+              source: enquiry.source ?? null,
+              platform_channel: enquiry.platform_channel ?? null,
             }}
             // Snapshot-only mode — closes itself + returns the snapshot.
             onSnapshotReady={(snap) => {

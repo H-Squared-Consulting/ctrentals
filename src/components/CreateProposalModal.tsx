@@ -67,6 +67,14 @@ export interface EnquiryPrefill {
   guest_name?: string | null;
   guest_email?: string | null;
   guest_phone?: string | null;
+  /** Origin tag — 'platform' for Airbnb/VRBO enquiries. Drives the
+   *  default scenario in the pricing widget so platform deals land
+   *  on the platform breakdown without the user re-picking. */
+  source?: string | null;
+  /** Sub-channel for platform-sourced enquiries: 'airbnb' | 'vrbo'.
+   *  Locks the PricingDashboard channel selector to the matching
+   *  channel_defaults row — fees come from there, no switcher. */
+  platform_channel?: string | null;
 }
 
 interface CreateProposalModalProps {

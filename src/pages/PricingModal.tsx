@@ -188,18 +188,43 @@ export default function PricingModal({
             return n > 0 ? n : undefined;
           })()}
           initialSnapshot={editPricingProposal ?? (initialSnapshot as any) ?? null}
-          // Pre-select scenario from the enquiry: agent enquiries skip
-          // straight to the agent pricing surface; everything else lands
-          // on direct. Users can still flip if they want. Without this
-          // the dashboard's State A asks the user to pick — wasted click
-          // when we already know from the enquiry context.
-          initialScenario={enquiryPrefill ? (enquiryPrefill.is_agent ? 'agent' : 'direct') : undefined}
+          // Pre-select scenario from the enquiry: platform enquiries land
+          // on the platform breakdown with the channel pre-locked; agent
+          // enquiries skip to agent pricing; everything else lands on
+          // direct. Users can still flip on agent/direct but the platform
+          // path locks the channel since it was already picked at enquiry
+          // capture.
+          initialScenario={(() => {
+            // Prefer enquiryPrefill (new proposal flow). Fall back to the
+            // edit-pricing carrier (existing proposal under a platform
+            // enquiry) so older direct-saved proposals open as platform.
+            const editSource = (editPricingProposal as any)?._enquirySource;
+            const editPlatformChannel = (editPricingProposal as any)?._enquiryPlatformChannel;
+            if (editSource === 'platform' || editPlatformChannel) return 'platform';
+            if (!enquiryPrefill) return undefined;
+            if (enquiryPrefill.source === 'platform') return 'platform';
+            return enquiryPrefill.is_agent ? 'agent' : 'direct';
+          })()}
           // Pre-select the agent who made the enquiry. Only fires when
           // the enquiry is_agent and the user picks the 'agent' scenario
           // in the dashboard. Without this the dropdown defaults to
           // "(any agent)" — frustrating when we already know who.
           initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
-          lockScenario={lockScenario}
+          // Lock the channel to the platform the user picked at enquiry
+          // capture (Airbnb / VRBO). PricingDashboard resolves the
+          // lowercase channel name against channel_defaults.platform_name
+          // (case-insensitive) and disables the channel dropdown. Falls
+          // back to the edit-pricing carrier so older proposals under a
+          // platform enquiry also land on the locked platform breakdown.
+          initialPlatformChannel={(() => {
+            // Don't use `??` chaining here — `false && x` returns `false`
+            // not undefined, so `??` won't fall through and the edit-
+            // pricing carrier never gets read. Explicit ternary instead.
+            if (enquiryPrefill?.source === 'platform') return enquiryPrefill?.platform_channel ?? null;
+            const editPlatform = (editPricingProposal as any)?._enquiryPlatformChannel;
+            return editPlatform ?? null;
+          })()}
+          lockScenario={lockScenario || enquiryPrefill?.source === 'platform' || (editPricingProposal as any)?._enquirySource === 'platform'}
           // Three modes:
           //   onSnapshotReady set → snapshot-only (return + close, no DB write)
           //   isEdit              → in-place save (UPDATE existing pricing_proposal)
