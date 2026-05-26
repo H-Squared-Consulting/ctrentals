@@ -289,9 +289,10 @@ function BreakdownRows({
 /** One Negotiate figure. The driver renders as an accented, formatted input;
  *  the rest render as plain tappable results. */
 function MoneyCell({
-  isDriver, text, derived, disabled, onActivate, onText,
+  isDriver, hasDriver, text, derived, disabled, onActivate, onText,
 }: {
   isDriver: boolean;
+  hasDriver: boolean;
   text: string;
   derived: number;
   disabled?: boolean;
@@ -300,9 +301,10 @@ function MoneyCell({
 }) {
   if (disabled) return <span className="pricing-deal-cell pricing-deal-cell--off">—</span>;
   if (isDriver) {
+    // The figure you've set: greyed/quiet — it's done. Still editable.
     const shown = text === '' ? '' : Number(text).toLocaleString('en-ZA');
     return (
-      <span className="pricing-deal-cell pricing-deal-cell--driver">
+      <span className="pricing-deal-cell pricing-deal-cell--set" title="This is the figure you set. The other three are calculated from it.">
         <span className="pricing-deal-cell-r">R</span>
         <input
           autoFocus
@@ -314,8 +316,15 @@ function MoneyCell({
       </span>
     );
   }
+  // A calculated result. Red accent once something's been set, so the live
+  // answers draw the eye; plain + tappable before anything's set.
   return (
-    <button type="button" className="pricing-deal-cell pricing-deal-cell--calc" onClick={onActivate}>
+    <button
+      type="button"
+      className={`pricing-deal-cell pricing-deal-cell--calc${hasDriver ? ' pricing-deal-cell--result' : ''}`}
+      onClick={onActivate}
+      title="Tap to set this figure instead"
+    >
       {fmtRand(derived)}
     </button>
   );
@@ -592,7 +601,7 @@ export default function PricingDashboard({
     if (field === 'gn') return Math.round(cp);
     if (field === 'gt') return Math.round(cp * negNights);
     if (field === 'on') return Math.round(on);
-    return Math.round(on * negNights); // 'ot'
+    return Math.round(on * negNights); // 'ot' — owner total
   }
   // Tap a figure to start driving it, seeded with its current value.
   function activateNeg(field: 'gn' | 'gt' | 'on' | 'ot') {
@@ -1032,29 +1041,37 @@ export default function PricingDashboard({
           <span className="pricing-deal-title">Negotiate</span>
           <span className="badge-soft">Applies on save</span>
         </div>
+        <div className="pricing-deal-instruction">Set any one figure, the other three are worked out for you.</div>
         {negotiated && (
           <>
             <div className="pricing-deal-grid">
               <span className={`pricing-deal-hint${negField ? ' pricing-deal-hint--active' : ''}`}>
                 {negField
                   ? `Setting ${negField === 'gn' || negField === 'gt' ? 'guest' : 'owner'} ${negField === 'gn' || negField === 'on' ? 'daily' : 'stay'}`
-                  : 'Tap a figure to set it'}
+                  : ''}
               </span>
               <span className="pricing-deal-col">Daily Rate</span>
               <span className="pricing-deal-col">Total Stay</span>
 
               <span className="pricing-deal-rowlabel">Guest pays</span>
-              <MoneyCell isDriver={negField === 'gn'} text={negText} derived={negDerived('gn')}
+              <MoneyCell isDriver={negField === 'gn'} hasDriver={negField !== null} text={negText} derived={negDerived('gn')}
                 onActivate={() => activateNeg('gn')} onText={setNegText} />
-              <MoneyCell isDriver={negField === 'gt'} text={negText} derived={negDerived('gt')} disabled={!negNights}
+              <MoneyCell isDriver={negField === 'gt'} hasDriver={negField !== null} text={negText} derived={negDerived('gt')} disabled={!negNights}
                 onActivate={() => activateNeg('gt')} onText={setNegText} />
 
               <span className="pricing-deal-rowlabel">Owner gets</span>
-              <MoneyCell isDriver={negField === 'on'} text={negText} derived={negDerived('on')}
+              <MoneyCell isDriver={negField === 'on'} hasDriver={negField !== null} text={negText} derived={negDerived('on')}
                 onActivate={() => activateNeg('on')} onText={setNegText} />
-              <MoneyCell isDriver={negField === 'ot'} text={negText} derived={negDerived('ot')} disabled={!negNights}
+              <MoneyCell isDriver={negField === 'ot'} hasDriver={negField !== null} text={negText} derived={negDerived('ot')} disabled={!negNights}
                 onActivate={() => activateNeg('ot')} onText={setNegText} />
             </div>
+            {negNights > 0 && (
+              <div className="pricing-deal-summary">
+                Guest pays <strong>{fmtRand(negDerived('gt'))}</strong> for {negNights} night{negNights === 1 ? '' : 's'}
+                {' · '}Owner gets <strong>{fmtRand(negDerived('ot'))}</strong>
+                {' · '}You keep <strong>{fmtRand(Math.round(negotiated.ctrTake * negNights))}</strong>
+              </div>
+            )}
             <button type="button" className="pricing-deal-more" onClick={() => setNegDetail(v => !v)}>
               {negDetail ? '▾' : '▸'} Margins &amp; splits
             </button>
