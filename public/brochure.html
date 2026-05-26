@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Questrial&family=Pacifico&family=Montserrat:wght@800&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="loading-screen"></div>
@@ -171,10 +171,23 @@
       '  background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%);',
       '}',
       '.br-hero-content { position: relative; z-index: 1; }',
+      /* Hero wordmark — mirrors the Southern Escapes logo type:
+         "Southern" in a flowing brush script (Pacifico) + "Escapes" in
+         a bold sans (Montserrat 800). No icon — the type does the
+         brand work. Strong drop-shadow + halo keep the gold readable
+         on light photo backgrounds. */
       '.br-hero-brand {',
-      '  color: var(--gold); font-size: 22px; letter-spacing: 6px; font-weight: 800;',
-      '  text-transform: uppercase; margin-bottom: 14px; line-height: 1.1;',
+      '  display: flex; align-items: baseline; gap: 10px;',
+      '  margin-bottom: 14px; line-height: 1; color: var(--gold);',
       '  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7), 0 0 2px rgba(0, 0, 0, 0.4);',
+      '}',
+      '.br-hero-brand-script {',
+      '  font-family: "Pacifico", cursive; font-size: 40px; font-weight: 400;',
+      '  letter-spacing: 0; transform: translateY(2px);',
+      '}',
+      '.br-hero-brand-sans {',
+      '  font-family: "Montserrat", -apple-system, sans-serif; font-weight: 800;',
+      '  font-size: 28px; letter-spacing: 4px; text-transform: uppercase;',
       '}',
       /* Logo image variant of the hero brand mark. The source PNG is
          black-on-transparent; inverted via filter so it reads as white
@@ -183,7 +196,12 @@
       '  display: block; height: 56px; width: auto; margin: 0 auto 16px;',
       '  filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,0.5));',
       '}',
-      '@media (max-width: 640px) { .br-hero-brand { font-size: 18px; letter-spacing: 4px; margin-bottom: 10px; } .br-hero-logo { height: 44px; } }',
+      '@media (max-width: 640px) {',
+      '  .br-hero-brand { gap: 7px; margin-bottom: 10px; }',
+      '  .br-hero-brand-script { font-size: 30px; }',
+      '  .br-hero-brand-sans   { font-size: 22px; letter-spacing: 3px; }',
+      '  .br-hero-logo { height: 44px; }',
+      '}',
       '.br-hero-title {',
       '  color: var(--white); font-size: 38px; line-height: 1.2;',
       '  background: linear-gradient(90deg, var(--white) 0%, var(--white) 40%, var(--gold-light) 50%, var(--white) 60%, var(--white) 100%);',
@@ -605,7 +623,10 @@
     // Hero brand mark stays as the gold "SOUTHERN ESCAPES" wordmark
     // above the property name. The logo image lives in the footer only.
     if (BRAND_MODE === 'direct') {
-      html += '<div class="br-hero-brand">Southern Escapes</div>';
+      html += '<div class="br-hero-brand">' +
+        '<span class="br-hero-brand-script">Southern</span>' +
+        '<span class="br-hero-brand-sans">Escapes</span>' +
+        '</div>';
     }
     html += '<h1 class="br-hero-title">' + esc(p.property_name) + '</h1>';
     if (p.tagline) {
