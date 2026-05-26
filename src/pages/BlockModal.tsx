@@ -65,10 +65,15 @@ interface Props {
   user: any;
   partnerId: string;
   initialMode?: 'view' | 'edit';
+  /** Optional live notifier — fires whenever the user changes the
+   *  property dropdown inside the modal. The Calendar view uses it to
+   *  re-anchor its grid to the new house while the user is still
+   *  editing, so the visual context tracks the form. */
+  onPropertyIdChange?: (propertyId: string) => void;
 }
 
 export default function BlockModal({
-  block, properties, onClose, onSave, supabase, user, partnerId, initialMode,
+  block, properties, onClose, onSave, supabase, user, partnerId, initialMode, onPropertyIdChange,
 }: Props) {
   const toast = useToast();
   const isNew = !block.id;
@@ -232,7 +237,10 @@ export default function BlockModal({
             <select
               className="form-input"
               value={form.property_id}
-              onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+              onChange={(e) => {
+                setForm({ ...form, property_id: e.target.value });
+                onPropertyIdChange?.(e.target.value);
+              }}
               disabled={!isNew || fieldsDisabled}
               title={!isNew ? 'Property is fixed once the block is created — delete and recreate to move it.' : undefined}
             >
