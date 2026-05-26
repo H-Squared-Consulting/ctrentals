@@ -6,6 +6,8 @@ interface DateInputProps {
   placeholder?: string;
   className?: string;
   style?: React.CSSProperties;
+  min?: string;
+  max?: string;
 }
 
 const MONTH_MAP: Record<string, string> = {
@@ -73,11 +75,12 @@ function formatDisplay(isoDate: string): string {
   return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function DateInput({ value, onChange, placeholder = 'e.g. 27 Mar 2026', className, style }: DateInputProps) {
+export default function DateInput({ value, onChange, placeholder = 'e.g. 27 Mar 2026', className, style, min, max }: DateInputProps) {
   const [text, setText] = useState(() => formatDisplay(value));
   const [focused, setFocused] = useState(false);
   const [error, setError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pickerRef = useRef<HTMLInputElement>(null);
 
   // Sync when external value changes
   useEffect(() => {
@@ -89,7 +92,6 @@ export default function DateInput({ value, onChange, placeholder = 'e.g. 27 Mar 
 
   function handleFocus() {
     setFocused(true);
-    // Show ISO date for easier editing, or keep display format
   }
 
   function handleBlur() {
@@ -115,23 +117,73 @@ export default function DateInput({ value, onChange, placeholder = 'e.g. 27 Mar 
     }
   }
 
+  // Open the native calendar picker. Falls back to focusing the hidden
+  // date input so older browsers without showPicker() still surface the
+  // picker via the input's own affordance.
+  function openPicker() {
+    const p = pickerRef.current;
+    if (!p) return;
+    try {
+      // @ts-ignore — showPicker() exists in Chrome 99+/Safari 16+/Firefox 101+.
+      if (typeof p.showPicker === 'function') p.showPicker();
+      else p.focus();
+    } catch {
+      p.focus();
+    }
+  }
+
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      className={className}
-      style={{
-        ...style,
-        borderColor: error ? 'var(--error)' : undefined,
-        background: error ? '#FEF2F2' : undefined,
-      }}
-      value={text}
-      onChange={(e) => { setText(e.target.value); setError(false); }}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-      placeholder={placeholder}
-      autoComplete="off"
-    />
+    <div className="date-input" style={{ position: 'relative' }}>
+      <input
+        ref={inputRef}
+        type="text"
+        className={className}
+        style={{
+          ...style,
+          paddingRight: 36,
+          borderColor: error ? 'var(--error)' : undefined,
+          background: error ? '#FEF2F2' : undefined,
+        }}
+        value={text}
+        onChange={(e) => { setText(e.target.value); setError(false); }}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
+      <button
+        type="button"
+        aria-label="Open calendar"
+        onClick={openPicker}
+        className="date-input-picker-btn"
+        tabIndex={-1}
+      >
+        📅
+      </button>
+      <input
+        ref={pickerRef}
+        type="date"
+        value={value || ''}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const iso = e.target.value;
+          onChange(iso);
+          setText(formatDisplay(iso));
+          setError(false);
+        }}
+        style={{
+          position: 'absolute',
+          right: 8,
+          bottom: 0,
+          width: 1,
+          height: 1,
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
+        tabIndex={-1}
+      />
+    </div>
   );
 }
