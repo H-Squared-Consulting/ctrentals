@@ -611,7 +611,7 @@ export default function ProposalsPage() {
             if (data) {
               // Stash the proposal id so we can reopen the detail modal
               // with the refreshed pricing after Save Pricing closes.
-              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id });
+              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id, _checkIn: openProposal.check_in, _checkOut: openProposal.check_out });
               setOpenProposal(null);
             }
           }}
