@@ -462,6 +462,27 @@ body {
   outline: none;
   width: 120px;
 }
+
+/* DateInput — calendar icon button overlaid on the right of the text input.
+   The actual <input type="date"> is hidden absolutely; clicking the button
+   triggers showPicker() to open the native calendar UI. */
+.date-input-picker-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+.date-input-picker-btn:hover {
+  background: var(--border-light);
+}
 .bookings-availability-find .list-filter-select {
   border: none;
   background-color: transparent;
@@ -2061,6 +2082,38 @@ button.ops-board-card-tag--clickable:active {
   overflow-y: auto;
   padding: 16px 18px;
 }
+
+/* Gap-kind picker — the small Booking/Block tile chooser that pops over a
+   clicked availability gap on the bookings board. Two equal-width buttons,
+   each with a glyph, label, and one-line hint underneath. */
+.gap-kind-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.gap-kind-picker-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 18px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
+}
+.gap-kind-picker-tile:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-pale, var(--bg));
+}
+.gap-kind-picker-tile:active { transform: translateY(1px); }
+.gap-kind-picker-glyph { font-size: 1.5rem; line-height: 1; }
+.gap-kind-picker-label { font-weight: 600; font-size: 1rem; }
+.gap-kind-picker-hint { font-size: 0.75rem; color: var(--text-secondary); }
+
 .action-modal-summary {
   padding: 10px 14px;
   background: var(--bg);
@@ -2735,6 +2788,186 @@ button.ops-board-card-tag--clickable:active {
 .bookings-cal-chip--free    { background: #D1FAE5; color: #065F46; }
 .bookings-cal-chip--booked  { background: #FEE2E2; color: #991B1B; }
 .bookings-cal-chip--blocked { background: #FFEDD5; color: #9A3412; }
+
+/* Property dropdown sits on the left of the header; nav buttons in the
+   middle; legend on the right. */
+.bookings-calendar-property-select {
+  max-width: 320px;
+  margin-right: auto;
+}
+
+/* Hero property picker — big, prominent "you are looking at X" header
+   that sits above the month nav. Clicking opens a searchable list. */
+.bookings-calendar-hero {
+  position: relative;
+  margin-bottom: 14px;
+}
+.bookings-calendar-hero-trigger {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.bookings-calendar-hero-trigger:hover {
+  border-color: var(--color-primary);
+}
+.bookings-calendar-hero-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-primary-light);
+}
+.bookings-calendar-hero-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.bookings-calendar-hero-meta {
+  font-size: 0.8125rem;
+  color: var(--text);
+  opacity: 0.7;
+}
+.bookings-calendar-hero-chevron {
+  margin-left: auto;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.bookings-calendar-hero-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  padding: 10px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+}
+.bookings-calendar-hero-search { margin-bottom: 8px; }
+.bookings-calendar-hero-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bookings-calendar-hero-empty {
+  padding: 12px 8px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.bookings-calendar-hero-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.bookings-calendar-hero-option:hover {
+  background: var(--bg);
+}
+.bookings-calendar-hero-option.is-selected {
+  background: var(--color-primary-pale, #EEF2F7);
+  border-color: var(--color-primary);
+}
+.bookings-calendar-hero-option-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.bookings-calendar-hero-option-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.bookings-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Google-Calendar-style week rows. Day cells render their daynum in the
+   top-left; event bars are absolutely positioned within the week row so
+   a multi-day stay reads as one continuous bar that breaks at Sunday→
+   Monday. --lane-count drives the row's minimum height so stacked
+   events never overflow into the next week. */
+.bookings-calendar-grid--gcal {
+  gap: 4px;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-week {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  position: relative;
+  min-height: calc(28px + max(var(--lane-count, 0), 1) * 22px + 12px);
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day {
+  min-height: calc(28px + max(var(--lane-count, 0), 1) * 22px + 12px);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.bookings-calendar-grid--gcal .bookings-calendar-day:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-pale, #F3F6FB);
+}
+.bookings-calendar-event {
+  position: absolute;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+  border: 1px solid transparent;
+}
+.bookings-calendar-event--booked  { background: #FECACA; color: #7F1D1D; border-color: #FCA5A5; }
+.bookings-calendar-event--blocked { background: #FED7AA; color: #7C2D12; border-color: #FDBA74; }
+
+/* Available days — empty cells in the current month get a soft green
+   tint plus a small pill so the team can see at a glance which nights
+   are open for booking. Out-of-month days stay neutral to keep noise
+   off the edges. */
+.bookings-calendar-day--available {
+  background: #ECFDF5;
+  border-color: #A7F3D0;
+}
+.bookings-calendar-available-pill {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: #D1FAE5;
+  color: #065F46;
+  align-self: flex-start;
+}
+.bookings-calendar-event--open-left  { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.bookings-calendar-event--open-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.bookings-calendar-event:hover { filter: brightness(0.95); }
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {

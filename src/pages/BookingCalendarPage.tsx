@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import type { Booking } from '../types';
@@ -19,6 +19,8 @@ import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import MultiPicker from '../components/MultiPicker';
 import BookingModal from './BookingModal';
+import BlockModal from './BlockModal';
+import ActionModal from '../components/ActionModal';
 import { CT_RENTALS_PARTNER_ID, BOOKING_STATUS_OPTIONS } from './constants';
 import { nightsBetween } from '../lib/nights';
 
@@ -78,12 +80,19 @@ export default function BookingCalendarPage() {
   const { supabase, user } = useAuth();
   const { setPageTitle } = useLayout();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  // Deep-link from the property card "📅 Bookings" button:
+  // /operations/bookings?view=calendar&propertyId=<id>. The view query
+  // forces the Calendar tab and the propertyId seeds the calendar's
+  // property combobox so the user lands on the right property in one click.
+  const initialView = (searchParams.get('view') as 'board' | 'list' | 'calendar' | null) || null;
+  const initialPropertyId = searchParams.get('propertyId') || undefined;
 
   const [properties, setProperties] = useState<Property[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [view, setView] = useState<'board' | 'list' | 'calendar'>('board');
+  const [view, setView] = useState<'board' | 'list' | 'calendar'>(initialView || 'board');
   const [zoom, setZoom] = useState<ZoomKey>('standard');
   // Calendar view: first-of-month anchor for the displayed month grid.
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
@@ -130,6 +139,18 @@ export default function BookingCalendarPage() {
   }
 
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
+  // Separate state for the focused Block modal — kept distinct
+  // from editingBooking so the two surfaces never accidentally
+  // co-render (a click on a calendar bar still opens the full
+  // BookingModal so it can show guest details for real bookings).
+  const [editingBlock, setEditingBlock] = useState<any | null>(null);
+  // Clicking an availability gap on the board doesn't decide on its own
+  // whether the user wants a booking or a block — that's the same
+  // question the BookingModal's TYPE picker resolves after the fact.
+  // Surface it up front so the user lands directly in the right shell
+  // (BookingModal vs BlockModal) with the gap's property + dates
+  // already filled in.
+  const [gapPicker, setGapPicker] = useState<{ property_id: string; check_in: string; check_out: string } | null>(null);
 
   useEffect(() => { setPageTitle('Bookings'); }, [setPageTitle]);
 
@@ -430,6 +451,10 @@ export default function BookingCalendarPage() {
     setEditingBooking({});
   }
 
+  function openNewBlock() {
+    setEditingBlock({});
+  }
+
   if (loading && properties.length === 0) {
     return <div className="page-loader"><div className="spinner" /></div>;
   }
@@ -463,29 +488,31 @@ export default function BookingCalendarPage() {
                 ▤ Calendar
               </button>
             </div>
-            <div className="view-toggle" title="What to show">
-              <button
-                className={`view-toggle-btn ${occupancyView === 'all' ? 'active' : ''}`}
-                onClick={() => setOccupancyView('all')}
-                title="Show booked and blocked"
-              >
-                All
-              </button>
-              <button
-                className={`view-toggle-btn ${occupancyView === 'booked' ? 'active' : ''}`}
-                onClick={() => setOccupancyView('booked')}
-                title="Show booked only"
-              >
-                Booked
-              </button>
-              <button
-                className={`view-toggle-btn ${occupancyView === 'available' ? 'active' : ''}`}
-                onClick={() => setOccupancyView('available')}
-                title="Show available dates"
-              >
-                Available
-              </button>
-            </div>
+            {view !== 'calendar' && (
+              <div className="view-toggle" title="What to show">
+                <button
+                  className={`view-toggle-btn ${occupancyView === 'all' ? 'active' : ''}`}
+                  onClick={() => setOccupancyView('all')}
+                  title="Show booked and blocked"
+                >
+                  All
+                </button>
+                <button
+                  className={`view-toggle-btn ${occupancyView === 'booked' ? 'active' : ''}`}
+                  onClick={() => setOccupancyView('booked')}
+                  title="Show booked only"
+                >
+                  Booked
+                </button>
+                <button
+                  className={`view-toggle-btn ${occupancyView === 'available' ? 'active' : ''}`}
+                  onClick={() => setOccupancyView('available')}
+                  title="Show available dates"
+                >
+                  Available
+                </button>
+              </div>
+            )}
           </div>
           <div className="list-toolbar-right">
             {view === 'board' && (
@@ -505,11 +532,20 @@ export default function BookingCalendarPage() {
                 <button className="btn btn-ghost" onClick={jumpToday} title="Scroll to today">Today</button>
               </>
             )}
+            <button
+              className="btn"
+              onClick={openNewBlock}
+              title="Block a property out for owner stay, maintenance, etc."
+              style={{ background: '#F97316', borderColor: '#F97316', color: '#fff' }}
+            >
+              ⊘ Block
+            </button>
             <button className="btn btn-primary" onClick={openNewBooking}>
               + New Booking
             </button>
           </div>
         </div>
+        {view !== 'calendar' && (
         <div className="list-toolbar">
           <div className="list-toolbar-left">
             <select
@@ -592,6 +628,7 @@ export default function BookingCalendarPage() {
             </span>
           </div>
         </div>
+        )}
       </div>
 
       {view === 'board' ? (
@@ -611,12 +648,15 @@ export default function BookingCalendarPage() {
           rangeStart={rangeStart}
           todayLeftPx={todayLeft}
           jumpToken={jumpToken}
-          onBarClick={(b) => setEditingBooking(b)}
+          onBarClick={(b) => {
+            if (b.kind === 'block') setEditingBlock(b);
+            else setEditingBooking(b);
+          }}
           onPropertyClick={(p) => {
             setEditingBooking({ property_id: p.id });
           }}
           onGapClick={(property_id, check_in, check_out) => {
-            setEditingBooking({ property_id, check_in, check_out });
+            setGapPicker({ property_id, check_in, check_out });
           }}
         />
       ) : view === 'list' ? (
@@ -630,9 +670,17 @@ export default function BookingCalendarPage() {
           properties={filteredProperties}
           bookings={filteredBookings}
           month={calendarMonth}
+          initialPropertyId={initialPropertyId}
           onPrevMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
           onNextMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
           onThisMonth={() => { const n = new Date(); setCalendarMonth(new Date(n.getFullYear(), n.getMonth(), 1)); }}
+          onEventClick={(b) => {
+            if (b.kind === 'block') setEditingBlock(b);
+            else setEditingBooking(b);
+          }}
+          onGapClick={(property_id, check_in, check_out) => {
+            setGapPicker({ property_id, check_in, check_out });
+          }}
         />
       )}
 
@@ -657,6 +705,65 @@ export default function BookingCalendarPage() {
           isBlocked={editingBooking.id ? isBlocked(editingBooking.id) : false}
           onToggleBlocked={editingBooking.id ? () => toggleBlocked(editingBooking.id) : undefined}
         />
+      )}
+
+      {editingBlock && (
+        <BlockModal
+          block={editingBlock}
+          properties={properties}
+          onClose={() => setEditingBlock(null)}
+          onSave={async () => {
+            setEditingBlock(null);
+            await loadData();
+          }}
+          supabase={supabase}
+          user={user}
+          partnerId={CT_RENTALS_PARTNER_ID}
+        />
+      )}
+
+      {gapPicker && (
+        <ActionModal
+          title="What's this date for?"
+          subtitle={
+            <>
+              {titleCase(propertyById.get(gapPicker.property_id)?.property_name || '')} ·{' '}
+              {fmtFull(gapPicker.check_in)} → {fmtFull(gapPicker.check_out)}
+            </>
+          }
+          width={520}
+          hideFooter
+          onClose={() => setGapPicker(null)}
+        >
+          <div className="gap-kind-picker">
+            <button
+              type="button"
+              className="gap-kind-picker-tile"
+              onClick={() => {
+                const ctx = gapPicker;
+                setGapPicker(null);
+                setEditingBooking({ property_id: ctx.property_id, check_in: ctx.check_in, check_out: ctx.check_out });
+              }}
+            >
+              <span className="gap-kind-picker-glyph">📅</span>
+              <span className="gap-kind-picker-label">Booking</span>
+              <span className="gap-kind-picker-hint">Guest stay — direct, agent, or platform</span>
+            </button>
+            <button
+              type="button"
+              className="gap-kind-picker-tile"
+              onClick={() => {
+                const ctx = gapPicker;
+                setGapPicker(null);
+                setEditingBlock({ property_id: ctx.property_id, check_in: ctx.check_in, check_out: ctx.check_out });
+              }}
+            >
+              <span className="gap-kind-picker-glyph">⊘</span>
+              <span className="gap-kind-picker-label">Block</span>
+              <span className="gap-kind-picker-hint">Owner stay, maintenance, renovation…</span>
+            </button>
+          </div>
+        </ActionModal>
       )}
     </div>
   );
@@ -980,21 +1087,61 @@ function BookingsList({
 }
 
 // ─── Calendar view ─────────────────────────────────────────────────────
-// All-properties month grid. Each day reads availability across the
-// currently-filtered property set: how many are free (green), booked (red)
-// and blocked (orange) that night. Week starts Monday (SA convention).
+// Google-Calendar-style month grid for a *single* property. The picker at
+// the top selects which property's calendar is shown; each booking/block
+// is rendered as a continuous bar spanning the nights it covers, broken
+// at week boundaries so a multi-week stay shows as one bar per week-row.
 
 function BookingsCalendar({
-  properties, bookings, month, onPrevMonth, onNextMonth, onThisMonth,
+  properties, bookings, month, initialPropertyId, onPrevMonth, onNextMonth, onThisMonth, onEventClick, onGapClick,
 }: {
   properties: Property[];
   bookings: Booking[];
   month: Date;
+  initialPropertyId?: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
   onThisMonth: () => void;
+  onEventClick: (b: Booking) => void;
+  onGapClick: (propertyId: string, checkIn: string, checkOut: string) => void;
 }) {
-  const totalProps = properties.length;
+  // Picker state — defaults to the first property in the (already filtered)
+  // list, unless an initialPropertyId was passed via the URL (deep-link
+  // from the property card's "📅 Bookings" button). If the list shrinks
+  // and the selected property drops out, fall back to the new first entry.
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string>(initialPropertyId || '');
+  useEffect(() => {
+    if (properties.length === 0) { setSelectedPropertyId(''); return; }
+    if (!properties.find(p => p.id === selectedPropertyId)) {
+      // Prefer the deep-link target if it's in the current list; otherwise first.
+      const target = initialPropertyId && properties.find(p => p.id === initialPropertyId);
+      setSelectedPropertyId(target ? initialPropertyId! : properties[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [properties]);
+
+  // Searchable property combobox — type to filter, click-out closes.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [pickerOpen]);
+  const pickerMatches = useMemo(() => {
+    const q = pickerQuery.trim().toLowerCase();
+    if (!q) return properties;
+    return properties.filter(p => {
+      const hay = [p.property_name, p.suburb, p.slug].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [properties, pickerQuery]);
 
   // 6 weeks × 7 days, starting on the Monday on/before the 1st.
   const gridStart = useMemo(() => {
@@ -1002,78 +1149,239 @@ function BookingsCalendar({
     const dow = (first.getDay() + 6) % 7; // 0 = Monday
     return addDays(first, -dow);
   }, [month]);
+  const gridEnd = useMemo(() => addDays(gridStart, 42), [gridStart]);
   const days = useMemo(
     () => Array.from({ length: 42 }, (_, i) => addDays(gridStart, i)),
     [gridStart],
   );
 
-  // Per-day occupancy across the filtered properties. A night runs
-  // [check_in, check_out), so the check-out day is free again.
-  const occByDay = useMemo(() => {
-    const map = new Map<string, { booked: Set<string>; blocked: Set<string> }>();
-    const gridEnd = addDays(gridStart, 42);
-    for (const b of bookings) {
-      const end = startOfDay(new Date(b.check_out));
-      let cur = startOfDay(new Date(b.check_in));
-      if (cur < gridStart) cur = new Date(gridStart);
-      for (; cur < end && cur < gridEnd; cur = addDays(cur, 1)) {
-        const k = toDateStr(cur);
-        let entry = map.get(k);
-        if (!entry) { entry = { booked: new Set(), blocked: new Set() }; map.set(k, entry); }
-        if (b.kind === 'block') entry.blocked.add(b.property_id);
-        else entry.booked.add(b.property_id);
+  // Bookings for the selected property that overlap the visible 6-week
+  // window. Sort earliest-start first so bars stack predictably.
+  const visible = useMemo(() => {
+    if (!selectedPropertyId) return [];
+    return bookings
+      .filter(b => b.property_id === selectedPropertyId)
+      .filter(b => {
+        const s = startOfDay(new Date(b.check_in));
+        const e = startOfDay(new Date(b.check_out));
+        return e > gridStart && s < gridEnd;
+      })
+      .sort((a, b) => new Date(a.check_in).getTime() - new Date(b.check_in).getTime());
+  }, [bookings, selectedPropertyId, gridStart, gridEnd]);
+
+  // Split each booking into per-week segments. A booking running Mon→Sun
+  // is one segment; Sat→Wed becomes two (Sat-Sun, Mon-Wed). For each
+  // segment we record which week-row, which column it starts in (0–6),
+  // its width in days, and whether it's "open" on either side (started
+  // before the segment / continues past it) so the bar gets flat edges.
+  const segments = useMemo(() => {
+    type Seg = {
+      booking: Booking; weekIndex: number; startCol: number; spanDays: number;
+      openLeft: boolean; openRight: boolean;
+    };
+    const out: Seg[] = [];
+    for (const b of visible) {
+      // [check_in, check_out) — check-out night is *not* occupied. Subtract
+      // 1ms equivalent (just use the day before as the last occupied night).
+      const startDate = startOfDay(new Date(b.check_in));
+      const endDate = startOfDay(new Date(b.check_out));
+      // Clip to the visible grid.
+      const visStart = startDate < gridStart ? gridStart : startDate;
+      const visEnd = endDate > gridEnd ? gridEnd : endDate;
+      if (visEnd <= visStart) continue;
+
+      let cursor = visStart;
+      while (cursor < visEnd) {
+        const dayIdx = daysBetween(gridStart, cursor);
+        const weekIndex = Math.floor(dayIdx / 7);
+        const startCol = dayIdx % 7;
+        const weekEndDay = (weekIndex + 1) * 7;
+        const segEndIdx = Math.min(daysBetween(gridStart, visEnd), weekEndDay);
+        const spanDays = segEndIdx - dayIdx;
+        out.push({
+          booking: b,
+          weekIndex,
+          startCol,
+          spanDays,
+          openLeft: cursor.getTime() > startDate.getTime(),
+          openRight: addDays(cursor, spanDays).getTime() < endDate.getTime(),
+        });
+        cursor = addDays(cursor, spanDays);
       }
     }
-    return map;
-  }, [bookings, gridStart]);
+    return out;
+  }, [visible, gridStart, gridEnd]);
+
+  // Set of date-keys that have *any* booking or block covering them.
+  // Used to render an "Available" pill on day cells that don't.
+  const occupiedDays = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of visible) {
+      const start = startOfDay(new Date(b.check_in));
+      const end = startOfDay(new Date(b.check_out));
+      for (let d = start; d < end; d = addDays(d, 1)) {
+        set.add(toDateStr(d));
+      }
+    }
+    return set;
+  }, [visible]);
+
+  // For each week-row, stack overlapping segments into lanes (0, 1, 2…)
+  // so they don't visually collide. Greedy first-fit packing on each row.
+  const segmentsByWeek = useMemo(() => {
+    const byWeek: Array<Array<{ seg: typeof segments[number]; lane: number }>> = Array.from({ length: 6 }, () => []);
+    for (let w = 0; w < 6; w++) {
+      const weekSegs = segments.filter(s => s.weekIndex === w);
+      const lanes: number[] = []; // rightmost-occupied col per lane
+      for (const seg of weekSegs) {
+        let lane = lanes.findIndex(end => end <= seg.startCol);
+        if (lane === -1) { lane = lanes.length; lanes.push(0); }
+        lanes[lane] = seg.startCol + seg.spanDays;
+        byWeek[w].push({ seg, lane });
+      }
+    }
+    return byWeek;
+  }, [segments]);
 
   const monthLabel = month.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
   const todayKey = toDateStr(startOfDay(new Date()));
   const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+  const selectedProperty = properties.find(p => p.id === selectedPropertyId) || null;
+
   return (
     <div className="card bookings-calendar">
+      {/* Property hero — big, clear "which house am I looking at" header
+          with a searchable combobox. Sits on its own row above the
+          month-nav so the answer to "which property?" is unambiguous. */}
+      <div className="bookings-calendar-hero" ref={pickerRef}>
+        <button
+          type="button"
+          className="bookings-calendar-hero-trigger"
+          onClick={() => { setPickerOpen(o => !o); setPickerQuery(''); }}
+        >
+          <span className="bookings-calendar-hero-label">Property</span>
+          <span className="bookings-calendar-hero-name">
+            {selectedProperty ? titleCase(selectedProperty.property_name) : 'Select a property…'}
+          </span>
+          {selectedProperty && (
+            <span className="bookings-calendar-hero-meta">
+              {selectedProperty.bedrooms ? `${selectedProperty.bedrooms} bed` : ''}
+              {selectedProperty.bedrooms && selectedProperty.suburb ? ' · ' : ''}
+              {selectedProperty.suburb ? titleCase(selectedProperty.suburb) : ''}
+              {selectedProperty.slug ? ` · ${selectedProperty.slug}` : ''}
+            </span>
+          )}
+          <span className="bookings-calendar-hero-chevron">▾</span>
+        </button>
+        {pickerOpen && (
+          <div className="bookings-calendar-hero-menu">
+            <input
+              type="text"
+              className="form-input bookings-calendar-hero-search"
+              placeholder="Search by name, suburb, or code…"
+              value={pickerQuery}
+              onChange={(e) => setPickerQuery(e.target.value)}
+              autoFocus
+            />
+            <div className="bookings-calendar-hero-list">
+              {pickerMatches.length === 0 && (
+                <div className="bookings-calendar-hero-empty">No properties match.</div>
+              )}
+              {pickerMatches.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`bookings-calendar-hero-option${p.id === selectedPropertyId ? ' is-selected' : ''}`}
+                  onClick={() => {
+                    setSelectedPropertyId(p.id);
+                    setPickerOpen(false);
+                  }}
+                >
+                  <span className="bookings-calendar-hero-option-name">{titleCase(p.property_name)}</span>
+                  <span className="bookings-calendar-hero-option-meta">
+                    {p.bedrooms ? `${p.bedrooms} bed` : ''}
+                    {p.bedrooms && p.suburb ? ' · ' : ''}
+                    {p.suburb ? titleCase(p.suburb) : ''}
+                    {p.slug ? ` · ${p.slug}` : ''}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="bookings-calendar-header">
-        <button className="btn btn-ghost" onClick={onPrevMonth} title="Previous month">‹</button>
-        <div className="bookings-calendar-title">{monthLabel}</div>
-        <button className="btn btn-ghost" onClick={onNextMonth} title="Next month">›</button>
-        <button className="btn btn-ghost" onClick={onThisMonth} title="Jump to this month">Today</button>
+        <div className="bookings-calendar-nav">
+          <button className="btn btn-ghost" onClick={onPrevMonth} title="Previous month">‹</button>
+          <div className="bookings-calendar-title">{monthLabel}</div>
+          <button className="btn btn-ghost" onClick={onNextMonth} title="Next month">›</button>
+          <button className="btn btn-ghost" onClick={onThisMonth} title="Jump to this month">Today</button>
+        </div>
         <div className="bookings-calendar-legend">
           <span className="bookings-cal-swatch bookings-cal-swatch--free" /> Available
           <span className="bookings-cal-swatch bookings-cal-swatch--booked" /> Booked
           <span className="bookings-cal-swatch bookings-cal-swatch--blocked" /> Blocked
         </div>
       </div>
-      <div className="bookings-calendar-grid">
+      <div className="bookings-calendar-grid bookings-calendar-grid--gcal">
         {weekdayLabels.map(w => (
           <div key={w} className="bookings-calendar-dow">{w}</div>
         ))}
-        {days.map(d => {
-          const k = toDateStr(d);
-          const inMonth = d.getMonth() === month.getMonth();
-          const occ = occByDay.get(k);
-          const bookedN = occ ? occ.booked.size : 0;
-          // A property both booked and blocked the same night counts as booked.
-          const blockedN = occ ? Array.from(occ.blocked).filter(id => !occ.booked.has(id)).length : 0;
-          const freeN = Math.max(0, totalProps - bookedN - blockedN);
-          const isToday = k === todayKey;
+        {Array.from({ length: 6 }).map((_, weekIndex) => {
+          const weekDays = days.slice(weekIndex * 7, weekIndex * 7 + 7);
+          const weekSegs = segmentsByWeek[weekIndex];
+          const laneCount = weekSegs.reduce((m, s) => Math.max(m, s.lane + 1), 0);
           return (
-            <div
-              key={k}
-              className={`bookings-calendar-day${inMonth ? '' : ' bookings-calendar-day--muted'}${isToday ? ' bookings-calendar-day--today' : ''}`}
-            >
-              <div className="bookings-calendar-daynum">{d.getDate()}</div>
-              {totalProps > 0 && (
-                <div className="bookings-calendar-counts">
-                  <span className="bookings-cal-chip bookings-cal-chip--free" title={`${freeN} available`}>{freeN}</span>
-                  {bookedN > 0 && <span className="bookings-cal-chip bookings-cal-chip--booked" title={`${bookedN} booked`}>{bookedN}</span>}
-                  {blockedN > 0 && <span className="bookings-cal-chip bookings-cal-chip--blocked" title={`${blockedN} blocked`}>{blockedN}</span>}
-                </div>
-              )}
+            <div key={`wk${weekIndex}`} className="bookings-calendar-week" style={{ ['--lane-count' as any]: laneCount }}>
+              {weekDays.map(d => {
+                const k = toDateStr(d);
+                const inMonth = d.getMonth() === month.getMonth();
+                const isToday = k === todayKey;
+                const isAvailable = inMonth && selectedPropertyId !== '' && !occupiedDays.has(k);
+                return (
+                  <div
+                    key={k}
+                    className={`bookings-calendar-day${inMonth ? '' : ' bookings-calendar-day--muted'}${isToday ? ' bookings-calendar-day--today' : ''}${isAvailable ? ' bookings-calendar-day--available' : ''}`}
+                    onClick={() => {
+                      if (!selectedPropertyId) return;
+                      onGapClick(selectedPropertyId, k, toDateStr(addDays(d, 1)));
+                    }}
+                    title={selectedPropertyId ? `Click to book / block on ${fmtFull(d)}` : undefined}
+                  >
+                    <div className="bookings-calendar-daynum">{d.getDate()}</div>
+                    {isAvailable && <span className="bookings-calendar-available-pill">Available</span>}
+                  </div>
+                );
+              })}
+              {weekSegs.map(({ seg, lane }, i) => {
+                const b = seg.booking;
+                const isBlk = b.kind === 'block';
+                const label = isBlk ? (b.guest_name || 'Block') : (titleCase(b.guest_name || '') || 'Booking');
+                const leftPct = (seg.startCol / 7) * 100;
+                const widthPct = (seg.spanDays / 7) * 100;
+                return (
+                  <div
+                    key={`seg-${b.id}-${weekIndex}-${i}`}
+                    className={`bookings-calendar-event bookings-calendar-event--${isBlk ? 'blocked' : 'booked'}${seg.openLeft ? ' bookings-calendar-event--open-left' : ''}${seg.openRight ? ' bookings-calendar-event--open-right' : ''}`}
+                    style={{ left: `${leftPct}%`, width: `calc(${widthPct}% - 4px)`, top: `calc(28px + ${lane * 22}px)` }}
+                    onClick={(e) => { e.stopPropagation(); onEventClick(b); }}
+                    title={`${label} · ${fmtFull(b.check_in)} → ${fmtFull(b.check_out)}`}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
             </div>
           );
         })}
       </div>
+      {selectedProperty && visible.length === 0 && (
+        <div style={{ padding: 16, color: 'var(--text-secondary)', fontSize: '0.875rem', textAlign: 'center' }}>
+          No bookings or blocks for {titleCase(selectedProperty.property_name)} this month. Click a day to add one.
+        </div>
+      )}
     </div>
   );
 }
