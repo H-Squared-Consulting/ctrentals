@@ -60,7 +60,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange,
 }: {
   booking: any;
   properties: any[];
@@ -72,6 +72,9 @@ export default function BookingModal({
   initialMode?: 'view' | 'edit';
   isBlocked?: boolean;
   onToggleBlocked?: () => void;
+  /** Fired when the user changes the property dropdown so the
+   *  Calendar view behind can re-anchor live. */
+  onPropertyIdChange?: (propertyId: string) => void;
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -371,7 +374,10 @@ export default function BookingModal({
             <select
               className="form-input"
               value={form.property_id}
-              onChange={(e) => setForm({ ...form, property_id: e.target.value })}
+              onChange={(e) => {
+                setForm({ ...form, property_id: e.target.value });
+                onPropertyIdChange?.(e.target.value);
+              }}
             >
               <option value="">Select a property…</option>
               {properties.map((p: any) => (

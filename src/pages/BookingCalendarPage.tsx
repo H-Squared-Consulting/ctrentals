@@ -152,6 +152,16 @@ export default function BookingCalendarPage() {
   // already filled in.
   const [gapPicker, setGapPicker] = useState<{ property_id: string; check_in: string; check_out: string } | null>(null);
 
+  // Calendar view tracks which property is being shown. Lifted up here
+  // (rather than living inside BookingsCalendar) so the page-level
+  // + New Booking / Block buttons can auto-fill the property, and so
+  // changes inside the modal can live-update the calendar behind.
+  const [calendarPropertyId, setCalendarPropertyId] = useState<string>(initialPropertyId || '');
+  // Snapshot of calendarPropertyId at the moment a modal opened, used
+  // to revert if the user cancels after changing the property inside
+  // the modal. Cleared on save.
+  const [calendarPropertyIdSnapshot, setCalendarPropertyIdSnapshot] = useState<string | null>(null);
+
   useEffect(() => { setPageTitle('Bookings'); }, [setPageTitle]);
 
   // Allow opening a "Convert enquiry" flow via router state.
@@ -448,11 +458,25 @@ export default function BookingCalendarPage() {
   }
 
   function openNewBooking() {
-    setEditingBooking({});
+    // In Calendar view, auto-fill the property field so the user
+    // doesn't have to re-pick the house they're currently looking at.
+    // Snapshot the current calendar selection so cancelling the modal
+    // reverts any live-update that happened mid-edit.
+    if (view === 'calendar' && calendarPropertyId) {
+      setCalendarPropertyIdSnapshot(calendarPropertyId);
+      setEditingBooking({ property_id: calendarPropertyId });
+    } else {
+      setEditingBooking({});
+    }
   }
 
   function openNewBlock() {
-    setEditingBlock({});
+    if (view === 'calendar' && calendarPropertyId) {
+      setCalendarPropertyIdSnapshot(calendarPropertyId);
+      setEditingBlock({ property_id: calendarPropertyId });
+    } else {
+      setEditingBlock({});
+    }
   }
 
   if (loading && properties.length === 0) {
@@ -670,6 +694,8 @@ export default function BookingCalendarPage() {
           properties={filteredProperties}
           bookings={filteredBookings}
           month={calendarMonth}
+          selectedPropertyId={calendarPropertyId}
+          onSelectedPropertyIdChange={setCalendarPropertyId}
           initialPropertyId={initialPropertyId}
           onPrevMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
           onNextMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
@@ -688,8 +714,17 @@ export default function BookingCalendarPage() {
         <BookingModal
           booking={editingBooking}
           properties={properties}
-          onClose={() => setEditingBooking(null)}
+          onClose={() => {
+            // Revert the calendar's live-updated property if the user
+            // cancelled after changing it inside the modal.
+            if (calendarPropertyIdSnapshot != null) {
+              setCalendarPropertyId(calendarPropertyIdSnapshot);
+              setCalendarPropertyIdSnapshot(null);
+            }
+            setEditingBooking(null);
+          }}
           onSave={async (enquiryId?: string) => {
+            setCalendarPropertyIdSnapshot(null);
             setEditingBooking(null);
             if (enquiryId) {
               await supabase
@@ -704,6 +739,7 @@ export default function BookingCalendarPage() {
           partnerId={CT_RENTALS_PARTNER_ID}
           isBlocked={editingBooking.id ? isBlocked(editingBooking.id) : false}
           onToggleBlocked={editingBooking.id ? () => toggleBlocked(editingBooking.id) : undefined}
+          onPropertyIdChange={view === 'calendar' ? setCalendarPropertyId : undefined}
         />
       )}
 
@@ -711,14 +747,22 @@ export default function BookingCalendarPage() {
         <BlockModal
           block={editingBlock}
           properties={properties}
-          onClose={() => setEditingBlock(null)}
+          onClose={() => {
+            if (calendarPropertyIdSnapshot != null) {
+              setCalendarPropertyId(calendarPropertyIdSnapshot);
+              setCalendarPropertyIdSnapshot(null);
+            }
+            setEditingBlock(null);
+          }}
           onSave={async () => {
+            setCalendarPropertyIdSnapshot(null);
             setEditingBlock(null);
             await loadData();
           }}
           supabase={supabase}
           user={user}
           partnerId={CT_RENTALS_PARTNER_ID}
+          onPropertyIdChange={view === 'calendar' ? setCalendarPropertyId : undefined}
         />
       )}
 
@@ -1093,11 +1137,17 @@ function BookingsList({
 // at week boundaries so a multi-week stay shows as one bar per week-row.
 
 function BookingsCalendar({
-  properties, bookings, month, initialPropertyId, onPrevMonth, onNextMonth, onThisMonth, onEventClick, onGapClick,
+  properties, bookings, month, selectedPropertyId, onSelectedPropertyIdChange, initialPropertyId, onPrevMonth, onNextMonth, onThisMonth, onEventClick, onGapClick,
 }: {
   properties: Property[];
   bookings: Booking[];
   month: Date;
+  /** Currently displayed property; controlled by the parent so + New
+   *  Booking / Block buttons can pre-fill it, and so modal changes can
+   *  live-update the calendar behind. */
+  selectedPropertyId: string;
+  onSelectedPropertyIdChange: (id: string) => void;
+  /** Deep-link target from `?propertyId=` on first mount only. */
   initialPropertyId?: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
@@ -1105,15 +1155,13 @@ function BookingsCalendar({
   onEventClick: (b: Booking) => void;
   onGapClick: (propertyId: string, checkIn: string, checkOut: string) => void;
 }) {
-  // Picker state — defaults to the first property in the (already filtered)
-  // list, unless an initialPropertyId was passed via the URL (deep-link
-  // from the property card's "📅 Bookings" button). If the list shrinks
-  // and the selected property drops out, fall back to the new first entry.
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string>(initialPropertyId || '');
+  const setSelectedPropertyId = onSelectedPropertyIdChange;
+  // Sync rule: if the active property leaves the filtered list (status/
+  // suburb/beds change upstream), fall back to the deep-link target if
+  // present, otherwise the first entry. Cleared if the list is empty.
   useEffect(() => {
     if (properties.length === 0) { setSelectedPropertyId(''); return; }
     if (!properties.find(p => p.id === selectedPropertyId)) {
-      // Prefer the deep-link target if it's in the current list; otherwise first.
       const target = initialPropertyId && properties.find(p => p.id === initialPropertyId);
       setSelectedPropertyId(target ? initialPropertyId! : properties[0].id);
     }

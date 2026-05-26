@@ -1351,10 +1351,43 @@ select.form-input { cursor: pointer; }
 }
 
 .property-card__footer {
-  padding: 8px 16px 10px;
+  padding: 8px 12px 10px;
   border-top: 1px solid var(--border-light);
   display: flex;
   justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+/* Each action keeps an icon + label pair. The card declares itself a
+   size container so the footer can scale gracefully with the card's
+   *actual* width (not the window's). Three tiers:
+     > 360px      — comfortable labels with room
+     280–360px    — tight labels, smaller font (still readable)
+     ≤ 280px      — icons only
+   No window-width media queries; the card adapts to whatever grid it
+   ends up in. */
+.property-card { container-type: inline-size; }
+.property-card__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.property-card__action-icon { line-height: 1; }
+@container (max-width: 360px) {
+  .property-card__action {
+    padding: 4px 6px;
+    gap: 3px;
+    font-size: 0.6875rem;
+  }
+}
+@container (max-width: 280px) {
+  .property-card__action-label { display: none; }
+  .property-card__action { padding: 4px 6px; gap: 0; }
 }
 
 /* ===== Pricing Engine ===== */
