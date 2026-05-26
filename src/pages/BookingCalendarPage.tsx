@@ -83,8 +83,13 @@ export default function BookingCalendarPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [view, setView] = useState<'board' | 'list'>('board');
+  const [view, setView] = useState<'board' | 'list' | 'calendar'>('board');
   const [zoom, setZoom] = useState<ZoomKey>('standard');
+  // Calendar view: first-of-month anchor for the displayed month grid.
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), 1);
+  });
   /** Token incremented when the user clicks Today; BookingsBoard watches it
    *  and scrolls the viewport to today's offset. Avoids lifting the scroll
    *  ref into this component. */
@@ -94,9 +99,12 @@ export default function BookingCalendarPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSuburb, setFilterSuburb] = useState<string[]>([]);
   const [filterBedrooms, setFilterBedrooms] = useState<number[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'booked' | 'blocked'>('all');
+  // Single top-row lens replacing the old Occupancy/Availability toggle and
+  // the Booked/Blocked dropdown. 'available' switches the board/finder to the
+  // availability view; 'booked' hides blocks.
+  const [occupancyView, setOccupancyView] = useState<'all' | 'booked' | 'available'>('all');
   const [propertyStatusFilter, setPropertyStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
-  const [boardMode, setBoardMode] = useState<'occupancy' | 'availability'>('occupancy');
+  const boardMode: 'occupancy' | 'availability' = occupancyView === 'available' ? 'availability' : 'occupancy';
 
   // "Find availability" — narrows property list to those free for an enquiry
   // window. Flex extends the test window symmetrically on both sides.
@@ -249,8 +257,7 @@ export default function BookingCalendarPage() {
   // Board's mode-aware overlap is a property-list concept.
   const filteredBookings = useMemo(() => {
     let result = bookings.filter(b => b.status !== 'cancelled');
-    if (statusFilter === 'booked')  result = result.filter(b => !isBlocked(b.id));
-    if (statusFilter === 'blocked') result = result.filter(b => isBlocked(b.id));
+    if (occupancyView === 'booked') result = result.filter(b => !isBlocked(b.id));
 
     result = result.filter(b => {
       const prop = propertyById.get(b.property_id);
@@ -286,7 +293,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, statusFilter, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
+  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
@@ -448,25 +455,37 @@ export default function BookingCalendarPage() {
               >
                 ☰ List
               </button>
+              <button
+                className={`view-toggle-btn ${view === 'calendar' ? 'active' : ''}`}
+                onClick={() => setView('calendar')}
+                title="Calendar view (month grid availability across all properties)"
+              >
+                ▤ Calendar
+              </button>
             </div>
-            {view === 'board' && (
-              <div className="view-toggle" title="What the bars show">
-                <button
-                  className={`view-toggle-btn ${boardMode === 'occupancy' ? 'active' : ''}`}
-                  onClick={() => setBoardMode('occupancy')}
-                  title="Show booked and blocked dates"
-                >
-                  ▣ Occupancy
-                </button>
-                <button
-                  className={`view-toggle-btn ${boardMode === 'availability' ? 'active' : ''}`}
-                  onClick={() => setBoardMode('availability')}
-                  title="Show only dates available to book"
-                >
-                  ☐ Availability
-                </button>
-              </div>
-            )}
+            <div className="view-toggle" title="What to show">
+              <button
+                className={`view-toggle-btn ${occupancyView === 'all' ? 'active' : ''}`}
+                onClick={() => setOccupancyView('all')}
+                title="Show booked and blocked"
+              >
+                All
+              </button>
+              <button
+                className={`view-toggle-btn ${occupancyView === 'booked' ? 'active' : ''}`}
+                onClick={() => setOccupancyView('booked')}
+                title="Show booked only"
+              >
+                Booked
+              </button>
+              <button
+                className={`view-toggle-btn ${occupancyView === 'available' ? 'active' : ''}`}
+                onClick={() => setOccupancyView('available')}
+                title="Show available dates"
+              >
+                Available
+              </button>
+            </div>
           </div>
           <div className="list-toolbar-right">
             {view === 'board' && (
@@ -502,16 +521,6 @@ export default function BookingCalendarPage() {
               <option value="active">Active properties</option>
               <option value="inactive">Inactive properties</option>
               <option value="all">All properties</option>
-            </select>
-            <select
-              className="list-filter-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'booked' | 'blocked')}
-              title="Filter by booking type"
-            >
-              <option value="all">All</option>
-              <option value="booked">Booked only</option>
-              <option value="blocked">Blocked only</option>
             </select>
             <MultiPicker
               label="Suburbs"
@@ -577,9 +586,9 @@ export default function BookingCalendarPage() {
           </div>
           <div className="list-toolbar-right">
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              {view === 'board'
-                ? <>{filteredProperties.length} of {properties.length} properties</>
-                : <>{filteredBookings.length} of {bookings.length} bookings</>}
+              {view === 'list'
+                ? <>{filteredBookings.length} of {bookings.length} bookings</>
+                : <>{filteredProperties.length} of {properties.length} properties</>}
             </span>
           </div>
         </div>
@@ -598,7 +607,7 @@ export default function BookingCalendarPage() {
           visibleBookingsFor={visibleBookingsFor}
           barPosition={barPosition}
           isBlocked={isBlocked}
-          boardMode={boardMode}
+          occupancyView={occupancyView}
           rangeStart={rangeStart}
           todayLeftPx={todayLeft}
           jumpToken={jumpToken}
@@ -606,12 +615,24 @@ export default function BookingCalendarPage() {
           onPropertyClick={(p) => {
             setEditingBooking({ property_id: p.id });
           }}
+          onGapClick={(property_id, check_in, check_out) => {
+            setEditingBooking({ property_id, check_in, check_out });
+          }}
         />
-      ) : (
+      ) : view === 'list' ? (
         <BookingsList
           bookings={filteredBookings}
           propertyById={propertyById}
           onOpen={(b) => setEditingBooking(b)}
+        />
+      ) : (
+        <BookingsCalendar
+          properties={filteredProperties}
+          bookings={filteredBookings}
+          month={calendarMonth}
+          onPrevMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+          onNextMonth={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+          onThisMonth={() => { const n = new Date(); setCalendarMonth(new Date(n.getFullYear(), n.getMonth(), 1)); }}
         />
       )}
 
@@ -644,7 +665,7 @@ export default function BookingCalendarPage() {
 // ─── Board view ────────────────────────────────────────────────────────
 
 function BookingsBoard({
-  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, isBlocked, boardMode, rangeStart, todayLeftPx, jumpToken, onBarClick, onPropertyClick,
+  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, isBlocked, occupancyView, rangeStart, todayLeftPx, jumpToken, onBarClick, onPropertyClick, onGapClick,
 }: {
   properties: Property[];
   totalWidth: number;
@@ -657,12 +678,13 @@ function BookingsBoard({
   visibleBookingsFor: (id: string) => Booking[];
   barPosition: (b: Booking) => { left: number; width: number } | null;
   isBlocked: (id: string) => boolean;
-  boardMode: 'occupancy' | 'availability';
+  occupancyView: 'all' | 'booked' | 'available';
   rangeStart: Date;
   todayLeftPx: number | null;
   jumpToken: number;
   onBarClick: (b: Booking) => void;
   onPropertyClick: (p: Property) => void;
+  onGapClick: (propertyId: string, checkIn: string, checkOut: string) => void;
 }) {
   if (properties.length === 0) {
     return (
@@ -782,7 +804,7 @@ function BookingsBoard({
             }
             return (
             <div key={prop.id} className={`bookings-board-track${idx % 2 === 1 ? ' bookings-board-track--alt' : ''}`}>
-              {boardMode === 'occupancy' && visibleBookingsFor(prop.id).map(b => {
+              {occupancyView !== 'available' && visibleBookingsFor(prop.id).map(b => {
                 const pos = barPosition(b);
                 if (!pos) return null;
                 return (
@@ -797,12 +819,13 @@ function BookingsBoard({
                   </div>
                 );
               })}
-              {boardMode === 'availability' && gaps.map((g, i) => (
+              {occupancyView !== 'booked' && gaps.map((g, i) => (
                 <div
                   key={`gap-${prop.id}-${i}`}
                   className="availability-bar"
                   style={{ left: g.left, width: g.width }}
-                  title={`${g.nights} night${g.nights === 1 ? '' : 's'} available · ${fmtFull(g.from)} → ${fmtFull(g.to)}`}
+                  onClick={(e) => { e.stopPropagation(); onGapClick(prop.id, toDateStr(g.from), toDateStr(g.to)); }}
+                  title={`${g.nights} night${g.nights === 1 ? '' : 's'} available · ${fmtFull(g.from)} → ${fmtFull(g.to)} · Click to book`}
                 >
                   {g.width > 90 ? `${g.nights} nights free` : g.width > 40 ? `${g.nights}n` : ''}
                 </div>
@@ -953,5 +976,104 @@ function BookingsList({
       onRowClick={(row: DataRow) => onOpen((row as BookingRow).booking)}
       emptyMessage="No bookings yet. Click + New Booking to add one."
     />
+  );
+}
+
+// ─── Calendar view ─────────────────────────────────────────────────────
+// All-properties month grid. Each day reads availability across the
+// currently-filtered property set: how many are free (green), booked (red)
+// and blocked (orange) that night. Week starts Monday (SA convention).
+
+function BookingsCalendar({
+  properties, bookings, month, onPrevMonth, onNextMonth, onThisMonth,
+}: {
+  properties: Property[];
+  bookings: Booking[];
+  month: Date;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
+  onThisMonth: () => void;
+}) {
+  const totalProps = properties.length;
+
+  // 6 weeks × 7 days, starting on the Monday on/before the 1st.
+  const gridStart = useMemo(() => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const dow = (first.getDay() + 6) % 7; // 0 = Monday
+    return addDays(first, -dow);
+  }, [month]);
+  const days = useMemo(
+    () => Array.from({ length: 42 }, (_, i) => addDays(gridStart, i)),
+    [gridStart],
+  );
+
+  // Per-day occupancy across the filtered properties. A night runs
+  // [check_in, check_out), so the check-out day is free again.
+  const occByDay = useMemo(() => {
+    const map = new Map<string, { booked: Set<string>; blocked: Set<string> }>();
+    const gridEnd = addDays(gridStart, 42);
+    for (const b of bookings) {
+      const end = startOfDay(new Date(b.check_out));
+      let cur = startOfDay(new Date(b.check_in));
+      if (cur < gridStart) cur = new Date(gridStart);
+      for (; cur < end && cur < gridEnd; cur = addDays(cur, 1)) {
+        const k = toDateStr(cur);
+        let entry = map.get(k);
+        if (!entry) { entry = { booked: new Set(), blocked: new Set() }; map.set(k, entry); }
+        if (b.kind === 'block') entry.blocked.add(b.property_id);
+        else entry.booked.add(b.property_id);
+      }
+    }
+    return map;
+  }, [bookings, gridStart]);
+
+  const monthLabel = month.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+  const todayKey = toDateStr(startOfDay(new Date()));
+  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  return (
+    <div className="card bookings-calendar">
+      <div className="bookings-calendar-header">
+        <button className="btn btn-ghost" onClick={onPrevMonth} title="Previous month">‹</button>
+        <div className="bookings-calendar-title">{monthLabel}</div>
+        <button className="btn btn-ghost" onClick={onNextMonth} title="Next month">›</button>
+        <button className="btn btn-ghost" onClick={onThisMonth} title="Jump to this month">Today</button>
+        <div className="bookings-calendar-legend">
+          <span className="bookings-cal-swatch bookings-cal-swatch--free" /> Available
+          <span className="bookings-cal-swatch bookings-cal-swatch--booked" /> Booked
+          <span className="bookings-cal-swatch bookings-cal-swatch--blocked" /> Blocked
+        </div>
+      </div>
+      <div className="bookings-calendar-grid">
+        {weekdayLabels.map(w => (
+          <div key={w} className="bookings-calendar-dow">{w}</div>
+        ))}
+        {days.map(d => {
+          const k = toDateStr(d);
+          const inMonth = d.getMonth() === month.getMonth();
+          const occ = occByDay.get(k);
+          const bookedN = occ ? occ.booked.size : 0;
+          // A property both booked and blocked the same night counts as booked.
+          const blockedN = occ ? Array.from(occ.blocked).filter(id => !occ.booked.has(id)).length : 0;
+          const freeN = Math.max(0, totalProps - bookedN - blockedN);
+          const isToday = k === todayKey;
+          return (
+            <div
+              key={k}
+              className={`bookings-calendar-day${inMonth ? '' : ' bookings-calendar-day--muted'}${isToday ? ' bookings-calendar-day--today' : ''}`}
+            >
+              <div className="bookings-calendar-daynum">{d.getDate()}</div>
+              {totalProps > 0 && (
+                <div className="bookings-calendar-counts">
+                  <span className="bookings-cal-chip bookings-cal-chip--free" title={`${freeN} available`}>{freeN}</span>
+                  {bookedN > 0 && <span className="bookings-cal-chip bookings-cal-chip--booked" title={`${bookedN} booked`}>{bookedN}</span>}
+                  {blockedN > 0 && <span className="bookings-cal-chip bookings-cal-chip--blocked" title={`${blockedN} blocked`}>{blockedN}</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

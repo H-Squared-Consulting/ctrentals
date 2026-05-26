@@ -2493,17 +2493,17 @@ button.ops-board-card-tag--clickable:active {
   transform: translateY(-1px);
   z-index: 2;
 }
-/* Booked = real paying guest (solid blue, "locked in").
-   Blocked = owner stay / maintenance / hold (grey stripes, "off market").
-   Green is reserved for Availability tiles ("go sell this"). */
-.booking-bar--booked  { background: var(--info); }
+/* Team colour scheme: Booked = red (solid, "locked in"), Blocked = orange
+   (diagonal stripes so it reads distinct from Booked beyond hue alone),
+   Available = green (the availability tiles below). */
+.booking-bar--booked  { background: #DC2626; }
 .booking-bar--blocked {
   background: repeating-linear-gradient(
     45deg,
-    rgba(120, 120, 120, 0.85),
-    rgba(120, 120, 120, 0.85) 6px,
-    rgba(90, 90, 90, 0.85) 6px,
-    rgba(90, 90, 90, 0.85) 12px
+    #F97316,
+    #F97316 6px,
+    #EA580C 6px,
+    #EA580C 12px
   );
   color: #fff;
 }
@@ -2525,8 +2525,14 @@ button.ops-board-card-tag--clickable:active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
   z-index: 1;
+}
+.availability-bar:hover {
+  background: rgba(34, 139, 34, 0.30);
+  border-color: rgba(34, 139, 34, 0.9);
 }
 .bookings-board-today {
   position: absolute;
@@ -2537,6 +2543,96 @@ button.ops-board-card-tag--clickable:active {
   z-index: 2;
   pointer-events: none;
 }
+
+/* ─── Calendar view — month grid showing portfolio availability ───────── */
+.bookings-calendar { padding: 16px; }
+.bookings-calendar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.bookings-calendar-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 170px;
+  text-align: center;
+}
+.bookings-calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.bookings-cal-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.bookings-cal-swatch:not(:first-child) { margin-left: 10px; }
+.bookings-cal-swatch--free    { background: #34D399; }
+.bookings-cal-swatch--booked  { background: #F87171; }
+.bookings-cal-swatch--blocked { background: #FB923C; }
+.bookings-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.bookings-calendar-dow {
+  text-align: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  padding: 4px 0 6px;
+}
+.bookings-calendar-day {
+  min-height: 86px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 6px 7px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+.bookings-calendar-day--muted { background: var(--bg); opacity: 0.5; }
+.bookings-calendar-day--today {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.bookings-calendar-daynum {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.bookings-calendar-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+}
+.bookings-cal-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.bookings-cal-chip--free    { background: #D1FAE5; color: #065F46; }
+.bookings-cal-chip--booked  { background: #FEE2E2; color: #991B1B; }
+.bookings-cal-chip--blocked { background: #FFEDD5; color: #9A3412; }
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
