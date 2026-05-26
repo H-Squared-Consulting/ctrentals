@@ -609,9 +609,32 @@ export default function ProposalsPage() {
               .eq('id', openProposal.pricing_proposal_id)
               .single();
             if (data) {
+              // Look up parent enquiry's platform context so platform
+              // proposals open with the channel locked + scenario forced.
+              let enquirySource: string | null = null;
+              let enquiryPlatformChannel: string | null = null;
+              if (openProposal.enquiry_id) {
+                const { data: enq } = await supabase
+                  .from('enquiries')
+                  .select('source, platform_channel')
+                  .eq('id', openProposal.enquiry_id)
+                  .maybeSingle();
+                if (enq) {
+                  enquirySource = enq.source ?? null;
+                  enquiryPlatformChannel = (enq as any).platform_channel ?? null;
+                }
+              }
               // Stash the proposal id so we can reopen the detail modal
               // with the refreshed pricing after Save Pricing closes.
-              setEditPricingFor({ ...data, _propertyName: openProposal.property_name, _reopenProposalId: openProposal.id, _checkIn: openProposal.check_in, _checkOut: openProposal.check_out });
+              setEditPricingFor({
+                ...data,
+                _propertyName: openProposal.property_name,
+                _reopenProposalId: openProposal.id,
+                _checkIn: openProposal.check_in,
+                _checkOut: openProposal.check_out,
+                _enquirySource: enquirySource,
+                _enquiryPlatformChannel: enquiryPlatformChannel,
+              });
               setOpenProposal(null);
             }
           }}

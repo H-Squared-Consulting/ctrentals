@@ -20,7 +20,7 @@ import NightCount from '../components/NightCount';
 import { useToast } from '../components/ToastProvider';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
-import { nextDirectEnquiryRefCode, nextAgentEnquiryRefCode } from '../lib/refCodes';
+import { nextDirectEnquiryRefCode, nextAgentEnquiryRefCode, nextPlatformEnquiryRefCode, type PlatformChannel } from '../lib/refCodes';
 import { initialsForEmail } from '../lib/userInitials';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
@@ -83,6 +83,11 @@ export function EnquiryForm() {
   const hasSource = enquirySource !== null;
   const [agentId, setAgentId] = useState<string>('');
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  /** Which platform — Airbnb or VRBO — when the source is 'platform'.
+   *  Drives ref-code stream (A### vs V###) and the deal-card affordance.
+   *  Required before the form can save. Cleared when the source picker
+   *  changes away from platform. */
+  const [platformChannel, setPlatformChannel] = useState<PlatformChannel | null>(null);
   const [guestForm, setGuestForm] = useState({ guest_name: '', guest_email: '', guest_phone: '' });
   /** Auto-generated agent-enquiry identifier in the form
    *  `{agent.ref_code}/N`. Populated the moment an agent is picked
@@ -125,10 +130,22 @@ export function EnquiryForm() {
       notes: carry.notes || '',
       source_url: carry.source_url || '',
     }));
-    // Match page only handles direct enquiries, so the Back action
-    // always lands us back in 'direct' mode (if you came from agent
-    // or platform you never went via match in the first place).
-    setEnquirySource('direct');
+    // Restore the source the user originally picked so Back from
+    // the match page lands them in the exact mode they came from
+    // (direct / agent / platform). Source is inferred from the
+    // carried payload: source='platform' → platform, is_agent →
+    // agent, else direct.
+    if (carry.source === 'platform') {
+      setEnquirySource('platform');
+      if (carry.platform_channel === 'airbnb' || carry.platform_channel === 'vrbo') {
+        setPlatformChannel(carry.platform_channel);
+      }
+    } else if (carry.is_agent) {
+      setEnquirySource('agent');
+      if (carry.agent_id) setAgentId(carry.agent_id);
+    } else {
+      setEnquirySource('direct');
+    }
     // Drop location.state so a refresh doesn't keep re-applying it.
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,11 +218,14 @@ export function EnquiryForm() {
     return () => { cancelled = true; };
   }, [supabase, isAgent, agentId, agents]);
 
-  // Clear the platform URL when leaving platform mode so the value
-  // doesn't accidentally get persisted on a direct or agent save.
+  // Clear the platform URL + sub-channel when leaving platform mode so
+  // the value doesn't accidentally get persisted on a direct or agent
+  // save (and so the next time we enter platform mode the user has to
+  // re-pick Airbnb / VRBO consciously).
   useEffect(() => {
     if (isPlatform) return;
     setForm(prev => ({ ...prev, source_url: '' }));
+    setPlatformChannel(null);
   }, [isPlatform]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
@@ -286,6 +306,81 @@ export function EnquiryForm() {
       navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
     } catch (err: any) {
       console.error('handleDirectSaveOnly failed:', err);
+      toast.error('Failed to save: ' + (err?.message || String(err)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** "Save / close" path for PLATFORM enquiries — persists the row
+   *  with the A### / V### ref code and source='platform' without
+   *  going through the property match step. Mirrors Direct/Agent
+   *  Quick Save so the team has parity across all three sources. */
+  async function handlePlatformSaveOnly() {
+    if (saving) return;
+    if (!platformChannel) { toast.warning('Pick the platform — Airbnb or VRBO'); return; }
+    if (!form.source_url.trim()) { toast.warning('Add the conversation URL from the platform'); return; }
+    if (!form.client_name.trim()) { toast.warning('Guest name is required'); return; }
+    if (form.check_in && form.check_out && form.check_in >= form.check_out) {
+      toast.warning('Check-out must be after check-in');
+      return;
+    }
+    setSaving(true);
+    try {
+      const refCode = await nextPlatformEnquiryRefCode(supabase, platformChannel);
+      const clientName = form.client_name.trim();
+      const clientEmail = form.client_email.trim() || null;
+      const clientPhone = form.client_phone.trim() || null;
+      const { data: enq, error: enqErr } = await supabase
+        .from('enquiries')
+        .insert({
+          partner_id: CT_RENTALS_PARTNER_ID,
+          ref_code: refCode,
+          is_agent: false,
+          agent_id: null,
+          subject: null,
+          source: 'platform',
+          source_url: form.source_url.trim() || null,
+          platform_channel: platformChannel,
+          client_name: clientName,
+          client_email: clientEmail,
+          client_phone: clientPhone,
+          guest_name: clientName,
+          guest_email: clientEmail,
+          guest_phone: clientPhone,
+          check_in: form.check_in || null,
+          check_out: form.check_out || null,
+          bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : null,
+          guests_total:    form.guests_total ? Number(form.guests_total) : null,
+          bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
+          guests_options:   null,
+          guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
+          guests_children: form.guests_children ? Number(form.guests_children) : null,
+          nationality: form.nationality.trim() || null,
+          budget_min: form.budget_min ? Number(form.budget_min) : null,
+          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          notes: form.notes.trim() || null,
+          created_by_initials: initialsForEmail(user?.email),
+        })
+        .select('id, ref_code')
+        .single();
+      if (enqErr) throw enqErr;
+      if (clientName || clientEmail) {
+        try {
+          await linkOrCreateGuestForEnquiry(supabase, {
+            enquiryId: enq.id,
+            partnerId: CT_RENTALS_PARTNER_ID,
+            guestName: clientName,
+            guestEmail: clientEmail,
+            guestPhone: clientPhone,
+          });
+        } catch (err) { console.error('Guest CRM link failed (non-blocking):', err); }
+      }
+      notifyPipelineChanged();
+      toast.success(`Enquiry ${enq.ref_code} saved`);
+      navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
+    } catch (err: any) {
+      console.error('handlePlatformSaveOnly failed:', err);
       toast.error('Failed to save: ' + (err?.message || String(err)));
     } finally {
       setSaving(false);
@@ -382,6 +477,10 @@ export function EnquiryForm() {
       toast.warning('Hold on — still generating the enquiry code');
       return;
     }
+    if (isPlatform && !platformChannel) {
+      toast.warning('Pick the platform — Airbnb or VRBO');
+      return;
+    }
     if (isPlatform && !form.source_url.trim()) {
       toast.warning('Add the conversation URL from the platform');
       return;
@@ -392,122 +491,52 @@ export function EnquiryForm() {
     if (form.bedrooms_options.length === 0) { toast.warning('Pick at least one bedroom count'); return; }
     if (!form.guests_total || Number(form.guests_total) < 1) { toast.warning('Pick the guest count'); return; }
 
-    // Direct OR agent → step 2 (property match page) with the form
-    // data carried via location.state. Match page handles the
-    // atomic enquiry + proposals insert. Platform still uses the
-    // legacy inline-save path below (no match page for platform).
-    if (!isPlatform) {
-      const disclosedGuestName  = isAgent ? (guestForm.guest_name.trim()  || null) : form.client_name.trim();
-      const disclosedGuestEmail = isAgent ? (guestForm.guest_email.trim() || null) : (form.client_email.trim() || null);
-      const disclosedGuestPhone = isAgent ? (guestForm.guest_phone.trim() || null) : (form.client_phone.trim() || null);
-      navigate('/enquiry/new/match', {
-        state: {
-          enquiry: {
-            // Agent enquiries reuse the AHH/N code as both ref_code
-            // and subject; direct uses form.subject + generates a
-            // fresh D### ref_code inside the match modal.
-            ref_code: isAgent ? agentEnquiryRefCode : null,
-            subject: isAgent ? agentEnquiryRefCode : (form.subject.trim() || null),
-            is_agent: isAgent,
-            agent_id: isAgent ? agentId : null,
-            client_name: form.client_name.trim(),
-            client_email: form.client_email.trim() || null,
-            client_phone: form.client_phone.trim() || null,
-            guest_name: disclosedGuestName,
-            guest_email: disclosedGuestEmail,
-            guest_phone: disclosedGuestPhone,
-            check_in: form.check_in,
-            check_out: form.check_out,
-            bedrooms_needed: Math.min(...form.bedrooms_options),
-            guests_total: Number(form.guests_total) || 1,
-            bedrooms_options: form.bedrooms_options,
-            guests_options: null,
-            guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
-            guests_children: form.guests_children ? Number(form.guests_children) : null,
-            nationality: form.nationality.trim() || null,
-            budget_min: form.budget_min ? Number(form.budget_min) : null,
-            budget_max: form.budget_max ? Number(form.budget_max) : null,
-            notes: form.notes.trim() || null,
-            source: null,
-            source_url: null,
-          },
+    // All three sources now route through step 2 (property match page).
+    // location.state carries everything the match page needs to insert
+    // the enquiry + linked proposals atomically. Platform pre-supplies
+    // its A### / V### ref_code here so the match page doesn't have to
+    // re-derive the sub-channel from the URL.
+    const disclosedGuestName  = isAgent ? (guestForm.guest_name.trim()  || null) : form.client_name.trim();
+    const disclosedGuestEmail = isAgent ? (guestForm.guest_email.trim() || null) : (form.client_email.trim() || null);
+    const disclosedGuestPhone = isAgent ? (guestForm.guest_phone.trim() || null) : (form.client_phone.trim() || null);
+    const platformRefCode = isPlatform && platformChannel
+      ? await nextPlatformEnquiryRefCode(supabase, platformChannel)
+      : null;
+    navigate('/enquiry/new/match', {
+      state: {
+        enquiry: {
+          // Pre-supplied codes:
+          //   Agent    — AHH/N (computed earlier)
+          //   Platform — A### / V### (computed just above)
+          //   Direct   — null; match page generates D### on insert
+          ref_code: isAgent ? agentEnquiryRefCode : platformRefCode,
+          subject: isAgent ? agentEnquiryRefCode : (form.subject.trim() || null),
+          is_agent: isAgent,
+          agent_id: isAgent ? agentId : null,
+          client_name: form.client_name.trim(),
+          client_email: form.client_email.trim() || null,
+          client_phone: form.client_phone.trim() || null,
+          guest_name: disclosedGuestName,
+          guest_email: disclosedGuestEmail,
+          guest_phone: disclosedGuestPhone,
+          check_in: form.check_in,
+          check_out: form.check_out,
+          bedrooms_needed: Math.min(...form.bedrooms_options),
+          guests_total: Number(form.guests_total) || 1,
+          bedrooms_options: form.bedrooms_options,
+          guests_options: null,
+          guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
+          guests_children: form.guests_children ? Number(form.guests_children) : null,
+          nationality: form.nationality.trim() || null,
+          budget_min: form.budget_min ? Number(form.budget_min) : null,
+          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          notes: form.notes.trim() || null,
+          source: isPlatform ? 'platform' : null,
+          source_url: isPlatform ? (form.source_url.trim() || null) : null,
+          platform_channel: isPlatform ? platformChannel : null,
         },
-      });
-      return;
-    }
-
-    // Platform path: insert directly here, no match step (the link
-    // back to the conversation thread is the proposal-trigger, not
-    // a property match). Will migrate to the match-page flow when
-    // the platform stream gets its own ref-code scheme.
-    setSaving(true);
-    const legacyEnqRefCode = () => {
-      const d = new Date();
-      const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      const clean = (form.client_name || 'GST').replace(/[^A-Za-z]/g, '').toUpperCase();
-      const name = (clean.slice(0, 3) || 'GST').padEnd(3, 'X');
-      const tail = Math.floor(Math.random() * 0xff).toString(16).toUpperCase().padStart(2, '0');
-      return `ENQ-${day}-${name}-${tail}`;
-    };
-    const clientName = form.client_name.trim();
-    const clientEmail = form.client_email.trim() || null;
-    const clientPhone = form.client_phone.trim() || null;
-    const { data, error } = await supabase
-      .from('enquiries')
-      .insert({
-        partner_id: CT_RENTALS_PARTNER_ID,
-        ref_code: legacyEnqRefCode(),
-        subject: null,
-        is_agent: false,
-        agent_id: null,
-        source: 'platform',
-        source_url: form.source_url.trim() || null,
-        client_name: clientName,
-        client_email: clientEmail,
-        client_phone: clientPhone,
-        guest_name: clientName,
-        guest_email: clientEmail,
-        guest_phone: clientPhone,
-        check_in: form.check_in,
-        check_out: form.check_out,
-        bedrooms_needed: form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : 1,
-        guests_total:    Number(form.guests_total) || 1,
-        bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
-        guests_options:   null,
-        guests_adults: Number(form.guests_adults) || null,
-        guests_children: Number(form.guests_children) || null,
-        nationality: form.nationality.trim() || null,
-        budget_min: form.budget_min ? Number(form.budget_min) : null,
-        budget_max: form.budget_max ? Number(form.budget_max) : null,
-        notes: form.notes.trim() || null,
-        created_by_initials: initialsForEmail(user?.email),
-      })
-      .select('id, ref_code, subject, client_name, client_email, client_phone, check_in, check_out, guests_total, notes, is_agent, agent_id, guest_name, guest_email, guest_phone')
-      .single();
-
-    setSaving(false);
-
-    if (error) {
-      toast.error('Failed to save: ' + error.message);
-      return;
-    }
-    if (data?.id && (clientName || clientEmail)) {
-      try {
-        await linkOrCreateGuestForEnquiry(supabase, {
-          enquiryId: data.id,
-          partnerId: CT_RENTALS_PARTNER_ID,
-          guestName: clientName,
-          guestEmail: clientEmail,
-          guestPhone: clientPhone,
-        });
-      } catch (err) {
-        console.error('Guest CRM link failed (non-blocking):', err);
-      }
-    }
-
-    notifyPipelineChanged();
-    toast.success('Enquiry saved');
-    setSavedEnquiry(data as EnquiryPrefill);
+      },
+    });
   }
 
   function startAnother() {
@@ -519,6 +548,7 @@ export function EnquiryForm() {
     setGuestForm({ guest_name: '', guest_email: '', guest_phone: '' });
     setAgentEnquiryRefCode('');
     setAgentGuestOpen(false);
+    setPlatformChannel(null);
   }
 
   const close = () => navigate('/operations/enquiries');
@@ -685,16 +715,47 @@ export function EnquiryForm() {
               );
             }
 
-            // Platform — keep the single-button save.
-            if (isPlatform && !form.source_url.trim()) return null;
-            if (!form.client_name.trim()) return null;
-            if (!form.check_in || !form.check_out) return null;
-            if (form.check_in >= form.check_out) return null;
-            return (
-              <button type="submit" form="enquiry-form" className="btn btn-primary" disabled={saving}>
-                {saving ? 'Saving…' : 'Save enquiry'}
-              </button>
-            );
+            // Platform — same shape as Direct (Save / close + Continue
+            // to proposals) so the team has parity across all three
+            // sources. Gates additionally on the sub-channel pick and
+            // the conversation URL — those are platform-only basics.
+            if (isPlatform) {
+              if (!platformChannel) return null;
+              if (!form.source_url.trim()) return null;
+              if (!form.client_name.trim()) return null;
+              const canContinue =
+                !!form.check_in &&
+                !!form.check_out &&
+                form.check_in < form.check_out &&
+                form.bedrooms_options.length > 0 &&
+                !!form.guests_total;
+              return (
+                <div style={{ display: 'inline-flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handlePlatformSaveOnly}
+                    disabled={saving}
+                    title="Save the enquiry now and close — fill the rest in from the kanban later"
+                  >
+                    {saving ? 'Saving…' : '💾 Save / close'}
+                  </button>
+                  <button
+                    type="submit"
+                    form="enquiry-form"
+                    className="btn btn-primary"
+                    disabled={saving || !canContinue}
+                    title={canContinue
+                      ? 'Continue to pick matching properties + price them'
+                      : 'Add dates, bedrooms and guests to continue to the property picker'}
+                  >
+                    {saving ? 'Saving…' : 'Continue to proposals →'}
+                  </button>
+                </div>
+              );
+            }
+
+            return null;
           })()
         }
         onClose={close}
@@ -885,16 +946,41 @@ export function EnquiryForm() {
             {isPlatform && (
               <Section
                 title="Platform"
-                subtitle="Paste the link to the message thread on Airbnb or VRBO. We render it as a one-click back-link on the deal."
+                subtitle="Pick the channel + paste the link to the message thread. The channel drives the ref-code stream (Airbnb → A###, VRBO → V###)."
               >
-                <Field label="Conversation URL *">
+                <Field label="Channel *">
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {([
+                      { key: 'airbnb', label: 'Airbnb' },
+                      { key: 'vrbo',   label: 'VRBO'   },
+                    ] as const).map(opt => (
+                      <label
+                        key={opt.key}
+                        className={`btn ${platformChannel === opt.key ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        <input
+                          type="radio"
+                          name="platform_channel"
+                          checked={platformChannel === opt.key}
+                          onChange={() => setPlatformChannel(opt.key)}
+                          style={{ display: 'none' }}
+                        />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="Conversation URL *" style={{ marginTop: 12 }}>
                   <input
                     className="form-input"
                     type="url"
                     name="source_url"
                     value={form.source_url}
                     onChange={handleChange}
-                    placeholder="https://www.airbnb.com/messaging/..."
+                    placeholder={platformChannel === 'vrbo'
+                      ? 'https://www.vrbo.com/conversations/...'
+                      : 'https://www.airbnb.com/messaging/...'}
                     required
                   />
                 </Field>
