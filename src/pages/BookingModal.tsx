@@ -17,7 +17,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 import DetailModal, { DetailModalSection } from '../components/DetailModal';
-import DateInput from '../components/DateInput';
 import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 
@@ -126,7 +125,10 @@ export default function BookingModal({
     return () => { cancelled = true; };
   }, [supabase, partnerId]);
 
-  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  // New bookings opened from a gap click come pre-filled with property +
+  // dates, so form === initialForm at mount and Save would stay disabled
+  // until the user typed something. Treat new as always dirty.
+  const isDirty = isNew || JSON.stringify(form) !== JSON.stringify(initialForm);
   const isCancelled = form.status === 'cancelled';
 
   function pickGuest(id: string) {
@@ -362,48 +364,6 @@ export default function BookingModal({
         </div>
       )}
 
-      {/* Kind picker — what kind of entry is this? Booking (real guest)
-          or Block (owner stay / maintenance / hold)? Locked once saved
-          since converting between them isn't useful in practice; the
-          user just deletes and recreates. */}
-      <DetailModalSection heading="Type">
-        <div style={{ display: 'flex', gap: 8 }}>
-          <label
-            className={`btn ${form.kind === 'booking' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ cursor: isNew && !fieldsDisabled ? 'pointer' : 'not-allowed', fontWeight: 500, opacity: !isNew || fieldsDisabled ? 0.6 : 1 }}
-          >
-            <input
-              type="radio"
-              name="booking_kind"
-              checked={form.kind === 'booking'}
-              onChange={() => setForm(f => ({ ...f, kind: 'booking' }))}
-              disabled={!isNew || fieldsDisabled}
-              style={{ display: 'none' }}
-            />
-            📅 Booking
-          </label>
-          <label
-            className={`btn ${form.kind === 'block' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ cursor: isNew && !fieldsDisabled ? 'pointer' : 'not-allowed', fontWeight: 500, opacity: !isNew || fieldsDisabled ? 0.6 : 1 }}
-          >
-            <input
-              type="radio"
-              name="booking_kind"
-              checked={form.kind === 'block'}
-              onChange={() => setForm(f => ({ ...f, kind: 'block' }))}
-              disabled={!isNew || fieldsDisabled}
-              style={{ display: 'none' }}
-            />
-            ⊘ Block (owner stay / maintenance)
-          </label>
-        </div>
-        {!isNew && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 6, fontStyle: 'italic' }}>
-            Type is set at creation. To convert, delete this and create a new one.
-          </div>
-        )}
-      </DetailModalSection>
-
       <DetailModalSection heading="Stay & property">
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
@@ -424,20 +384,25 @@ export default function BookingModal({
           <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Check in *</label>
-              <DateInput
+              <input
+                type="date"
                 className="form-input"
                 value={form.check_in}
-                onChange={(v) => setForm({ ...form, check_in: v })}
-                placeholder="e.g. 27 Mar 2026"
+                onChange={(e) => setForm({ ...form, check_in: e.target.value })}
+                onClick={(e) => { try { (e.currentTarget as any).showPicker?.(); } catch {} }}
+                required
               />
             </div>
             <div className="form-group">
               <label className="form-label">Check out *</label>
-              <DateInput
+              <input
+                type="date"
                 className="form-input"
                 value={form.check_out}
-                onChange={(v) => setForm({ ...form, check_out: v })}
-                placeholder="e.g. 3 Apr 2026"
+                onChange={(e) => setForm({ ...form, check_out: e.target.value })}
+                onClick={(e) => { try { (e.currentTarget as any).showPicker?.(); } catch {} }}
+                min={form.check_in || undefined}
+                required
               />
             </div>
             <div className="form-group">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import DataTable from '../components/DataTable';
@@ -46,6 +47,7 @@ export default function PropertiesPage() {
   const { supabase, user } = useAuth();
   const { setPageTitle } = useLayout();
   const toast = useToast();
+  const navigate = useNavigate();
 
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
@@ -551,6 +553,17 @@ export default function PropertiesPage() {
                     onClick={(e) => { e.stopPropagation(); setPricingProperty(property); }}
                   >
                     💰 Pricing
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/operations/bookings?view=calendar&propertyId=${property.id}`);
+                    }}
+                    title="View this property's booking calendar"
+                  >
+                    📅 Bookings
                   </button>
                   {property.is_published && (
                     <button

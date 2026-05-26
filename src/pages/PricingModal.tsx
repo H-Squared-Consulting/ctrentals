@@ -156,11 +156,27 @@ export default function PricingModal({
     }
   }
 
+  // Header subtitle: property + the stay dates (or just the night count when
+  // dates aren't available on this path).
+  const stayCheckIn = enquiryPrefill?.check_in ?? (editPricingProposal as any)?._checkIn ?? null;
+  const stayCheckOut = enquiryPrefill?.check_out ?? (editPricingProposal as any)?._checkOut ?? null;
+  const headerSubtitle = (() => {
+    const name = titleCase(property.property_name);
+    const n = nights ?? (stayCheckIn && stayCheckOut
+      ? Math.round((new Date(stayCheckOut).getTime() - new Date(stayCheckIn).getTime()) / 86400000)
+      : undefined);
+    const fmtD = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+    const nightsTxt = n && n > 0 ? `${n} night${n === 1 ? '' : 's'}` : '';
+    if (stayCheckIn && stayCheckOut) return `${name} · ${fmtD(stayCheckIn)} – ${fmtD(stayCheckOut)}${nightsTxt ? ` · ${nightsTxt}` : ''}`;
+    if (nightsTxt) return `${name} · ${nightsTxt}`;
+    return name;
+  })();
+
   return (
     <>
       <ActionModal
         title={isEdit ? 'Edit pricing' : 'Pricing calculator'}
-        subtitle={titleCase(property.property_name)}
+        subtitle={headerSubtitle}
         width={560}
         hideFooter
         onClose={onClose}
@@ -174,10 +190,8 @@ export default function PricingModal({
           // per-night until the very end of the flow, which is
           // frustrating when a guest gave a budget for the whole stay.
           nights={nights ?? (() => {
-            const ci = enquiryPrefill?.check_in;
-            const co = enquiryPrefill?.check_out;
-            if (!ci || !co) return undefined;
-            const n = Math.round((new Date(co).getTime() - new Date(ci).getTime()) / (1000 * 60 * 60 * 24));
+            if (!stayCheckIn || !stayCheckOut) return undefined;
+            const n = Math.round((new Date(stayCheckOut).getTime() - new Date(stayCheckIn).getTime()) / (1000 * 60 * 60 * 24));
             return n > 0 ? n : undefined;
           })()}
           initialSnapshot={editPricingProposal ?? (initialSnapshot as any) ?? null}
