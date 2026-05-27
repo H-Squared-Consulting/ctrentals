@@ -967,15 +967,20 @@ export default function PricingDashboard({
                     step="1"
                   />
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label">Specific agent</label>
-                  <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
-                    <option value="">Generic agent</option>
-                    {agents.map(a => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Agent picker hidden when the enquiry already carries an
+                    agent — the % above stays editable but the agent itself
+                    is locked to the enquiry (its ref-code depends on them). */}
+                {!initialAgentId && (
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Specific agent</label>
+                    <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
+                      <option value="">Generic agent</option>
+                      {agents.map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </>
             )}
             {scenario === 'platform' && channels.length > 0 && (
@@ -1152,9 +1157,9 @@ export default function PricingDashboard({
                     </>
                   )}
                 </div>
-                {(scenario === 'agent' || (scenario === 'platform' && channels.length > 0)) && (
+                {((scenario === 'agent' && !initialAgentId) || (scenario === 'platform' && channels.length > 0)) && (
                   <div className="pricing-deal-levers">
-                    {scenario === 'agent' && (
+                    {scenario === 'agent' && !initialAgentId && (
                       <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Specific agent</label>
                         <select className="form-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>

@@ -275,7 +275,19 @@ body {
 .sidebar.is-collapsed .sidebar-user,
 .sidebar.is-collapsed .sidebar-signout,
 .sidebar.is-collapsed .sidebar-children,
+.sidebar.is-collapsed .sidebar-search__label,
+.sidebar.is-collapsed .sidebar-search__shortcut,
 .sidebar.is-collapsed .sidebar-collapse-label { display: none; }
+/* Search button mirrors the nav links — icon-only square button when
+   the sidebar is collapsed. */
+.sidebar.is-collapsed .sidebar-search {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto var(--s-3);
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
 .sidebar.is-collapsed .sidebar-link-icon { width: auto; font-size: 1.05rem; }
 .sidebar.is-collapsed .sidebar-footer { padding: 10px 6px 16px; align-items: center; }
 .sidebar.is-collapsed .sidebar-collapse-toggle {
