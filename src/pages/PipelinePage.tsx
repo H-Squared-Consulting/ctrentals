@@ -496,6 +496,10 @@ export default function PipelinePage() {
   // Per-board-column sort. Empty / 'smart' uses the per-stage default;
   // any other value overrides for that one column.
   const [columnSort, setColumnSort] = useState<Record<string, string>>({});
+  // Board-wide sort toggle (kanban only): newest-first (default) or
+  // oldest-first across every column at once. Per-column sort still
+  // wins if explicitly set via columnSort.
+  const [boardSort, setBoardSort] = useState<'newest' | 'oldest'>('newest');
 
   // Drill-in state
   const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit'; focusField?: string | null } | null>(null);
@@ -950,25 +954,17 @@ export default function PipelinePage() {
     //   Open   → soonest check-in (the closing window matters more than age)
     //   Closed → most recently closed first
     for (const stage of STAGES) {
-      const sort = columnSort[stage.key] || 'smart';
+      // boardSort is the board-wide newest/oldest toggle; columnSort
+      // still wins if a column has an explicit override set.
+      const sort = columnSort[stage.key] || (boardSort === 'oldest' ? 'oldest' : 'newest');
       const list = map[stage.key as ColumnKey];
       if (sort === 'newest')           list.sort(byNewest);
       else if (sort === 'oldest')      list.sort(byOldest);
       else if (sort === 'check-in')    list.sort(byCheckIn);
       else if (sort === 'client')      list.sort(byClient);
-      else {
-        // Smart-sort default per column:
-        //   New                → oldest first (FIFO triage)
-        //   Quoting / Sent /
-        //   Booked             → upcoming check-in first (urgency)
-        //   Closed             → most recently closed first
-        if (stage.key === 'new')          list.sort(byOldest);
-        else if (stage.key === 'closed')  list.sort(byNewest);
-        else                              list.sort(byCheckIn);
-      }
     }
     return map;
-  }, [filtered, columnSort]);
+  }, [filtered, columnSort, boardSort]);
 
   // ── Handlers ──
   function startQuote(d: Deal) {
@@ -1381,6 +1377,29 @@ export default function PipelinePage() {
                 );
               })}
             </div>
+            {/* Board-wide sort toggle (kanban only). Icon-only so the
+                toolbar stays on one row; arrows convey direction with
+                tooltips explaining each. */}
+            {view === 'board' && (
+              <div className="view-toggle" title="Sort all columns by date">
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${boardSort === 'newest' ? 'active' : ''}`}
+                  onClick={() => setBoardSort('newest')}
+                  title="Newest first"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${boardSort === 'oldest' ? 'active' : ''}`}
+                  onClick={() => setBoardSort('oldest')}
+                  title="Oldest first"
+                >
+                  ↑
+                </button>
+              </div>
+            )}
             {/* User lens — pick "mine" (signed-in user) or one of the
                 four team initials. Lives next to the type lens because
                 both narrow the same board; intentionally a small
@@ -2080,36 +2099,22 @@ const InboxRow = memo(InboxRowImpl, (prev, next) =>
 
 function InboxRowImpl({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: Deal) => void; highlighted?: boolean }) {
   const e = deal.enquiry;
-  // Title-case → UPPER-case formatter for the card headline. Same
-  // rationale as DealCardImpl.headlineCase: cards live alongside
-  // ref codes (AAK/1, AHH/3) so the guest name reads as an equally
-  // stable identifier when in scanning context. Detail surfaces
-  // outside the card keep titleCase via the existing helper.
+  // Headline is the only identity surface in Arrived — uppercase so it
+  // sits alongside ref codes (AAK/1, AHH/3) as an equally-stable
+  // identifier in scanning context. Agent rows: disclosed guest wins
+  // > subject. Direct rows use the recipient (who IS the guest).
   const headlineCase = (s: string | null | undefined): string => (s || '').trim().toUpperCase();
-  // Agent rows: disclosed guest name wins > subject. Direct rows
-  // just use the recipient (who IS the guest).
   const subject = deal.is_agent
     ? (e?.guest_name?.trim() ? headlineCase(e.guest_name) : e?.subject?.trim() || '')
     : headlineCase(deal.client_name);
-  const notesPreview = e?.notes?.trim() || null;
-  const dateRange = (deal.check_in && deal.check_out)
-    ? `${fmtDate(deal.check_in)} → ${fmtDate(deal.check_out)}`
-    : null;
-  const agentLine = deal.is_agent
-    ? `🤝 via ${titleCase(deal.client_name)}`
-    : `👤 ${titleCase(deal.client_name)}`;
-  const guestsLine = deal.guests_total ? `${deal.guests_total} guests` : null;
   const refCode = e?.ref_code ?? deal.proposals[0]?.ref_code ?? '';
+  // Age pill turns red once a lead has sat in Arrived more than 3 days
+  // — the team's signal that triage is overdue.
   const ageDays = daysSince(deal.created_at);
   const ageLabel = ageDays < 1 ? 'today' : ageDays === 1 ? '1d' : `${ageDays}d`;
-  const ageCls = ageDays >= 5 ? 'ops-board-card-days--warn'
-    : ageDays >= 10 ? 'ops-board-card-days--hot' : '';
-  // The type stripe carries over so the agent/direct visual marker
-  // is consistent with what cards show in other columns.
-  // Platform takes precedence in the visual classification: a platform
-  // enquiry is never also an agent enquiry, but the source check is
-  // cheap and we want yellow to win unambiguously. Direct is the
-  // residual case.
+  const ageCls = ageDays > 3 ? 'ops-board-card-days--hot' : '';
+  // Platform takes precedence over agent for the type stripe; direct
+  // is the residual case.
   const typeClass = deal.enquiry?.source === 'platform'
     ? 'ops-board-card--platform'
     : deal.is_agent
@@ -2137,32 +2142,7 @@ function InboxRowImpl({ deal, onOpen, highlighted }: { deal: Deal; onOpen: (d: D
           {subject || <span style={{ fontStyle: 'italic', color: 'var(--text-light)' }}>(no subject — open to add)</span>}
         </span>
         <span className={`ops-board-card-days ${ageCls}`} style={{ flexShrink: 0 }}>{ageLabel}</span>
-        {e?.created_by_initials && (
-          <CreatorInitialsPill initials={e.created_by_initials} />
-        )}
       </div>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2,
-        fontSize: '0.75rem', color: 'var(--text-secondary)', minWidth: 0,
-      }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {agentLine}
-          {dateRange && <> · {dateRange}</>}
-          {guestsLine && <> · {guestsLine}</>}
-        </span>
-        {/* Ref code intentionally not shown — the deal modal carries
-            it in the subtitle when needed. The card's job is at-a-
-            glance triage; ref codes are reference data, not triage. */}
-      </div>
-      {notesPreview && (
-        <div style={{
-          marginTop: 4, fontSize: '0.75rem', color: 'var(--text-secondary)',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          fontStyle: 'italic',
-        }} title={notesPreview}>
-          “{notesPreview}”
-        </div>
-      )}
     </div>
   );
 }
@@ -2204,11 +2184,16 @@ function DealCardImpl({
   // cold by definition. Both end up in the Closed column, but the
   // card carries the right tag so the reason is unambiguous.
   const isExpiredCard = !isWon && !isLost && isExpired(deal);
+  // Quoting + Responded collapse to two lines (headline + day pill,
+  // then dates + a stage-specific roll-up). Proposal-by-proposal status
+  // lives in the deal modal; the column's job is "how long has it sat
+  // and what's the quote shape" — not which property is in which state.
+  const isQuoting = stage === 'quoting';
+  const isResponded = stage === 'sent' || stage === 'stalled';
+  const isBooked = stage === 'booked';
+  const isClosedCol = stage === 'closed';
+  const isCompact2Line = isQuoting || isResponded || isBooked;
   const stop = (fn: (e: React.MouseEvent) => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(e); };
-
-  // For Sent column, surface a viewed badge if any proposal's been opened.
-  const wasViewed = (stage === 'sent' || stage === 'stalled') &&
-    deal.proposals.some(p => p.status === 'viewed' || p.viewed_at);
 
   // The card is purely informational; click opens the deal modal where
   // all actions live. Renders deal-shaped info: agent/guest identity
@@ -2313,13 +2298,46 @@ function DealCardImpl({
         <span className="ops-board-card-client" title={headline}>
           {headline}
         </span>
-        {/* Top-right slot — was the ref_code (useful for cross-ref in
-            emails but not for at-a-glance scanning on the board). Now
-            shows a compact stay-sizing pill: guests count + nights.
-            Two universal facts for every enquiry, helps the eye sort
-            "5 from same agent" by trip size at a glance. Ref_code
-            stays accessible via the deal modal subtitle. */}
-        {(() => {
+        {/* Top-right slot. Quoting collapses to a days-in-column pill
+            (red once it crosses 3 days) so the team can spot stale
+            drafts. Every other column keeps the stay-sizing pill
+            (guests + nights) — by then dates and party size are the
+            load-bearing triage facts. Ref_code stays accessible via
+            the deal modal subtitle. */}
+        {isClosedCol ? (() => {
+          // Why-it-closed tag. Expiry wins because it's the auto-cold
+          // case (no human action). Then explicit manual cancel. Then
+          // the all-declined fallback. If none of those fit (rare —
+          // would mean a 'lost' stage with no signal) we drop the tag
+          // rather than make something up.
+          const manual = deal.manual_status === 'cancelled';
+          const expired = isExpiredCard;
+          const allDeclined =
+            deal.proposals.length > 0 &&
+            deal.proposals.every(p => p.status === 'declined' || p.status === 'cancelled' || p.status === 'expired' || p.status === 'archived');
+          const tag = expired
+            ? { label: '⏰ Expired',   bg: '#FEE2E2', color: '#991B1B' }
+            : manual
+            ? { label: '✕ Cancelled',  bg: '#E5E7EB', color: '#374151' }
+            : allDeclined
+            ? { label: '⊘ Declined',   bg: '#FECACA', color: '#991B1B' }
+            : null;
+          if (!tag) return null;
+          return (
+            <span
+              className="ops-board-card-tag"
+              style={{ background: tag.bg, color: tag.color }}
+              title={tag.label.replace(/^[^\w]+\s*/, '')}
+            >
+              {tag.label}
+            </span>
+          );
+        })() : (isQuoting || isBooked) ? null : isResponded ? (() => {
+          const days = daysSince(deal.created_at);
+          const label = days < 1 ? 'today' : days === 1 ? '1d' : `${days}d`;
+          const cls = days > 3 ? 'ops-board-card-days--hot' : '';
+          return <span className={`ops-board-card-days ${cls}`}>{label}</span>;
+        })() : (() => {
           const guests = deal.guests_total;
           const nights = (deal.check_in && deal.check_out)
             ? Math.round((new Date(deal.check_out).getTime() - new Date(deal.check_in).getTime()) / (1000 * 60 * 60 * 24))
@@ -2349,8 +2367,9 @@ function DealCardImpl({
           WHICH agent without making the agent's name the headline (the
           headline now leads with property + dates so 5 enquiries from
           the same agent are visually distinct). For direct deals this
-          line is suppressed because the headline IS the guest. */}
-      {agentContext && (
+          line is suppressed because the headline IS the guest.
+          Quoting collapses to two lines, so this is suppressed there. */}
+      {agentContext && !isCompact2Line && !isClosedCol && (
         <div style={{
           fontSize: '0.75rem',
           color: 'var(--text-secondary)',
@@ -2368,70 +2387,39 @@ function DealCardImpl({
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
-        {/* Source-of-origin tag. Platform takes precedence over Agent so
-            an Airbnb/VRBO enquiry with an agent-tied proposal still reads
-            as "Platform" on the card — the platform is the origin of the
-            deal, the agent is a downstream attribution. */}
-        {deal.enquiry?.source === 'platform'
-          ? <span className="ops-board-card-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>🔗 Platform</span>
-          : deal.is_agent
-            ? <span className="ops-board-card-tag ops-board-card-tag--agent">🤝 Agent</span>
-            : <span className="ops-board-card-tag ops-board-card-tag--direct">👤 Direct</span>}
-        {/* When the enquiry was tagged as Platform with a back-link,
-            show a tiny 🔗 button that opens the conversation thread
-            on Airbnb/Booking/etc. in a new tab. One-click jump back
-            to the message without opening the deal modal. */}
-        {deal.enquiry?.source === 'platform' && deal.enquiry?.source_url && (
-          <a
-            href={deal.enquiry.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            title="Open the conversation on the platform"
-            style={{
-              fontSize: '0.75rem',
-              padding: '1px 6px',
-              borderRadius: 3,
-              background: '#FEF3C7',
-              color: '#92400E',
-              textDecoration: 'none',
-              fontWeight: 600,
-            }}
-          >
-            ↗ Thread
-          </a>
-        )}
-        {isStalled && <span className="ops-board-card-tag ops-board-card-tag--stalled">⚠ Stalled</span>}
-        {isWon && <span className="ops-board-card-tag ops-board-card-tag--won">✓ Booked</span>}
-        {isLost && <span className="ops-board-card-tag ops-board-card-tag--lost">✕ Closed</span>}
-        {isExpiredCard && <span className="ops-board-card-tag ops-board-card-tag--lost">⏰ Expired</span>}
-        {wasViewed && <span className="ops-board-card-tag ops-board-card-tag--viewed">Viewed</span>}
-        {/* Sent progress badge — visible whenever at least one of
-            the deal's proposals has gone out. Tells the user
-            "how much of this enquiry has actually been quoted
-            to the client" without opening the deal modal. */}
-        {(() => {
-          const sentLikeStatuses = new Set(['sent', 'viewed', 'interested', 'accepted', 'booked']);
-          const sentCount = deal.proposals.filter(p => sentLikeStatuses.has(p.status)).length;
-          if (sentCount === 0 || proposalCount === 0) return null;
-          return (
-            <span
-              className="ops-board-card-tag"
-              style={{ background: '#DBEAFE', color: '#1E40AF' }}
-              title={`${sentCount} of ${proposalCount} proposals sent`}
-            >
-              📤 {sentCount}/{proposalCount} sent
-            </span>
-          );
-        })()}
-      </div>
+      {!isCompact2Line && !isClosedCol && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
+          {isStalled && <span className="ops-board-card-tag ops-board-card-tag--stalled">⚠ Stalled</span>}
+          {isWon && <span className="ops-board-card-tag ops-board-card-tag--won">✓ Booked</span>}
+          {isLost && <span className="ops-board-card-tag ops-board-card-tag--lost">✕ Closed</span>}
+          {isExpiredCard && <span className="ops-board-card-tag ops-board-card-tag--lost">⏰ Expired</span>}
+          {/* Sent progress badge — visible whenever at least one of
+              the deal's proposals has gone out. Tells the user
+              "how much of this enquiry has actually been quoted
+              to the client" without opening the deal modal. */}
+          {(() => {
+            const sentLikeStatuses = new Set(['sent', 'viewed', 'interested', 'accepted', 'booked']);
+            const sentCount = deal.proposals.filter(p => sentLikeStatuses.has(p.status)).length;
+            if (sentCount === 0 || proposalCount === 0) return null;
+            return (
+              <span
+                className="ops-board-card-tag"
+                style={{ background: '#DBEAFE', color: '#1E40AF' }}
+                title={`${sentCount} of ${proposalCount} proposals sent`}
+              >
+                📤 {sentCount}/{proposalCount} sent
+              </span>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Proposals strip — one row per proposal: property name + status
           pill. Replaces the old "1 proposal" tag + single property line.
           Now the card tells the truth about multi-property enquiries:
-          which house, which status, all at once. */}
-      {proposalCount > 0 && (
+          which house, which status, all at once. Suppressed in Quoting
+          (two-line layout — proposal count rolls up onto the meta row). */}
+      {!isCompact2Line && !isClosedCol && proposalCount > 0 && (
         <div style={{
           marginTop: 6,
           paddingTop: 6,
@@ -2485,82 +2473,70 @@ function DealCardImpl({
         </div>
       )}
 
-      <div className="ops-board-card-meta" style={{ marginTop: 6 }}>
-        {deal.check_in && deal.check_out
-          ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
-          : <span style={{ fontStyle: 'italic' }}>No dates</span>}
-        <span style={{ flex: 1 }} />
-        {(() => {
-          const days = daysSince(deal.created_at);
-          if (days < 1) return null;
-          const cls = days >= 10 ? 'ops-board-card-days--hot'
-            : days >= 5 ? 'ops-board-card-days--warn' : '';
-          return <span className={`ops-board-card-days ${cls}`}>{days}d</span>;
-        })()}
-        {deal.enquiry?.created_by_initials && (
-          <CreatorInitialsPill initials={deal.enquiry.created_by_initials} />
+      {!isClosedCol && (
+      <div className="ops-board-card-meta" style={{ marginTop: 6, minWidth: 0 }}>
+        {isBooked ? (() => {
+          const booked = deal.proposals.find(p => p.status === 'accepted' || p.status === 'booked')
+            ?? deal.proposals[0];
+          const dateBit = (deal.check_in && deal.check_out)
+            ? `${fmtDate(deal.check_in)} → ${fmtDate(deal.check_out)}`
+            : null;
+          const propBit = booked ? titleCase(booked.property_name) : null;
+          const text = [dateBit, propBit].filter(Boolean).join(' · ');
+          return (
+            <span
+              title={text}
+              style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {text || <span style={{ fontStyle: 'italic' }}>No dates</span>}
+            </span>
+          );
+        })() : (
+          <>
+            {deal.check_in && deal.check_out
+              ? <span>{fmtDate(deal.check_in)} to {fmtDate(deal.check_out)}<NightCount checkIn={deal.check_in} checkOut={deal.check_out} /></span>
+              : <span style={{ fontStyle: 'italic' }}>No dates</span>}
+            <span style={{ flex: 1 }} />
+          </>
         )}
+        {isBooked
+          ? <span style={{ color: '#047857', fontWeight: 600 }}>Accepted</span>
+          : isQuoting
+          ? proposalCount > 0 && (
+              <span title={`${proposalCount} draft ${proposalCount === 1 ? 'proposal' : 'proposals'}`}>
+                {proposalCount} {proposalCount === 1 ? 'proposal' : 'proposals'}
+              </span>
+            )
+          : isResponded
+          ? (() => {
+              if (proposalCount === 0) return null;
+              const sentLikeStatuses = new Set(['sent', 'viewed', 'interested', 'accepted', 'booked']);
+              const sentCount = deal.proposals.filter(p => sentLikeStatuses.has(p.status)).length;
+              // Green when every proposal's gone out; amber while
+              // some are still in the draft pile so partial coverage
+              // reads as "you still owe the guest a quote".
+              const allSent = sentCount === proposalCount;
+              const color = allSent ? '#047857' : '#B45309';
+              return (
+                <span
+                  style={{ color, fontWeight: 600 }}
+                  title={`${sentCount} of ${proposalCount} proposals sent`}
+                >
+                  📤 {sentCount}/{proposalCount} sent
+                </span>
+              );
+            })()
+          : (() => {
+              const days = daysSince(deal.created_at);
+              if (days < 1) return null;
+              const cls = days >= 10 ? 'ops-board-card-days--hot'
+                : days >= 5 ? 'ops-board-card-days--warn' : '';
+              return <span className={`ops-board-card-days ${cls}`}>{days}d</span>;
+            })()}
       </div>
+      )}
 
     </div>
-  );
-}
-
-/** Small 2-letter pill on each card identifying who captured the enquiry.
- *  Anchored bottom-right of the meta row so it doesn't fight the action
- *  buttons or status pills for space. Each team member gets their own
- *  colour so the board reads at a glance even before you focus the pill:
- *    JH → black   (Jordon)
- *    GH → grey    (Gary)
- *    HH → pink    (Hayley)
- *    NT → blue    (Nicki)
- *  Unknown initials fall back to the neutral muted-grey treatment. */
-const INITIALS_COLOURS: Record<string, { bg: string; fg: string }> = {
-  JH: { bg: '#111827', fg: '#FFFFFF' },
-  GH: { bg: '#9CA3AF', fg: '#FFFFFF' },
-  HH: { bg: '#EC4899', fg: '#FFFFFF' },
-  NT: { bg: '#2563EB', fg: '#FFFFFF' },
-};
-
-function CreatorInitialsPill({ initials }: { initials: string }) {
-  // Comma-separated values mean the card is owned by multiple team
-  // members — used today by agent-portal-created enquiries which
-  // auto-assign to NT + HH. Render each as its own coloured pill
-  // (slightly tighter spacing) so the team can see who's
-  // responsible at a glance without us having to invent a "TEAM"
-  // catch-all colour.
-  const list = initials.split(',').map(s => s.trim()).filter(Boolean);
-  if (list.length === 0) return null;
-  return (
-    <span style={{ display: 'inline-flex', gap: 3, flexShrink: 0 }} title={`Assigned to ${list.join(' + ')}`}>
-      {list.map(i => {
-        const colour = INITIALS_COLOURS[i] ?? {
-          bg: 'var(--surface-muted, #F3F4F6)',
-          fg: 'var(--text-secondary, #6B7280)',
-        };
-        return (
-          <span
-            key={i}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minWidth: 22,
-              height: 18,
-              padding: '0 5px',
-              borderRadius: 9,
-              background: colour.bg,
-              color: colour.fg,
-              fontSize: '0.6875rem',
-              fontWeight: 700,
-              letterSpacing: '0.02em',
-            }}
-          >
-            {i}
-          </span>
-        );
-      })}
-    </span>
   );
 }
 
