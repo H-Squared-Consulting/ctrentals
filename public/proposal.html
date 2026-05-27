@@ -640,23 +640,6 @@
         html += '</div>';
       }
 
-      // Agent-only note: reassure the agent that the headline price already
-      // includes their commission. No numbers — just a discreet line so they
-      // know not to add their cut on top. Hidden when commission is 0 (e.g.
-      // a one-off zero-commission deal) and on guest-facing proposals.
-      if (isAgent) {
-        var ownerNet = Math.round(Number(pricing.owner_net));
-        var ctrTake = Math.round(Number(pricing.company_take));
-        var agentTake = perNightRand - ownerNet - ctrTake;
-        if (agentTake > 0) {
-          // Reuses .pos-greeting-notes so the styling (cream bg, gold left
-          // border, italic) matches the brand language used elsewhere on the
-          // proposal page rather than introducing a foreign yellow alert.
-          html += '<div class="pos-greeting-notes" style="margin-top:18px;">';
-          html += '<strong>Please note:</strong> the rate shown is inclusive of the agreed commission, payable by Southern Escapes upon successful booking.';
-          html += '</div>';
-        }
-      }
     } else if (pr.price_from) {
       // Legacy proposals with no linked pricing snapshot — fall back to the
       // property's listed rate. New proposals from the calculator always have
