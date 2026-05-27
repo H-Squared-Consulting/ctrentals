@@ -2831,12 +2831,12 @@ button.ops-board-card-tag--clickable:active {
   white-space: nowrap;
   border: 1px solid rgba(0,0,0,0.1);
   transition: box-shadow 0.12s ease, transform 0.12s ease;
-  z-index: 1;
+  z-index: 3; /* above the search band so clicking a booking still opens it */
 }
 .booking-bar:hover {
   box-shadow: 0 4px 10px rgba(0,0,0,0.18);
   transform: translateY(-1px);
-  z-index: 2;
+  z-index: 4;
 }
 /* Team colour scheme: Booked = red (solid, "locked in"), Blocked = orange
    (diagonal stripes so it reads distinct from Booked beyond hue alone),
@@ -2887,6 +2887,31 @@ button.ops-board-card-tag--clickable:active {
   background: var(--error);
   z-index: 2;
   pointer-events: none;
+}
+.bookings-board-search-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.18);
+  border-left: 2px solid rgba(15, 23, 42, 0.55);
+  border-right: 2px solid rgba(15, 23, 42, 0.55);
+  /* Above the availability gap bars (so a click on a free row uses
+     the search dates rather than the full gap) but below booking /
+     block bars (so those still open their own modal on click). */
+  z-index: 2;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.bookings-board-search-band:hover {
+  background: rgba(15, 23, 42, 0.28);
+}
+.bookings-board-search-band--booked {
+  /* Subtle tint shift so the user sees "this row's already booked
+     in the range" before clicking; the click still opens the booking. */
+  background: rgba(220, 38, 38, 0.14);
+}
+.bookings-board-search-band--booked:hover {
+  background: rgba(220, 38, 38, 0.22);
 }
 
 /* ─── Calendar view — month grid showing portfolio availability ───────── */
