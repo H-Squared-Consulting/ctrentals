@@ -249,11 +249,12 @@ export default function BookingCalendarPage() {
 
   const filteredProperties = useMemo(() => {
     let result = properties.filter(p => propertyAttrMatches(p) && propertyTextMatches(p));
-    // Date range filter, mode-aware:
-    //   Occupancy   → show only properties booked/blocked in the window
-    //   Availability → show only properties free in the window
-    // Window extended by ±flex days on each side; cancelled bookings ignored.
-    if (searchCheckIn && searchCheckOut) {
+    // Date range narrows the property list only in Availability mode
+    // (the only one whose explicit job is "show me what's free for
+    // these dates"). All / Booked treat the same date range as a pure
+    // navigation aid — the highlighted band + auto-scroll handle it
+    // without dropping rows the user can still see context on.
+    if (boardMode === 'availability' && searchCheckIn && searchCheckOut) {
       const winStart = addDays(new Date(searchCheckIn), -searchFlex);
       const winEnd = addDays(new Date(searchCheckOut), searchFlex);
       if (winEnd > winStart) {
@@ -265,7 +266,7 @@ export default function BookingCalendarPage() {
             const bEnd = new Date(b.check_out);
             return bEnd > winStart && bStart < winEnd;
           });
-          return boardMode === 'occupancy' ? conflicts : !conflicts;
+          return !conflicts;
         });
       }
     }
@@ -310,7 +311,11 @@ export default function BookingCalendarPage() {
       });
     }
 
-    if (searchCheckIn && searchCheckOut) {
+    // Same mode-gate as filteredProperties: in Availability the date
+    // range narrows the booking list to the window (so the list view
+    // matches what's filtered on the board); in All / Booked it's
+    // navigation only and bookings outside the window stay visible.
+    if (boardMode === 'availability' && searchCheckIn && searchCheckOut) {
       const winStart = addDays(new Date(searchCheckIn), -searchFlex);
       const winEnd = addDays(new Date(searchCheckOut), searchFlex);
       if (winEnd > winStart) {
@@ -324,7 +329,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex]);
+  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex, boardMode]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
@@ -431,6 +436,22 @@ export default function BookingCalendarPage() {
     const offset = daysBetween(rangeStart, today);
     return offset >= 0 && offset <= RANGE_DAYS ? offset * cellWidth : null;
   }, [rangeStart, cellWidth]);
+
+  // Pixel overlay for the date-range filter. Renders only when both
+  // sides are filled and form a forward range; clamped to the visible
+  // timeline so a far-future range still shows as much of itself as
+  // fits. Used both for the shaded backdrop and to drive the auto-
+  // scroll so the user lands on the dates they just picked.
+  const searchHighlight = useMemo(() => {
+    if (!searchCheckIn || !searchCheckOut) return null;
+    const inDate = startOfDay(new Date(searchCheckIn));
+    const outDate = startOfDay(new Date(searchCheckOut));
+    if (!(inDate < outDate)) return null;
+    const startOff = Math.max(0, daysBetween(rangeStart, inDate));
+    const endOff = Math.min(RANGE_DAYS, daysBetween(rangeStart, outDate));
+    if (endOff <= startOff) return null;
+    return { left: startOff * cellWidth, width: (endOff - startOff) * cellWidth };
+  }, [searchCheckIn, searchCheckOut, rangeStart, cellWidth]);
 
   function jumpToday() {
     setJumpToken(t => t + 1);
@@ -672,6 +693,10 @@ export default function BookingCalendarPage() {
           rangeStart={rangeStart}
           todayLeftPx={todayLeft}
           jumpToken={jumpToken}
+          searchHighlight={searchHighlight}
+          searchRange={searchHighlight && searchCheckIn && searchCheckOut
+            ? { checkIn: searchCheckIn, checkOut: searchCheckOut }
+            : null}
           onBarClick={(b) => {
             if (b.kind === 'block') setEditingBlock(b);
             else setEditingBooking(b);
@@ -816,7 +841,7 @@ export default function BookingCalendarPage() {
 // ─── Board view ────────────────────────────────────────────────────────
 
 function BookingsBoard({
-  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, isBlocked, occupancyView, rangeStart, todayLeftPx, jumpToken, onBarClick, onPropertyClick, onGapClick,
+  properties, totalWidth, cellWidth, monthTicks, axisLabels, gridLines, weekendBlocks, todayLeft, visibleBookingsFor, barPosition, isBlocked, occupancyView, rangeStart, todayLeftPx, jumpToken, searchHighlight, searchRange, onBarClick, onPropertyClick, onGapClick,
 }: {
   properties: Property[];
   totalWidth: number;
@@ -833,6 +858,8 @@ function BookingsBoard({
   rangeStart: Date;
   todayLeftPx: number | null;
   jumpToken: number;
+  searchHighlight: { left: number; width: number } | null;
+  searchRange: { checkIn: string; checkOut: string } | null;
   onBarClick: (b: Booking) => void;
   onPropertyClick: (p: Property) => void;
   onGapClick: (propertyId: string, checkIn: string, checkOut: string) => void;
@@ -867,6 +894,34 @@ function BookingsBoard({
     }
   }, [todayLeftPx, jumpToken, cellWidth]);
 
+  // When the user fills in a date range filter, scroll the timeline so
+  // the highlighted window lands ~12% in from the left edge. Two
+  // triggers, no more: (1) the range first becomes valid, (2) the new
+  // range lies outside the current viewport (e.g. user nudged it by
+  // months). In-place edits inside the visible window leave the
+  // scroll alone — the user is still looking at the right place and
+  // we don't want every keystroke to yank the viewport.
+  const lastSearchLeftRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!rightRef.current) return;
+    if (!searchHighlight) {
+      lastSearchLeftRef.current = null;
+      return;
+    }
+    const pane = rightRef.current;
+    const visibleStart = pane.scrollLeft;
+    const visibleEnd = pane.scrollLeft + pane.clientWidth;
+    const wasUnset = lastSearchLeftRef.current == null;
+    const outOfView =
+      searchHighlight.left + searchHighlight.width < visibleStart ||
+      searchHighlight.left > visibleEnd;
+    if (wasUnset || outOfView) {
+      const offset = pane.clientWidth * 0.12;
+      pane.scrollLeft = Math.max(0, searchHighlight.left - offset);
+    }
+    lastSearchLeftRef.current = searchHighlight.left;
+  }, [searchHighlight]);
+
   return (
     <div className="bookings-board" style={{ ['--cell-width' as any]: `${cellWidth}px` }}>
       <div className="bookings-board-fixed" ref={leftRef}>
@@ -899,6 +954,9 @@ function BookingsBoard({
           {todayLeft != null && (
             <div className="bookings-board-today" style={{ left: todayLeft }} title="Today" />
           )}
+          {/* The shaded date-range band is rendered per-row inside each
+              track below so the click target knows which property the
+              user is acting on — see bookings-board-search-band. */}
           {/* Axis — sticky to the top of the scroll pane so it stays visible */}
           <div className="bookings-board-axis" style={{ width: totalWidth }}>
             {monthTicks.map((t, i) => (
@@ -953,8 +1011,39 @@ function BookingsBoard({
                 });
               }
             }
+            // Per-row band for the active date-range search. Sits
+            // behind the booking + availability bars (so an existing
+            // bar's own click handler wins where they overlap), but
+            // covers the gaps so a click anywhere else in the band
+            // opens the new-booking flow pre-filled with the search
+            // dates + this property. If the search range overlaps
+            // any booking on this property, the band routes the click
+            // straight to that booking's modal instead.
+            const searchOverlap = (searchRange && searchHighlight)
+              ? visibleBookingsFor(prop.id).find(b => {
+                  const bStart = new Date(b.check_in);
+                  const bEnd = new Date(b.check_out);
+                  const sStart = new Date(searchRange.checkIn);
+                  const sEnd = new Date(searchRange.checkOut);
+                  return bEnd > sStart && bStart < sEnd;
+                })
+              : null;
             return (
             <div key={prop.id} className={`bookings-board-track${idx % 2 === 1 ? ' bookings-board-track--alt' : ''}`}>
+              {searchRange && searchHighlight && (
+                <div
+                  className={`bookings-board-search-band${searchOverlap ? ' bookings-board-search-band--booked' : ''}`}
+                  style={{ left: searchHighlight.left, width: searchHighlight.width }}
+                  title={searchOverlap
+                    ? `${isBlocked(searchOverlap.id) ? 'Block' : (searchOverlap.guest_name || 'Booking')} · click to open`
+                    : `Click to book ${titleCase(prop.property_name)} for ${searchRange.checkIn} → ${searchRange.checkOut}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (searchOverlap) onBarClick(searchOverlap);
+                    else onGapClick(prop.id, searchRange.checkIn, searchRange.checkOut);
+                  }}
+                />
+              )}
               {occupancyView !== 'available' && visibleBookingsFor(prop.id).map(b => {
                 const pos = barPosition(b);
                 if (!pos) return null;
