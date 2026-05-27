@@ -720,23 +720,56 @@ export default function PipelinePage() {
     };
     const unsubscribe = onPipelineChanged(schedule);
 
-    // Cross-client live updates via Supabase Realtime. The window
-    // event bus above only fires within the same tab — agent-portal
-    // submissions (different device entirely) need a server-pushed
-    // signal to wake the kanban up. We subscribe to INSERTs +
-    // UPDATEs on enquiries / proposals and feed them through the
-    // same debounced refetch path so a burst of cascade updates
-    // collapses to one round-trip.
-    const channel = supabase
-      .channel('pipeline-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, schedule)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'proposals' }, schedule)
-      .subscribe();
+    // Cross-device live updates via Supabase Realtime. Narrowed to
+    // INSERT + UPDATE on enquiries / proposals — DELETE was never a
+    // useful signal here (deals are soft-closed via status, not
+    // hard-deleted) and dropping it halves the apply_rls cascade fan-
+    // out per cascade write.
+    //
+    // The subscription is also gated on document.visibilityState — a
+    // hidden tab can't show updates anyway, so we drop the connection
+    // when the tab is backgrounded and re-attach (+ immediate refetch
+    // to catch up) when it comes back. Without this, a single user
+    // leaving 5 admin tabs open all day multiplied every cascade
+    // write by 5 (apply_rls fires once per subscribed client per WAL
+    // entry), which was the original cause of the Disk IO budget
+    // depletion warning.
+    let channel: any = null;
+    function attach() {
+      if (channel) return;
+      channel = supabase
+        .channel('pipeline-live')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'enquiries' }, schedule)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'enquiries' }, schedule)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'proposals' }, schedule)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'proposals' }, schedule)
+        .subscribe();
+    }
+    function detach() {
+      if (!channel) return;
+      try { supabase.removeChannel(channel); } catch {}
+      channel = null;
+    }
+    function onVisibility() {
+      if (document.visibilityState === 'visible') {
+        attach();
+        // Tab just came back — pull the freshest data immediately
+        // so the user sees any writes that happened while away.
+        schedule();
+      } else {
+        detach();
+      }
+    }
+    // Attach immediately if we're already foregrounded; otherwise wait
+    // for the first visibilitychange.
+    if (document.visibilityState === 'visible') attach();
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       if (timer) clearTimeout(timer);
       unsubscribe();
-      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', onVisibility);
+      detach();
     };
   }, [supabase]);
 
@@ -985,16 +1018,20 @@ export default function PipelinePage() {
           guest_email: (e as any).guest_email ?? null,
           guest_phone: (e as any).guest_phone ?? null,
         },
-        // Pre-tick the agent's picks from /q/:token (agent-portal
-        // multi-property enquiries). Null / empty for any enquiry
-        // that didn't come through the portal — match modal opens
-        // with no selections, same as before.
-        initiallySelected: (e as any).requested_property_ids ?? null,
-        // Hard-restrict the property list to the agent's picks for
-        // portal enquiries so the team can't accidentally quote
-        // houses the agent didn't ask about. Null for every other
-        // path → modal keeps full-portfolio behaviour.
-        restrictToIds: (e as any).requested_property_ids ?? null,
+        // Pre-tick the agent's picks (initiallySelected) so the first-
+        // time path lands with the agent's request list checked — but
+        // NEVER hard-restrict the list to those picks. The match modal
+        // always shows every property that satisfies the enquiry's
+        // dates / beds / guests / budget filter so the team can swap
+        // in alternatives the agent didn't think of (and so "Add
+        // another proposal" on a deal with existing proposals doesn't
+        // narrow to the original picks). Once proposals exist we also
+        // drop the pre-tick — the agent's picks have already been
+        // quoted, the user is now adding extras.
+        initiallySelected: d.proposals.length === 0
+          ? ((e as any).requested_property_ids ?? null)
+          : null,
+        restrictToIds: null,
       });
     } else {
       // Standalone proposal (FAB or orphan): keep the legacy flow
@@ -1503,6 +1540,12 @@ export default function PipelinePage() {
                 // shows the correct breakdown on Edit Pricing.
                 _enquirySource: openDeal?.deal.enquiry?.source ?? null,
                 _enquiryPlatformChannel: (openDeal?.deal.enquiry as any)?.platform_channel ?? null,
+                // Carry the agent context too — when present, the pricing
+                // modal hides the "Specific agent" dropdown since the agent
+                // is fixed by the enquiry's ref-code.
+                _enquiryAgentId: openDeal?.deal.enquiry?.is_agent
+                  ? (openDeal?.deal.enquiry?.agent_id ?? null)
+                  : null,
               });
             }
           }}
@@ -1540,6 +1583,9 @@ export default function PipelinePage() {
                 _checkOut: openProposal.check_out ?? null,
                 _enquirySource: parentDeal?.enquiry?.source ?? null,
                 _enquiryPlatformChannel: (parentDeal?.enquiry as any)?.platform_channel ?? null,
+                _enquiryAgentId: parentDeal?.enquiry?.is_agent
+                  ? (parentDeal?.enquiry?.agent_id ?? null)
+                  : null,
               });
               setOpenProposal(null);
             }
@@ -3135,7 +3181,13 @@ function DealDetailModal({
         // single-value readers keep working; null when no bedroom filter
         // was set so the match modal treats it as "any" rather than
         // silently filtering down to 1-bed properties.
-        bedrooms_needed:  form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : (form.bedrooms_needed ?? null),
+        //
+        // The form's own `bedrooms_needed` field is never edited by the UI
+        // (only `bedrooms_options` is) so falling back to it on save left a
+        // stale value behind — clearing every chip wrote `null` to
+        // `bedrooms_options` but `1` to `bedrooms_needed`, which the next
+        // load lifted right back into the picker. Strict null when empty.
+        bedrooms_needed:  form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : null,
         guests_options:   null,
         bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
         budget_min: form.budget_min,

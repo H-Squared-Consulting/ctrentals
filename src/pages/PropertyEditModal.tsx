@@ -1477,21 +1477,24 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
               // disabled platform dropdown).
               let enquirySource: string | null = null;
               let enquiryPlatformChannel: string | null = null;
+              let enquiryAgentId: string | null = null;
               if (selectedProposal.enquiry_id) {
                 const { data: enq } = await supabase
                   .from('enquiries')
-                  .select('source, platform_channel')
+                  .select('source, platform_channel, is_agent, agent_id')
                   .eq('id', selectedProposal.enquiry_id)
                   .maybeSingle();
                 if (enq) {
                   enquirySource = enq.source ?? null;
                   enquiryPlatformChannel = (enq as any).platform_channel ?? null;
+                  enquiryAgentId = (enq as any).is_agent ? ((enq as any).agent_id ?? null) : null;
                 }
               }
               setEditPricingFor({
                 ...data,
                 _enquirySource: enquirySource,
                 _enquiryPlatformChannel: enquiryPlatformChannel,
+                _enquiryAgentId: enquiryAgentId,
               });
               setSelectedProposal(null);
             }

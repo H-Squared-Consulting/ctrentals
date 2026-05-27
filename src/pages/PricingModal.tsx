@@ -212,11 +212,16 @@ export default function PricingModal({
             if (enquiryPrefill.source === 'platform') return 'platform';
             return enquiryPrefill.is_agent ? 'agent' : 'direct';
           })()}
-          // Pre-select the agent who made the enquiry. Only fires when
-          // the enquiry is_agent and the user picks the 'agent' scenario
-          // in the dashboard. Without this the dropdown defaults to
-          // "(any agent)" — frustrating when we already know who.
-          initialAgentId={enquiryPrefill?.is_agent ? (enquiryPrefill?.agent_id ?? null) : null}
+          // Pre-select the agent who made the enquiry. Falls back to the
+          // edit-pricing carrier so editing a proposal that lives under an
+          // agent enquiry still opens locked-to-that-agent (the dashboard
+          // also hides the dropdown when this is non-null because the
+          // agent is fixed by the enquiry's ref-code).
+          initialAgentId={(() => {
+            if (enquiryPrefill?.is_agent) return enquiryPrefill?.agent_id ?? null;
+            const editAgent = (editPricingProposal as any)?._enquiryAgentId;
+            return editAgent ?? null;
+          })()}
           // Lock the channel to the platform the user picked at enquiry
           // capture (Airbnb / VRBO). PricingDashboard resolves the
           // lowercase channel name against channel_defaults.platform_name
