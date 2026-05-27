@@ -17,7 +17,8 @@ import DateInput from '../components/DateInput';
 import NumericMultiSelect from '../components/NumericMultiSelect';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import NightCount from '../components/NightCount';
-import PriceRangeFilter from '../components/PriceRangeFilter';
+import PriceBucketFilter from '../components/PriceBucketFilter';
+import type { TierKey } from '../lib/priceTiers';
 import { useToast } from '../components/ToastProvider';
 import { useModalStack } from '../contexts/ModalStackContext';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
@@ -39,7 +40,7 @@ const EMPTY_FORM = {
   bedrooms_options: [] as number[],
   guests_total: '2',
   guests_adults: '1', guests_children: '0',
-  nationality: '', budget_min: '', budget_max: '', notes: '',
+  nationality: '', budget_tiers: [] as TierKey[], notes: '',
 };
 
 interface AgentOption {
@@ -71,19 +72,6 @@ export function EnquiryForm() {
   const focusSelf = () => modalStack?.focus('enquiry');
 
   const [form, setForm] = useState(EMPTY_FORM);
-  /** Budget slider basis — purely a display preference on this
-   *  form; the budget_min / budget_max we persist are always
-   *  per-night (the canonical representation across the platform).
-   *  Mirrors what the global search modal stores locally. */
-  const [budgetBasis, setBudgetBasis] = useState<'night' | 'stay'>('night');
-  /** Derived stay length for the per-stay budget toggle. Falls
-   *  back to 0 (toggle disabled) until both dates are valid. */
-  const enquiryNights = useMemo(() => {
-    if (!form.check_in || !form.check_out) return 0;
-    const ms = new Date(form.check_out).getTime() - new Date(form.check_in).getTime();
-    if (!Number.isFinite(ms) || ms <= 0) return 0;
-    return Math.round(ms / 86_400_000);
-  }, [form.check_in, form.check_out]);
   const [saving, setSaving] = useState(false);
   const [savedEnquiry, setSavedEnquiry] = useState<EnquiryPrefill | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
@@ -153,8 +141,7 @@ export function EnquiryForm() {
       guests_adults: carry.guests_adults != null ? String(carry.guests_adults) : '1',
       guests_children: carry.guests_children != null ? String(carry.guests_children) : '0',
       nationality: carry.nationality || '',
-      budget_min: carry.budget_min != null ? String(carry.budget_min) : '',
-      budget_max: carry.budget_max != null ? String(carry.budget_max) : '',
+      budget_tiers: Array.isArray(carry.budget_tiers) ? (carry.budget_tiers as TierKey[]) : [],
       notes: carry.notes || '',
       source_url: carry.source_url || '',
     }));
@@ -307,8 +294,7 @@ export function EnquiryForm() {
           guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
           guests_children: form.guests_children ? Number(form.guests_children) : null,
           nationality: form.nationality.trim() || null,
-          budget_min: form.budget_min ? Number(form.budget_min) : null,
-          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          budget_tiers: form.budget_tiers.length > 0 ? form.budget_tiers : null,
           notes: form.notes.trim() || null,
           source: null,
           source_url: null,
@@ -385,8 +371,7 @@ export function EnquiryForm() {
           guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
           guests_children: form.guests_children ? Number(form.guests_children) : null,
           nationality: form.nationality.trim() || null,
-          budget_min: form.budget_min ? Number(form.budget_min) : null,
-          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          budget_tiers: form.budget_tiers.length > 0 ? form.budget_tiers : null,
           notes: form.notes.trim() || null,
           created_by_initials: initialsForEmail(user?.email),
         })
@@ -464,8 +449,7 @@ export function EnquiryForm() {
           guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
           guests_children: form.guests_children ? Number(form.guests_children) : null,
           nationality: form.nationality.trim() || null,
-          budget_min: form.budget_min ? Number(form.budget_min) : null,
-          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          budget_tiers: form.budget_tiers.length > 0 ? form.budget_tiers : null,
           notes: form.notes.trim() || null,
           source: null,
           source_url: null,
@@ -556,8 +540,7 @@ export function EnquiryForm() {
           guests_adults: form.guests_adults ? Number(form.guests_adults) : null,
           guests_children: form.guests_children ? Number(form.guests_children) : null,
           nationality: form.nationality.trim() || null,
-          budget_min: form.budget_min ? Number(form.budget_min) : null,
-          budget_max: form.budget_max ? Number(form.budget_max) : null,
+          budget_tiers: form.budget_tiers.length > 0 ? form.budget_tiers : null,
           notes: form.notes.trim() || null,
           source: isPlatform ? 'platform' : null,
           source_url: isPlatform ? (form.source_url.trim() || null) : null,
@@ -1122,24 +1105,17 @@ export function EnquiryForm() {
             <input className="form-input" name="nationality" value={form.nationality} onChange={handleChange} placeholder="e.g. UK" />
           </Field>
 
-          {/* Budget — same dual-thumb slider the global search uses
-              so an enquiry created here matches a property the same
-              way regardless of where the search happens. Storage is
-              still budget_min / budget_max as per-night R values on
-              the enquiries row; the slider's basis toggle is local
-              to this form (not persisted). */}
+          {/* Budget — channel-aware price tier chips. Channel is
+              implied by the source the user already picked (Direct /
+              Agent / Platform) so the R-ranges shown on each chip
+              reflect what the guest pays in THAT scenario, not the
+              owner-side baseline. Same component the global search
+              modal uses — one filter pipeline, no parallel logic. */}
           <Field label="Budget" style={{ marginTop: 12 }}>
-            <PriceRangeFilter
-              min={form.budget_min ? Number(form.budget_min) : null}
-              max={form.budget_max ? Number(form.budget_max) : null}
-              nights={enquiryNights}
-              basis={budgetBasis}
-              onChange={(min, max) => setForm(prev => ({
-                ...prev,
-                budget_min: min != null ? String(min) : '',
-                budget_max: max != null ? String(max) : '',
-              }))}
-              onBasisChange={setBudgetBasis}
+            <PriceBucketFilter
+              channel={isAgent ? 'agent' : isPlatform ? 'platform' : 'direct'}
+              value={form.budget_tiers}
+              onChange={(tiers) => setForm(prev => ({ ...prev, budget_tiers: tiers }))}
             />
           </Field>
 

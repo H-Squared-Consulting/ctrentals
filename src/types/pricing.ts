@@ -103,8 +103,7 @@ export interface SendableProposal {
   guests_children: number | null;
   check_in: string;
   check_out: string;
-  budget_min: number | null;
-  budget_max: number | null;
+  budget_tiers: string[] | null;
   status: 'draft' | 'sent' | 'viewed' | 'interested' | 'expired';
   is_agent: boolean;
   sent_at: string | null;

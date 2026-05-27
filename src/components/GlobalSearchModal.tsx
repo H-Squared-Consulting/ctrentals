@@ -203,10 +203,6 @@ export default function GlobalSearchModal({ initialScope = 'properties', onClose
 
   async function executeSearch() {
     if (!supabase || searching) return;
-    // Channel is the gate — the price tier maths depends on it.
-    // The Search button is hidden until a channel is picked, but
-    // this guard catches keyboard / programmatic invocations too.
-    if (!propertyFilters.channel) return;
     setSearching(true);
     setSearchError(null);
     setView('results');
@@ -238,7 +234,7 @@ export default function GlobalSearchModal({ initialScope = 'properties', onClose
   const modalTitle = isResults ? 'Matching properties' : 'Find matching properties';
   const modalSubtitle = isResults
     ? <span style={{ color: 'var(--text-secondary)' }}>{searching ? 'Searching…' : `${results.length} match${results.length === 1 ? '' : 'es'} for your filters.`}</span>
-    : <span style={{ color: 'var(--text-secondary)' }}>Pick a channel, then narrow by bedrooms, amenities, dates, or price tier.</span>;
+    : <span style={{ color: 'var(--text-secondary)' }}>Narrow by bedrooms, amenities, dates, or price tier.</span>;
   // Side-docked layout has its own width from the CSS class
   // (.action-modal--side @ 480px). Center placement uses the
   // wider results-friendly sizing.
@@ -623,91 +619,16 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
     || !!filters.checkOut
     || filters.priceTiers.length > 0;
 
-  // Channel gate: the team has to declare WHICH deal type they're
-  // searching against before any of the filter inputs render. Same
-  // shape as the EnquiryForm's source picker so the UX feels
-  // consistent across the platform. The picker stays visible after
-  // a choice (rendered as a "DIRECT · change" pill, like the
-  // pricing modal) so users can switch without resetting.
+  // Channel is optional now — only required for the Price tier
+  // filter (tier R-amounts depend on which channel they apply to).
+  // Everything else can be searched channel-agnostic.
   const channelChoice = filters.channel;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {/* ── 2.0 Channel ─────────────────────────────────────────── */}
-      <div>
-        <FilterSectionLabel>
-          Channel <span style={{ fontWeight: 400, color: 'var(--text-light)', textTransform: 'none', letterSpacing: 0 }}>
-            · which kind of enquiry are you searching for?
-          </span>
-        </FilterSectionLabel>
-        {!channelChoice ? (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {CHANNEL_OPTIONS.map(opt => (
-              <button
-                key={opt.key}
-                type="button"
-                className="btn btn-outline"
-                style={{ flex: '1 1 0', minWidth: 160, textAlign: 'left', padding: '10px 12px' }}
-                onClick={() => onChange({ ...filters, channel: opt.key })}
-              >
-                <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>
-                  {opt.icon} {opt.label}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 2 }}>
-                  {opt.description}
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ pointerEvents: 'none', cursor: 'default' }}
-            >
-              {CHANNEL_OPTIONS.find(o => o.key === channelChoice)!.icon}{' '}
-              {CHANNEL_OPTIONS.find(o => o.key === channelChoice)!.label}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ fontSize: '0.75rem' }}
-              onClick={() => onChange({ ...filters, channel: null })}
-            >
-              Change
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Everything below the channel gate stays hidden until the
-          user has picked one. The pricing math + the labeling on
-          the result set both depend on channel, so an unscoped
-          search would silently fall back to direct semantics and
-          mislead the user. */}
-      {!channelChoice && (
-        <div style={{
-          padding: '14px 16px',
-          background: 'var(--surface-alt, #F8FAFC)',
-          border: '1px dashed var(--border)',
-          borderRadius: 8,
-          fontSize: '0.8125rem',
-          color: 'var(--text-secondary)',
-          lineHeight: 1.5,
-        }}>
-          Pick a channel above to continue. Pricing tiers and the result list
-          read differently for direct guests, agents, and platform bookings —
-          we need to know which side of the deal you're working before showing
-          the rest of the filters.
-        </div>
-      )}
-
-      {channelChoice && <FilterSummary filters={filters} />}
+      <FilterSummary filters={filters} />
 
       {/* ── 2.1 Bedrooms ────────────────────────────────────────── */}
-      {channelChoice && (
-        <>
       <div>
         <FilterSectionLabel>Bedrooms</FilterSectionLabel>
         <NumericMultiSelect
@@ -869,20 +790,49 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
       </div>
 
       {/* ── 2.4 Price tier — 5 single-select chips driven by
-          /settings/price-tiers. The tier R-amounts depend on the
-          channel filter above, so the channel picker MUST be set
-          before this section makes sense; the gating at the top
-          of this block ensures that. */}
-      {filters.channel && (
-        <div>
+          /settings/price-tiers. Tier R-amounts depend on the
+          channel, so we surface a compact channel select inline
+          on the same row. Without a channel picked, the price
+          chips are hidden + a one-line hint explains why. */}
+      <div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          marginBottom: 6,
+          flexWrap: 'wrap',
+        }}>
           <FilterSectionLabel>Price</FilterSectionLabel>
+          <select
+            className="form-input"
+            style={{ width: 'auto', minWidth: 160, fontSize: '0.8125rem', padding: '4px 8px' }}
+            value={filters.channel ?? ''}
+            onChange={(e) => onChange({ ...filters, channel: (e.target.value || null) as SearchChannel | null, priceTiers: [] })}
+            title="Pick a channel to enable price-tier filtering"
+          >
+            <option value="">Channel — pick to filter by price</option>
+            {CHANNEL_OPTIONS.map(opt => (
+              <option key={opt.key} value={opt.key}>{opt.icon} {opt.label}</option>
+            ))}
+          </select>
+        </div>
+        {filters.channel ? (
           <PriceBucketFilter
             channel={filters.channel}
             value={filters.priceTiers}
             onChange={(tiers) => onChange({ ...filters, priceTiers: tiers })}
           />
-        </div>
-      )}
+        ) : (
+          <div style={{
+            fontSize: '0.75rem',
+            color: 'var(--text-light)',
+            fontStyle: 'italic',
+          }}>
+            Pick a channel above to filter by price tier — tier R-amounts differ for direct, agent and platform bookings.
+          </div>
+        )}
+      </div>
 
       {/* Footer: reset + run the search. Search is enabled even
           with zero filters — that's the "show me everything on
@@ -914,8 +864,6 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
           🔍 Search properties
         </button>
       </div>
-        </>
-      )}
     </div>
   );
 }

@@ -45,12 +45,6 @@ export interface PropertySearchFilters {
    *  selected tier (so non-contiguous picks silently expand to
    *  the contiguous span). Omitted/empty = no price filter. */
   priceTiers?: TierKey[];
-  /** Direct per-night R bounds against the baseline rate.
-   *  Captured by enquiries as guest budget numbers — the match
-   *  flow plumbs them straight through. Coexists with priceTier:
-   *  both are applied when both are set (intersection). */
-  priceMin?: number | null;
-  priceMax?: number | null;
   /** Hard-restrict the result to this exact set of property IDs.
    *  Used by the agent-portal flow where the agent has already
    *  named the houses they want quoted — the search returns ONLY
@@ -192,23 +186,8 @@ export async function searchProperties(
     if (Number.isFinite(rate) && rate > 0) fixedPeakByProperty.set(f.property_id, rate);
   }
 
-  // Direct min/max filter — coexists with the tier filter below
-  // (intersection). Used by the enquiry match flow which carries
-  // the guest's literal budget numbers through from enquiries.
-  // Properties without a baseline on file get a free pass so we
-  // don't silently hide unpriced inventory.
-  const hasDirectPriceFilter = f.priceMin != null || f.priceMax != null;
-  let priceFiltered = !hasDirectPriceFilter
-    ? amenityFiltered
-    : amenityFiltered.filter((p: any) => {
-        const rate = baselineByProperty.get(p.id);
-        if (rate == null) return true;
-        if (f.priceMin != null && rate < f.priceMin) return false;
-        if (f.priceMax != null && rate > f.priceMax) return false;
-        return true;
-      });
-
-  // Tier-based price filter. Multi-select: the floor of the
+  // Tier-based price filter — single source of truth for "what
+  // budget did the guest ask for". Multi-select: the floor of the
   // lowest selected tier becomes the lower bound, the ceiling of
   // the highest becomes the upper bound. Gaps in the selection
   // are auto-filled (Very low + High silently means "Very low
@@ -216,6 +195,7 @@ export async function searchProperties(
   // we can't say which band they're in, and the user asked for
   // unpriced stock to be dropped rather than leaked into every
   // tier's result set. Missing channel = no-op (UI gates this).
+  let priceFiltered = amenityFiltered;
   if (f.priceTiers && f.priceTiers.length > 0 && f.channel) {
     const saved = await fetchPriceTiers(supabase);
     const tiers = saved.get(f.channel) ?? await computeDefaultTiers(supabase, f.channel);
