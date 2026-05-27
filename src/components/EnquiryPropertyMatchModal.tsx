@@ -91,8 +91,7 @@ export interface PendingEnquiry {
   guests_adults: number | null;
   guests_children: number | null;
   nationality: string | null;
-  budget_min: number | null;
-  budget_max: number | null;
+  budget_tiers: string[] | null;
   notes: string | null;
   source: string | null;
   source_url: string | null;
@@ -440,12 +439,22 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       const bedFilterRaw = (enquiry.bedrooms_options && enquiry.bedrooms_options.length > 0)
         ? enquiry.bedrooms_options
         : (enquiry.bedrooms_needed != null ? [enquiry.bedrooms_needed] : null);
+      // Channel is derived from the enquiry's source — agent enquiries
+      // filter against agent-channel guest-pays, platform against
+      // platform guest-pays, everything else direct. Same pipeline the
+      // global search modal uses (priceTiers + channel), so a budget
+      // band on an enquiry matches a property the same way regardless
+      // of where the search started.
+      const channel: 'direct' | 'agent' | 'platform' =
+        enquiry.is_agent ? 'agent' : (enquiry.source === 'platform' ? 'platform' : 'direct');
       const searchPromise = searchProperties(supabase, {
         bedrooms: bedFilterRaw && bedFilterRaw.length > 0 ? bedFilterRaw : undefined,
         checkIn:  enquiry.check_in,
         checkOut: enquiry.check_out,
-        priceMin: enquiry.budget_min ?? null,
-        priceMax: enquiry.budget_max ?? null,
+        channel,
+        priceTiers: (enquiry.budget_tiers && enquiry.budget_tiers.length > 0)
+          ? (enquiry.budget_tiers as any[])
+          : undefined,
         restrictToIds: restrictToIds ?? null,
       });
       // Seasons + agent are STILL fetched locally — they feed the
@@ -631,8 +640,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             guests_adults: enquiry.guests_adults,
             guests_children: enquiry.guests_children,
             nationality: enquiry.nationality,
-            budget_min: enquiry.budget_min,
-            budget_max: enquiry.budget_max,
+            budget_tiers: enquiry.budget_tiers,
             notes: enquiry.notes,
             updated_at: new Date().toISOString(),
           })
@@ -686,8 +694,7 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             guests_adults: enquiry.guests_adults,
             guests_children: enquiry.guests_children,
             nationality: enquiry.nationality,
-            budget_min: enquiry.budget_min,
-            budget_max: enquiry.budget_max,
+            budget_tiers: enquiry.budget_tiers,
             notes: enquiry.notes,
             source: enquiry.source,
             source_url: enquiry.source_url,

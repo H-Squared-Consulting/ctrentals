@@ -49,7 +49,8 @@ import { linkOrCreateGuestForEnquiry } from '../lib/guestLinks';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
 import EnquiryPropertyMatchModal from '../components/EnquiryPropertyMatchModal';
 import NumericMultiSelect from '../components/NumericMultiSelect';
-import PriceRangeFilter from '../components/PriceRangeFilter';
+import PriceBucketFilter from '../components/PriceBucketFilter';
+import type { TierKey } from '../lib/priceTiers';
 import { useModalStack } from '../contexts/ModalStackContext';
 import { initialsForEmail, TEAM_INITIALS, type TeamInitials } from '../lib/userInitials';
 
@@ -108,8 +109,7 @@ interface EnquirySide {
   guests_adults: number | null;
   guests_children: number | null;
   nationality: string | null;
-  budget_min: number | null;
-  budget_max: number | null;
+  budget_tiers: string[] | null;
   notes: string | null;
   /** Multi-select filters captured at enquiry time — bedrooms_needed
    *  and guests_total stay as the legacy "min" mirrors so older
@@ -636,8 +636,7 @@ export default function PipelinePage() {
         guests_adults: e.guests_adults,
         guests_children: e.guests_children,
         nationality: e.nationality,
-        budget_min: e.budget_min,
-        budget_max: e.budget_max,
+        budget_tiers: e.budget_tiers,
         notes: e.notes,
         status: e.status,
         deal_status: e.deal_status ?? null,
@@ -1001,8 +1000,7 @@ export default function PipelinePage() {
           guests_adults: e.guests_adults,
           guests_children: e.guests_children,
           nationality: e.nationality,
-          budget_min: e.budget_min,
-          budget_max: e.budget_max,
+          budget_tiers: e.budget_tiers,
           notes: e.notes,
           source: e.source,
           source_url: e.source_url,
@@ -3060,8 +3058,7 @@ function DealDetailModal({
     bedrooms_options: (e?.bedrooms_options && e.bedrooms_options.length > 0)
       ? e.bedrooms_options
       : (e?.bedrooms_needed != null ? [e.bedrooms_needed] : []),
-    budget_min: e?.budget_min ?? null,
-    budget_max: e?.budget_max ?? null,
+    budget_tiers: (e?.budget_tiers ?? []) as TierKey[],
     notes: e?.notes ?? standaloneProp?.notes ?? '',
     // Agent enquiries only — captured/edited in the "Guest" section
     // below. Saving these triggers a cascade to all linked proposals so
@@ -3080,20 +3077,6 @@ function DealDetailModal({
   const [form, setForm] = useState(initialForm);
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
   const fieldsDisabled = mode === 'view';
-  /** Budget slider basis — purely a display preference. Storage is
-   *  always per-night (form.budget_min / form.budget_max). */
-  const [budgetBasis, setBudgetBasis] = useState<'night' | 'stay'>('night');
-  /** Stay length in nights for the per-stay budget toggle. Tracks
-   *  the form's live dates so editing check_in / check_out updates
-   *  the slider scale immediately. */
-  const dealBudgetNights = useMemo(() => {
-    const ci = form.check_in;
-    const co = form.check_out;
-    if (!ci || !co) return 0;
-    const ms = new Date(co).getTime() - new Date(ci).getTime();
-    if (!Number.isFinite(ms) || ms <= 0) return 0;
-    return Math.round(ms / 86_400_000);
-  }, [form.check_in, form.check_out]);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -3190,8 +3173,7 @@ function DealDetailModal({
         bedrooms_needed:  form.bedrooms_options.length > 0 ? Math.min(...form.bedrooms_options) : null,
         guests_options:   null,
         bedrooms_options: form.bedrooms_options.length > 0 ? form.bedrooms_options : null,
-        budget_min: form.budget_min,
-        budget_max: form.budget_max,
+        budget_tiers: form.budget_tiers.length > 0 ? form.budget_tiers : null,
         notes: form.notes || null,
         guest_name: guestName,
         guest_email: guestEmail,
@@ -3772,21 +3754,18 @@ function DealDetailModal({
                   </div>
                 )}
                 {e && (
-                  // Budget — same dual-thumb slider the global
-                  // search + new-enquiry form use. Spans both
-                  // grid columns so the labels + toggle have
-                  // room to breathe. Storage is still per-night
-                  // budget_min / budget_max on the enquiries row.
+                  // Budget — channel-aware price tier chips. Channel
+                  // is implied by the enquiry's source so the R-bands
+                  // shown reflect what the guest pays in that scenario,
+                  // not the owner baseline. Same component the global
+                  // search uses — one filter pipeline everywhere.
                   <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Budget</label>
                     <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
-                      <PriceRangeFilter
-                        min={form.budget_min ?? null}
-                        max={form.budget_max ?? null}
-                        nights={dealBudgetNights}
-                        basis={budgetBasis}
-                        onChange={(min, max) => setForm(prev => ({ ...prev, budget_min: min, budget_max: max }))}
-                        onBasisChange={setBudgetBasis}
+                      <PriceBucketFilter
+                        channel={e.is_agent ? 'agent' : (e.source === 'platform' ? 'platform' : 'direct')}
+                        value={form.budget_tiers}
+                        onChange={(tiers) => setForm(prev => ({ ...prev, budget_tiers: tiers }))}
                       />
                     </fieldset>
                   </div>
