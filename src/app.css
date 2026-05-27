@@ -2755,7 +2755,9 @@ button.ops-board-card-tag--clickable:active {
 .bookings-board-axis {
   position: sticky;
   top: 0;
-  z-index: 3;
+  /* Above every per-row layer (booking-bar:hover hits 4) so bars
+     scrolling vertically under the axis stay hidden behind it. */
+  z-index: 10;
   height: 56px;
   background: var(--bg);
   border-bottom: 2px solid var(--border);
