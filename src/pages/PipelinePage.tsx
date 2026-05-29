@@ -3553,10 +3553,6 @@ function DealDetailModal({
                     <label className="form-label">Phone</label>
                     <input className="form-input" value={form.client_phone} disabled readOnly />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Nationality</label>
-                    <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} disabled={fieldsDisabled} />
-                  </div>
                 </div>
               </DetailModalSection>
               <DetailModalSection
@@ -3582,6 +3578,10 @@ function DealDetailModal({
                     <div className="form-group">
                       <label className="form-label">Guest phone</label>
                       <input className="form-input" value={form.guest_phone} onChange={ev => update('guest_phone', ev.target.value)} placeholder="+27 …" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Nationality</label>
+                      <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} placeholder="e.g. UK" />
                     </div>
                   </div>
                   {fieldsDisabled && !form.guest_name && (
