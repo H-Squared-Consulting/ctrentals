@@ -428,11 +428,15 @@ function ResultsPane({
   );
 }
 
-/** Preview-and-copy modal for the Copy Airbnb links action. Shows the
- *  exact block that will land on the clipboard — property name +
- *  Airbnb URL per row — so the team can sanity-check before pasting
- *  into Airbnb. View-only on the property list; the copy itself is a
- *  single click. */
+/** Preview-and-copy modal for the Copy Airbnb links action.
+ *  Three editable surfaces stacked top-to-bottom:
+ *    1. Greeting + intro line (free-text — agents can localise per guest)
+ *    2. Property picker (every matched property with an Airbnb URL is
+ *       pre-checked; user can untick what they don't want to send)
+ *    3. Live preview of the exact block that will go to the clipboard
+ *  Forced centre placement + skipStackRegister so the parent search
+ *  modal doesn't side-dock relative to this — the preview should
+ *  always feel like the focused modal. */
 function AirbnbLinksPreviewModal({
   properties, skippedCount, onClose,
 }: {
@@ -441,29 +445,41 @@ function AirbnbLinksPreviewModal({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [header, setHeader] = useState('Hi,\n\nThe following homes would be available:');
+  // Selection set keyed by property id. Defaults to "everything checked"
+  // so the existing "copy them all" path is one click.
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(properties.map(p => p.id)));
 
-  // Prefer the cached Airbnb listing headline (populated by the
-  // fetch-airbnb-title edge fn on property save) over our internal
-  // property name — that's the title the guest already sees on Airbnb.
-  // Falls back to the property name when the title hasn't been cached
-  // yet (new URL, edge fn failure).
+  // Prefer the cached Airbnb listing headline over our internal name —
+  // that's what the guest already sees on Airbnb.
   function displayTitleFor(p: PropertyResult): string {
     return (p.airbnbTitle && p.airbnbTitle.trim()) || titleCase(p.name);
   }
 
-  // The exact text that will go to the clipboard.
+  const pickedProperties = properties.filter(p => picked.has(p.id));
   const blockText = (() => {
-    const lines = [
-      'Hi,',
-      '',
-      'The following homes would be available:',
-      '',
-      ...properties.map(p => `${displayTitleFor(p)}: ${p.airbnbUrl}`),
-    ];
-    return lines.join('\n');
+    const parts: string[] = [];
+    if (header.trim()) parts.push(header.trimEnd(), '');
+    for (const p of pickedProperties) {
+      parts.push(`${displayTitleFor(p)}: ${p.airbnbUrl}`);
+    }
+    return parts.join('\n');
   })();
 
+  function togglePicked(id: string) {
+    setPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  const allPicked = properties.length > 0 && properties.every(p => picked.has(p.id));
+  function toggleAll() {
+    setPicked(allPicked ? new Set() : new Set(properties.map(p => p.id)));
+  }
+
   async function copy() {
+    if (pickedProperties.length === 0) return;
     try {
       await navigator.clipboard.writeText(blockText);
       setCopied(true);
@@ -477,47 +493,168 @@ function AirbnbLinksPreviewModal({
     <ActionModal
       title="Copy Airbnb links"
       subtitle={skippedCount > 0
-        ? `${properties.length} property${properties.length === 1 ? '' : 'ies'} with Airbnb URLs · ${skippedCount} skipped (no URL on file)`
-        : `${properties.length} property${properties.length === 1 ? '' : 'ies'} ready to paste`}
-      width={560}
+        ? `${pickedProperties.length} of ${properties.length} selected · ${skippedCount} more skipped (no Airbnb URL on file)`
+        : `${pickedProperties.length} of ${properties.length} selected`}
+      width={640}
+      placement="center"
+      shifted={false}
+      skipStackRegister
       onClose={onClose}
       primaryAction={
         <button
           type="button"
           className="btn btn-primary"
           onClick={copy}
+          disabled={pickedProperties.length === 0}
+          title={pickedProperties.length === 0 ? 'Pick at least one property to copy' : undefined}
         >
-          {copied ? '✓ Copied to clipboard' : '📋 Copy to clipboard'}
+          {copied
+            ? '✓ Copied to clipboard'
+            : pickedProperties.length === 1
+              ? '📋 Copy 1 link'
+              : `📋 Copy ${pickedProperties.length} links`}
         </button>
       }
     >
-      <div style={{
-        background: 'var(--bg)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-        padding: 'var(--s-3)',
-        fontSize: '0.8125rem',
-        lineHeight: 1.6,
-        color: 'var(--text)',
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all',
-        maxHeight: 360,
-        overflowY: 'auto',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      }}>
-        <div style={{ marginBottom: 4 }}>Hi,</div>
-        <div style={{ marginBottom: 4 }}>&nbsp;</div>
-        <div style={{ marginBottom: 4 }}>The following homes would be available:</div>
-        <div style={{ marginBottom: 4 }}>&nbsp;</div>
-        {properties.map(p => (
-          <div key={p.id} style={{ marginBottom: 4 }}>
-            <span style={{ fontWeight: 600, color: 'var(--text)' }}>
-              {displayTitleFor(p)}:
-            </span>{' '}
-            <span style={{ color: 'var(--color-primary)' }}>{p.airbnbUrl}</span>
-          </div>
-        ))}
+      {/* Editable greeting */}
+      <div className="form-group" style={{ marginBottom: 'var(--s-4)' }}>
+        <label className="form-label">Message header</label>
+        <textarea
+          className="form-input"
+          rows={3}
+          value={header}
+          onChange={(e) => setHeader(e.target.value)}
+          placeholder="Hi, ..."
+          style={{ resize: 'vertical', minHeight: 60 }}
+        />
+        <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', marginTop: 4 }}>
+          Free-text — appears above the link list. Tweak per guest if you like.
+        </div>
       </div>
+
+      {/* Property picker */}
+      <div style={{ marginBottom: 'var(--s-4)' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 'var(--s-2)',
+        }}>
+          <span style={{
+            fontSize: '0.6875rem',
+            fontWeight: 700,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+          }}>
+            Properties to include
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+            onClick={toggleAll}
+          >
+            {allPicked ? 'Clear all' : 'Select all'}
+          </button>
+        </div>
+        <div style={{
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          maxHeight: 280,
+          overflowY: 'auto',
+          background: 'var(--surface)',
+        }}>
+          {properties.map(p => {
+            const on = picked.has(p.id);
+            return (
+              <label
+                key={p.id}
+                onClick={(e) => {
+                  // Swallow the implicit click on the wrapping label so
+                  // the row toggle uses our setPicked instead of the
+                  // browser's checkbox-syncs-to-label double-fire.
+                  e.preventDefault();
+                  togglePicked(p.id);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 12px',
+                  borderBottom: '1px solid var(--border-light)',
+                  cursor: 'pointer',
+                  background: on ? 'var(--color-primary-bg)' : 'transparent',
+                  borderLeft: on ? '3px solid var(--color-primary)' : '3px solid transparent',
+                  transition: 'background 0.1s ease, border-color 0.1s ease',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => { /* handled on the label click */ }}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    flexShrink: 0,
+                    accentColor: 'var(--color-primary)',
+                    cursor: 'pointer',
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: '0.875rem',
+                    fontWeight: on ? 600 : 500,
+                    color: on ? 'var(--color-primary)' : 'var(--text)',
+                  }}>
+                    {displayTitleFor(p)}
+                  </div>
+                  <div style={{
+                    fontSize: '0.6875rem',
+                    color: 'var(--text-light)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {p.airbnbUrl}
+                  </div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div>
+        <div style={{
+          fontSize: '0.6875rem',
+          fontWeight: 700,
+          color: 'var(--text-secondary)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          marginBottom: 'var(--s-2)',
+        }}>
+          Preview
+        </div>
+        <div style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          padding: 'var(--s-3)',
+          fontSize: '0.8125rem',
+          lineHeight: 1.6,
+          color: 'var(--text)',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          maxHeight: 240,
+          overflowY: 'auto',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        }}>
+          {blockText || <span style={{ color: 'var(--text-light)', fontStyle: 'italic' }}>Nothing selected yet</span>}
+        </div>
+      </div>
+
       <div style={{
         marginTop: 'var(--s-3)',
         fontSize: '0.6875rem',
