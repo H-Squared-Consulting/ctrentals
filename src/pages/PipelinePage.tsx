@@ -1216,6 +1216,58 @@ export default function PipelinePage() {
     notifyPipelineChanged();
   }
 
+  /** Reopen a closed deal. Two paths:
+   *    - No proposals attached → back to New (deal_status='new'). The
+   *      enquiry is effectively un-triaged again so the team can decide
+   *      how to take it forward.
+   *    - One or more proposals attached → back to Quoting
+   *      (deal_status='drafting') AND every proposal flips to 'drafting'
+   *      so the team can edit / re-send instead of starting over.
+   *  Clears close_reason either way — the deal is no longer closed. */
+  async function reopenEnquiry(enquiryId: string) {
+    const deal = deals.find(d => d.enquiry?.id === enquiryId);
+    const proposals = deal?.proposals ?? [];
+    const hasProposals = proposals.length > 0;
+    const dealStatus = hasProposals ? 'drafting' : 'new';
+    const status = hasProposals ? 'drafting' : 'new';
+    const { error } = await supabase
+      .from('enquiries')
+      .update({
+        status,
+        deal_status: dealStatus,
+        close_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', enquiryId);
+    if (error) {
+      console.error('reopenEnquiry failed:', error);
+      toast.error('Could not reopen: ' + error.message);
+      return;
+    }
+    if (hasProposals) {
+      // Bulk-flip the proposals back to draft so the team can edit /
+      // re-send. Skips snapshot-level mutations — pricing snapshots
+      // stay immutable and continue to back each proposal.
+      const ids = proposals.map(p => p.id);
+      const { error: propErr } = await supabase
+        .from('proposals')
+        .update({ status: 'drafting', updated_at: new Date().toISOString() })
+        .in('id', ids);
+      if (propErr) {
+        console.error('reopenEnquiry proposal flip failed:', propErr);
+        toast.error('Reopened, but failed to reset proposals: ' + propErr.message);
+        notifyPipelineChanged();
+        setOpenDeal(null);
+        return;
+      }
+    }
+    toast.success(hasProposals
+      ? `Reopened — ${proposals.length} proposal${proposals.length === 1 ? '' : 's'} back to draft`
+      : 'Reopened to New');
+    setOpenDeal(null);
+    notifyPipelineChanged();
+  }
+
   /** Restore an archived enquiry back to the Closed column. Clears
    *  both archived_at and archive_reason so the row re-enters the
    *  kanban query and renders as a normal closed card again. */
@@ -1599,6 +1651,7 @@ export default function PipelinePage() {
           onUpdateStatus={updateEnquiryStatus}
           onUpdateProposalOutcome={updateProposalOutcome}
           onSetStage={updateDealStage}
+          onReopenEnquiry={reopenEnquiry}
           onOpenProposal={(p) => {
             // Open the proposal detail INLINE on top of the deal modal.
             // The deal modal stays mounted underneath; closing the
@@ -3400,7 +3453,7 @@ function ProposalRowInline({
 
 function DealDetailModal({
   deal, initialMode = 'view', focusField = null, onClose, onQuote,
-  onUpdateStatus, onUpdateProposalOutcome, onSetStage,
+  onUpdateStatus, onUpdateProposalOutcome, onSetStage, onReopenEnquiry,
   onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal,
 }: {
   deal: Deal;
@@ -3415,6 +3468,9 @@ function DealDetailModal({
   onUpdateStatus: (enquiryId: string, status: string) => void;
   onUpdateProposalOutcome: (proposalId: string, outcome: 'booked' | 'cancelled' | 'draft') => void;
   onSetStage: (enquiryId: string, dealStatus: string, closeReason?: string) => void;
+  /** Reopen a closed enquiry. Lands in Quoting (proposals flipped to
+   *  draft) when there are proposals attached, otherwise back to New. */
+  onReopenEnquiry: (enquiryId: string) => void;
   onOpenProposal: (p: ProposalRow) => void;
   /** Open SendProposalDialog for a single proposal (drafting/ready). */
   onSendProposal: (p: ProposalRow) => void;
@@ -3771,7 +3827,7 @@ function DealDetailModal({
     else if (standaloneProp) onUpdateProposalOutcome(standaloneProp.id, 'cancelled');
   }
   function reopen() {
-    if (e) onUpdateStatus(e.id, 'new');
+    if (e) onReopenEnquiry(e.id);
     else if (standaloneProp) onUpdateProposalOutcome(standaloneProp.id, 'draft');
   }
 
