@@ -1,37 +1,47 @@
 /**
  * AgentPortalPage -- public agent portal at /q/:token
  *
- * Three-tab portal:
- *   - Properties: curated houses this agent can sell, each with a
- *     photo, key info, baseline pricing, View brochure link and
- *     + Enquire button.
- *   - My Enquiries: status of every enquiry this agent has submitted.
+ * Two-tab portal:
+ *   - My Enquiries: portfolio reach count + every enquiry this agent
+ *     has submitted, plus any proposals the team has published back.
+ *     Empty state surfaces the "+ New enquiry" CTA.
  *   - About: Southern Escapes bio + contact cards for Nicki and Hayley.
  *
- * Data comes from the agent-portal-read edge function (one round-trip
- * for agent + properties + enquiries). Enquiry submission goes through
- * agent-portal-enquire. See src/lib/agentPortal.ts for the wire format.
+ * The catalogue grid is intentionally absent — agents used to enquire
+ * about unavailable stock and flood the team's board. The form-first
+ * flow (AgentPortalEnquiryFlow) shows only available matches scoped to
+ * the agent's allow-list, anonymised to CTR codes until the team
+ * publishes a proposal.
  *
- * Uses the existing admin design system as-is (see
- * docs/DESIGN-SYSTEM.md): .property-card and .property-grid for the
- * property list, .subnav for the top nav, .card for the enquiry rows,
- * .ops-status-pill for status badges, .btn-* for buttons.
+ * Data comes from the agent-portal-read edge function (one round-trip
+ * for agent + properties + enquiries + saved price tiers). Enquiry
+ * submission goes through agent-portal-enquire. See agentPortal.ts.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   getPortalBundle,
-  submitAgentEnquiry,
   statusLabel,
   type AgentInfo,
   type AgentProperty,
   type AgentEnquiry,
   type AgentEnquiryStatus,
+  type AgentPriceTiers,
+  type AgentTierKey,
 } from '../lib/agentPortal';
-import AgentPortalEnquireModal from '../components/AgentPortalEnquireModal';
 
-type Tab = 'properties' | 'enquiries' | 'about';
+const TIER_LABEL: Record<AgentTierKey, string> = {
+  very_low:  'Very low',
+  low:       'Low',
+  medium:    'Medium',
+  high:      'High',
+  very_high: 'Very high',
+};
+import AgentPortalEnquiryFlow from '../components/AgentPortalEnquiryFlow';
+import ActionModal from '../components/ActionModal';
+
+type Tab = 'enquiries' | 'about';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -44,17 +54,15 @@ export default function AgentPortalPage() {
   const [agent, setAgent] = useState<AgentInfo | null>(null);
   const [properties, setProperties] = useState<AgentProperty[]>([]);
   const [enquiries, setEnquiries] = useState<AgentEnquiry[]>([]);
+  const [tierThresholds, setTierThresholds] = useState<AgentPriceTiers | null>(null);
   const [loading, setLoading] = useState(true);
   const [tokenError, setTokenError] = useState(false);
-  const [tab, setTab] = useState<Tab>('properties');
-  /** Properties the agent has ticked on the Properties tab. Cleared
-   *  on successful submit. Single property = a 1-element set;
-   *  the modal handles both 1 and N identically. */
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  /** Snapshot of the picked properties at the moment the modal
-   *  opens — so toggling checkboxes after the modal is open doesn't
-   *  reshape the in-flight enquiry. */
-  const [enquiringForProperties, setEnquiringForProperties] = useState<AgentProperty[] | null>(null);
+  const [tab, setTab] = useState<Tab>('enquiries');
+  /** Form-first enquiry flow (filters → anonymised matches → submit).
+   *  The only enquiry entry point — the old "browse catalogue → tick →
+   *  enquire" path was retired because it let agents enquire about
+   *  unavailable stock, flooding the team's board with noise. */
+  const [enquiryFlowOpen, setEnquiryFlowOpen] = useState(false);
 
   async function reload() {
     const bundle = await getPortalBundle(token);
@@ -65,6 +73,7 @@ export default function AgentPortalPage() {
     setAgent(bundle.agent);
     setProperties(bundle.properties);
     setEnquiries(bundle.enquiries);
+    setTierThresholds(bundle.priceTiers);
   }
 
   useEffect(() => {
@@ -81,6 +90,7 @@ export default function AgentPortalPage() {
       setAgent(bundle.agent);
       setProperties(bundle.properties);
       setEnquiries(bundle.enquiries);
+      setTierThresholds(bundle.priceTiers);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -99,99 +109,155 @@ export default function AgentPortalPage() {
     );
   }
 
+  // Headline stats shown under the page header — same visual idea as
+  // the admin dashboard's KPI strip but pared down to what matters for
+  // an agent (their reach, their activity, what's come back to them).
+  const activeProposalCount = enquiries.reduce(
+    (n, e) => n + (e.publishedProposals?.length || 0),
+    0,
+  );
+
   return (
-    <div style={pageOuterStyle}>
-     <div style={canvasStyle}>
-      {/* Brand bar: Southern Escapes wordmark on the left, primary
-          nav on the right. Uses .subnav + .subnav-link from the
-          shared design system so the active underline matches the
-          rest of the app. */}
-      <BrandBar tab={tab} setTab={setTab} enquiryCount={enquiries.length} />
-
-      {/* Personal intro line — small, above the tab content. */}
-      <div style={greetingLineStyle}>
-        Welcome back, <strong>{titleCase(agent.name.split(' ')[0])}</strong>
-        {agent.agencyName && <span style={{ color: 'var(--text-secondary)' }}> · {titleCase(agent.agencyName)}</span>}
-      </div>
-
-      {tab === 'properties' && (
-        <PropertiesTab
-          properties={properties}
-          selectedIds={selectedIds}
-          onToggle={(id) => setSelectedIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
-            return next;
-          })}
-          onClear={() => setSelectedIds(new Set())}
-          onEnquire={() => {
-            const picked = properties.filter(p => selectedIds.has(p.id));
-            if (picked.length === 0) return;
-            setEnquiringForProperties(picked);
-          }}
-          // General-enquiry path — opens the same modal with an
-          // empty properties array. Useful when the agent has dates
-          // and a brief but doesn't know which houses to ask about.
-          onGeneralEnquire={() => setEnquiringForProperties([])}
-        />
-      )}
-      {tab === 'enquiries' && <EnquiriesTab enquiries={enquiries} />}
-      {tab === 'about' && <AboutTab />}
-
-      {enquiringForProperties && (
-        <AgentPortalEnquireModal
-          token={token}
-          properties={enquiringForProperties}
-          onClose={() => setEnquiringForProperties(null)}
-          onSubmitted={async () => {
-            setEnquiringForProperties(null);
-            setSelectedIds(new Set());
-            await reload();
-            setTab('enquiries');
-          }}
-        />
-      )}
-     </div>
+    <div className="app-layout">
+      <AgentSidebar tab={tab} setTab={setTab} enquiryCount={enquiries.length} />
+      <main className="main-content">
+        <div className="page-header page-header--slot">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s-3)', flexWrap: 'wrap', width: '100%' }}>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: 'var(--text)' }}>
+                Welcome back, {titleCase(agent.name.split(' ')[0])}
+              </h1>
+              {agent.agencyName && (
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {titleCase(agent.agencyName)}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setEnquiryFlowOpen(true)}
+            >
+              + New enquiry
+            </button>
+          </div>
+        </div>
+        <div className="page-content">
+          {tab === 'enquiries' && (
+            <EnquiriesTab
+              enquiries={enquiries}
+              portfolioCount={properties.length}
+              activeProposalCount={activeProposalCount}
+              onStartEnquiry={() => setEnquiryFlowOpen(true)}
+            />
+          )}
+          {tab === 'about' && <AboutTab />}
+          {enquiryFlowOpen && (
+            <AgentPortalEnquiryFlow
+              token={token}
+              tierThresholds={tierThresholds}
+              existingSubjects={enquiries
+                .map(e => (e.agentReference || '').trim().toLowerCase())
+                .filter(Boolean)}
+              onClose={() => setEnquiryFlowOpen(false)}
+              onSubmitted={async () => {
+                setEnquiryFlowOpen(false);
+                await reload();
+                setTab('enquiries');
+              }}
+            />
+          )}
+        </div>
+      </main>
     </div>
   );
 }
 
-// ── Brand bar ───────────────────────────────────────────────────────
+// ── Sidebar ─────────────────────────────────────────────────────────
+// Reuses the admin portal's `.sidebar` styling so the agent surface
+// looks and feels like a real platform — not a one-page enquiry form.
+// Active items toggle the in-page tab; the "soon" items are placeholder
+// teasers for features on the roadmap (performance dashboard, earnings,
+// notifications, marketing tools).
 
-function BrandBar({ tab, setTab, enquiryCount }: { tab: Tab; setTab: (t: Tab) => void; enquiryCount: number }) {
+type SidebarItem =
+  | { kind: 'tab';  to: Tab; label: string; icon: string; badge?: number }
+  | { kind: 'soon'; label: string; icon: string };
+
+function AgentSidebar({ tab, setTab, enquiryCount }: { tab: Tab; setTab: (t: Tab) => void; enquiryCount: number }) {
+  const items: SidebarItem[] = [
+    { kind: 'tab',  to: 'enquiries', label: 'My Enquiries', icon: '📩', badge: enquiryCount },
+    { kind: 'soon',                  label: 'Performance',  icon: '📊' },
+    { kind: 'soon',                  label: 'Earnings',     icon: '💰' },
+    { kind: 'soon',                  label: 'Notifications',icon: '🔔' },
+    { kind: 'soon',                  label: 'Marketing',    icon: '✨' },
+    { kind: 'tab',  to: 'about',     label: 'About',        icon: 'ℹ️' },
+  ];
+
   return (
-    <div style={brandBarStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)' }}>
-        <div style={logoPlaceholderStyle} aria-label="Southern Escapes logo placeholder">SE</div>
-        <div>
-          <div style={brandWordmarkStyle}>Southern Escapes</div>
-          <div style={brandTaglineStyle}>Curated short-let homes, Cape Town</div>
+    <aside className="sidebar">
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-link" aria-label="Southern Escapes" style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          <img
+            src="/brochure-assets/se-logo-square.png"
+            alt="Southern Escapes"
+            className="sidebar-brand-logo"
+            style={{ height: 32, borderRadius: 4 }}
+          />
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#fff', letterSpacing: '0.01em' }}>
+            Southern Escapes
+          </span>
+        </span>
+      </div>
+
+      <nav className="sidebar-nav">
+        {items.map((item, idx) => {
+          if (item.kind === 'tab') {
+            const isActive = tab === item.to;
+            return (
+              <button
+                key={item.to}
+                type="button"
+                className={`sidebar-link ${isActive ? 'is-active' : ''}`}
+                onClick={() => setTab(item.to)}
+              >
+                <span className="sidebar-link-icon" aria-hidden>{item.icon}</span>
+                <span className="sidebar-link-label">{item.label}</span>
+                {item.badge && item.badge > 0 ? (
+                  <span style={{
+                    fontSize: '0.6875rem',
+                    fontWeight: 600,
+                    background: 'rgba(255,255,255,0.14)',
+                    color: 'rgba(255,255,255,0.95)',
+                    padding: '1px 6px',
+                    borderRadius: 4,
+                  }}>{item.badge}</span>
+                ) : null}
+              </button>
+            );
+          }
+          return (
+            <button
+              key={`soon-${idx}`}
+              type="button"
+              className="sidebar-link is-soon"
+              title="Coming soon — your roadmap for this portal"
+              onClick={() => { /* placeholder */ }}
+            >
+              <span className="sidebar-link-icon" aria-hidden>{item.icon}</span>
+              <span className="sidebar-link-label">{item.label}</span>
+              <span className="sidebar-soon-tag">Soon</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="sidebar-footer">
+        <div className="sidebar-user" title="Curated short-let homes, Cape Town">
+          Curated short-let homes, Cape Town
         </div>
       </div>
-      <nav className="subnav" style={{ marginBottom: 0 }}>
-        <button
-          type="button"
-          className={`subnav-link ${tab === 'properties' ? 'active' : ''}`}
-          onClick={() => setTab('properties')}
-        >
-          Properties
-        </button>
-        <button
-          type="button"
-          className={`subnav-link ${tab === 'enquiries' ? 'active' : ''}`}
-          onClick={() => setTab('enquiries')}
-        >
-          My Enquiries{enquiryCount > 0 ? ` (${enquiryCount})` : ''}
-        </button>
-        <button
-          type="button"
-          className={`subnav-link ${tab === 'about' ? 'active' : ''}`}
-          onClick={() => setTab('about')}
-        >
-          About
-        </button>
-      </nav>
-    </div>
+    </aside>
   );
 }
 
@@ -216,21 +282,18 @@ function AboutTab() {
           <ContactCard
             name="Nicki Trent"
             role="Sales and Bookings"
-            whatsappE164="+27825550100"
-            whatsappDisplay="+27 82 555 0100"
-            email="nicki@southernescapes.co.za"
+            whatsappE164="+27835954103"
+            whatsappDisplay="083 595 4103"
+            email="nicki@capetrentals.com"
           />
           <ContactCard
             name="Hayley Harrod"
             role="Operations & Property Management"
-            whatsappE164="+27835550100"
-            whatsappDisplay="+27 83 555 0100"
-            email="hayley@southernescapes.co.za"
+            whatsappE164="+27834157779"
+            whatsappDisplay="083 415 7779"
+            email="hayley@capetrentals.com"
           />
         </div>
-        <p style={{ ...aboutBodyStyle, fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 'var(--s-4)' }}>
-          Contact details above are placeholders until Hayley and Nicki confirm the real numbers.
-        </p>
       </section>
     </div>
   );
@@ -277,200 +340,75 @@ function ContactCard({ name, role, whatsappE164, whatsappDisplay, email }: {
   );
 }
 
-// ── Properties tab ──────────────────────────────────────────────────
+// ── Enquiries tab ───────────────────────────────────────────────────
 
-function PropertiesTab({
-  properties, selectedIds, onToggle, onClear, onEnquire, onGeneralEnquire,
+function EnquiriesTab({
+  enquiries,
+  portfolioCount,
+  activeProposalCount,
+  onStartEnquiry,
 }: {
-  properties: AgentProperty[];
-  selectedIds: Set<string>;
-  onToggle: (id: string) => void;
-  onClear: () => void;
-  onEnquire: () => void;
-  /** "I don't have specific houses in mind" path — opens the same
-   *  modal with zero properties so the team handles the property
-   *  match on their side. */
-  onGeneralEnquire: () => void;
+  enquiries: AgentEnquiry[];
+  /** How many houses the agent has been assigned. Surfaced as a
+   *  small reach signal at the top of the tab — the agent never
+   *  sees which houses, only how many are in their portfolio. */
+  portfolioCount: number;
+  /** Count of proposals Southern Escapes has published back to this
+   *  agent across all of their enquiries. */
+  activeProposalCount: number;
+  onStartEnquiry: () => void;
 }) {
-  if (properties.length === 0) {
+  const stats = (
+    <div style={statsRowStyle}>
+      <StatTile label="Houses in portfolio" value={portfolioCount} />
+      <StatTile label="Enquiries"           value={enquiries.length} />
+      <StatTile label="Proposals received"  value={activeProposalCount} />
+    </div>
+  );
+
+  if (enquiries.length === 0) {
     return (
-      <div className="card" style={emptyStateStyle}>
-        No properties enabled for you yet. Get in touch with Southern Escapes if this looks wrong.
-      </div>
+      <>
+        {stats}
+        <div className="card" style={emptyStateStyle}>
+          <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text)', marginBottom: 'var(--s-2)' }}>
+            No enquiries yet
+          </div>
+          <p style={{ marginBottom: 'var(--s-4)', fontSize: '0.875rem' }}>
+            Tap <strong>+ New enquiry</strong> to brief us. We'll match it to your portfolio and come back with a proposal.
+          </p>
+          <button type="button" className="btn btn-primary" onClick={onStartEnquiry}>
+            + New enquiry
+          </button>
+        </div>
+      </>
     );
   }
-  const selectedCount = selectedIds.size;
   return (
     <>
-      {/* Sticky action bar at the top of the grid. Shows the running
-          tally + the single submit. Renders even at 0 selected (greyed
-          out) so the call-to-action is always visible — picking
-          properties feels like building a cart, not searching for a
-          hidden button. */}
-      <div style={selectionBarStyle}>
-        <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>
-          {selectedCount === 0
-            ? <span style={{ color: 'var(--text-secondary)' }}>Tick the properties you want quoted — or send a general enquiry if you don't have specific houses in mind.</span>
-            : <><strong>{selectedCount}</strong> propert{selectedCount === 1 ? 'y' : 'ies'} selected</>}
-        </div>
-        <div style={{ display: 'flex', gap: 'var(--s-2)', alignItems: 'center' }}>
-          {selectedCount > 0 && (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ fontSize: '0.8125rem' }}
-              onClick={onClear}
-            >
-              Clear
-            </button>
-          )}
-          {selectedCount === 0 ? (
-            // No tick → only the general-enquiry path is available.
-            // We swap the disabled "+ Enquire" placeholder for an
-            // active CTA so the agent always has a way forward.
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={onGeneralEnquire}
-              title="Submit an enquiry without naming specific houses — Southern Escapes will suggest matches"
-            >
-              + General enquiry
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={onEnquire}
-              title={`Send an enquiry covering ${selectedCount} propert${selectedCount === 1 ? 'y' : 'ies'}`}
-            >
-              {selectedCount === 1
-                ? '+ Enquire about this property'
-                : `+ Enquire about ${selectedCount} properties →`}
-            </button>
-          )}
-        </div>
+      {stats}
+      <div style={sectionHeadingStyle}>
+        <span>Recent enquiries</span>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-light)', fontWeight: 500 }}>
+          {enquiries.length} total
+        </span>
       </div>
-      <div className="property-grid">
-        {properties.map(p => (
-          <PropertyCard
-            key={p.id}
-            property={p}
-            selected={selectedIds.has(p.id)}
-            onToggle={() => onToggle(p.id)}
-          />
-        ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+        {enquiries.map(e => <EnquiryRow key={e.id} enquiry={e} />)}
       </div>
     </>
   );
 }
 
-function PropertyCard({
-  property, selected, onToggle,
-}: {
-  property: AgentProperty;
-  selected: boolean;
-  onToggle: () => void;
-}) {
+function StatTile({ label, value }: { label: string; value: number }) {
   return (
-    <article
-      className="property-card"
-      style={{
-        cursor: 'pointer',
-        position: 'relative',
-        // Selected-state ring so a packed grid still reads at a
-        // glance which properties are about to be enquired about.
-        outline: selected ? '2px solid var(--color-primary)' : 'none',
-        outlineOffset: selected ? -2 : 0,
-        background: selected ? 'var(--color-primary-bg)' : undefined,
-      }}
-      onClick={onToggle}
-      role="button"
-      aria-pressed={selected}
-      tabIndex={0}
-      onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggle(); } }}
-    >
-      {/* Floating checkbox overlay — visually unmistakable that the
-          card is tickable. Clicking the card body also toggles, so
-          the checkbox is mostly a visual affordance + a keyboard
-          target. stopPropagation prevents the row click + the
-          checkbox change firing twice. */}
-      <div style={checkboxBubbleStyle(selected)}>
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Include ${titleCase(property.name)} in the enquiry`}
-          style={{ width: 18, height: 18, cursor: 'pointer' }}
-        />
+    <div className="card" style={statTileStyle}>
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 4 }}>
+        {label}
       </div>
-      <div className="property-card__image">
-        {property.photoUrl
-          ? <img src={property.photoUrl} alt={titleCase(property.name)} loading="lazy" />
-          : <div className="property-card__no-image">🏠</div>}
+      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.1 }}>
+        {value}
       </div>
-      <div className="property-card__body">
-        <div className="property-card__name-row">
-          <h3 className="property-card__name">{titleCase(property.name)}</h3>
-          {property.slug && (
-            <span className="property-card__uid" title="Unique ID">{property.slug}</span>
-          )}
-        </div>
-        {property.suburb && (
-          <p className="property-card__location">{titleCase(property.suburb)}</p>
-        )}
-        <div className="property-card__stats">
-          {property.bedrooms > 0 && (
-            <span className="property-card__stat">🛏 {property.bedrooms} bed{property.bedrooms !== 1 ? 's' : ''}</span>
-          )}
-          {property.sleeps > 0 && (
-            <span className="property-card__stat">👤 {property.sleeps} guests</span>
-          )}
-        </div>
-        <div className="property-card__price">
-          {property.baselineRate > 0
-            ? <>
-                ZAR {property.baselineRate.toLocaleString('en-ZA')}
-                <span className="property-card__price-label"> / night</span>
-              </>
-            : <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Pricing on request</span>
-          }
-        </div>
-      </div>
-      <div className="property-card__footer" style={{ gap: 8 }}>
-        {property.slug && (
-          // Agent variant (unbranded). Agents share these links straight
-          // to their clients, so the in-portal preview matches what their
-          // client will see. Mirrors the ?brand=agent fallback used by
-          // BrochureShareMenu when VITE_AGENT_DOMAIN isn't set.
-          <a
-            className="btn btn-ghost"
-            href={`/brochures/${encodeURIComponent(property.slug)}?brand=agent`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-          >
-            View brochure
-          </a>
-        )}
-      </div>
-    </article>
-  );
-}
-
-// ── Enquiries tab ───────────────────────────────────────────────────
-
-function EnquiriesTab({ enquiries }: { enquiries: AgentEnquiry[] }) {
-  if (enquiries.length === 0) {
-    return (
-      <div className="card" style={emptyStateStyle}>
-        You have not submitted any enquiries yet. Tick one or more properties on the <strong>Properties</strong> tab and tap <strong>+ Enquire</strong> to get started.
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
-      {enquiries.map(e => <EnquiryRow key={e.id} enquiry={e} />)}
     </div>
   );
 }
@@ -487,22 +425,13 @@ const TERMINAL_PROPOSAL_STATUSES = new Set([
 type PublishedProposal = AgentEnquiry['publishedProposals'][number];
 
 function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
-  // Expand-to-show-details. Click the row body to toggle. Status
-  // pill + View proposal link have stopPropagation so they don't
-  // also toggle when clicked.
-  const [open, setOpen] = useState(false);
-  /** Read-only overview modal for terminal-state proposals. */
-  const [summaryProposal, setSummaryProposal] = useState<PublishedProposal | null>(null);
-  // Defensive defaults — the edge function might not yet be on the
-  // latest deploy, in which case these new arrays come back as
-  // undefined. Reading .length on undefined would kill the React
-  // tree and crash the tab (blank screen / bounce back to
-  // Properties). Treating them as [] keeps the row rendering with
-  // graceful empty states until the function ships.
+  // Click → modal. Same pattern as the admin deal modal: a long list
+  // of enquiries stays scannable, and a single focused modal renders
+  // the rich detail. Inline expansion was tried first but bloats the
+  // list once an agent has any volume.
+  const [detailOpen, setDetailOpen] = useState(false);
   const requestedProperties = enquiry.requestedProperties ?? [];
   const publishedProposals = enquiry.publishedProposals ?? [];
-  // Title priority: agent's own reference > legacy guest name >
-  // first property name > "Untitled" (shouldn't happen post-migration).
   const title = enquiry.agentReference?.trim()
     || titleCase(enquiry.guestName)
     || (requestedProperties[0] && titleCase(requestedProperties[0].name))
@@ -514,117 +443,243 @@ function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
       ? titleCase(requestedProperties[0].name)
       : `${propCount} properties`;
 
+  const adults = enquiry.guestsAdults ?? 0;
+  const children = enquiry.guestsChildren ?? 0;
+  const totalGuests = adults + children;
+  const guestSummary = totalGuests > 0
+    ? `${totalGuests} guest${totalGuests === 1 ? '' : 's'}`
+    : '';
+  const nights = (enquiry.checkIn && enquiry.checkOut)
+    ? Math.max(0, Math.round((new Date(enquiry.checkOut).getTime() - new Date(enquiry.checkIn).getTime()) / 86_400_000))
+    : 0;
+
   return (
-    <div
-      className="card"
-      style={{
-        padding: 0,
-        cursor: 'pointer',
-      }}
-      onClick={() => setOpen(o => !o)}
-      role="button"
-      tabIndex={0}
-      aria-expanded={open}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
-    >
-      <div style={enquiryRowStyle}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
-            {title}
+    <>
+      <div
+        className="card"
+        style={{ padding: 0, cursor: 'pointer' }}
+        onClick={() => setDetailOpen(true)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailOpen(true); } }}
+      >
+        <div style={enquiryRowStyle}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
+              {title}
+            </div>
+            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              {enquiry.checkIn} → {enquiry.checkOut}
+              {nights > 0 ? ` · ${nights} night${nights === 1 ? '' : 's'}` : ''}
+              {guestSummary ? ` · ${guestSummary}` : ''}
+              {propCount > 0 ? ` · ${propSummary}` : ''}
+            </div>
           </div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-            {propSummary} · {enquiry.checkIn} to {enquiry.checkOut}
-          </div>
-        </div>
-        <span className={`ops-status-pill ops-status-pill--${pillVariantFor(enquiry.status)}`}>
-          <span className="ops-status-pill-dot" />
-          {statusLabel(enquiry.status)}
-        </span>
-        {/* Surface a count badge in the row header when any proposals
-            have been published. Tapping the row expands the body
-            which renders the per-proposal "View proposal" links. */}
-        {publishedProposals.length > 0 && (
-          <span
-            style={{
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              color: 'var(--color-primary)',
-              background: 'var(--color-primary-bg)',
-              padding: '2px 8px',
-              borderRadius: 999,
-            }}
-            title={`${publishedProposals.length} proposal${publishedProposals.length === 1 ? '' : 's'} from Southern Escapes`}
-          >
-            {publishedProposals.length} proposal{publishedProposals.length === 1 ? '' : 's'}
+          <span className={`ops-status-pill ops-status-pill--${pillVariantFor(enquiry.status)}`}>
+            <span className="ops-status-pill-dot" />
+            {statusLabel(enquiry.status)}
           </span>
-        )}
-        <span style={{
-          fontSize: '0.75rem',
-          color: 'var(--text-light)',
-          marginLeft: 4,
-        }} aria-hidden>
-          {open ? '▲' : '▼'}
-        </span>
-      </div>
-      {open && (
-        // Expanded body — read-only recap so the agent can confirm
-        // what they submitted without leaving the list. No edit
-        // surface here; changes need to go through Southern Escapes.
-        <div style={enquiryExpandedStyle}>
-          {/* Published proposals first when they exist — that's
-              the thing the agent actually came here for. Each row
-              is the property name + a "View proposal" link that
-              opens the public /proposal.html page. */}
           {publishedProposals.length > 0 && (
-            <div style={{ marginBottom: 'var(--s-4)' }}>
-              <div style={enquiryExpandedLabelStyle}>Proposals from Southern Escapes</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {publishedProposals.map(p => (
-                  <PublishedProposalRow
-                    key={p.refCode}
-                    proposal={p}
-                    onSummary={() => setSummaryProposal(p)}
-                  />
-                ))}
-              </div>
-            </div>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: 'var(--color-primary)',
+                background: 'var(--color-primary-bg)',
+                padding: '2px 8px',
+                borderRadius: 999,
+              }}
+              title={`${publishedProposals.length} proposal${publishedProposals.length === 1 ? '' : 's'} from Southern Escapes`}
+            >
+              {publishedProposals.length} proposal{publishedProposals.length === 1 ? '' : 's'}
+            </span>
           )}
-          {propCount > 0 && (
-            <div style={{ marginBottom: 'var(--s-3)' }}>
-              <div style={enquiryExpandedLabelStyle}>Properties enquired about</div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.875rem', color: 'var(--text)' }}>
-                {requestedProperties.map((p, i) => (
-                  <li key={p.slug || `${p.name}-${i}`} style={{ marginBottom: 2 }}>
-                    {titleCase(p.name)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--s-3)' }}>
-            <div>
-              <div style={enquiryExpandedLabelStyle}>Dates</div>
-              <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>{enquiry.checkIn} → {enquiry.checkOut}</div>
-            </div>
-            <div>
-              <div style={enquiryExpandedLabelStyle}>Status</div>
-              <div style={{ fontSize: '0.875rem', color: 'var(--text)' }}>{statusLabel(enquiry.status)}</div>
-            </div>
+          <span style={{
+            fontSize: '1rem',
+            color: 'var(--text-light)',
+            marginLeft: 4,
+            width: 16,
+            textAlign: 'center',
+            display: 'inline-block',
+          }} aria-hidden>
+            ›
+          </span>
+        </div>
+      </div>
+      {detailOpen && (
+        <EnquiryDetailModal
+          enquiry={enquiry}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/** Detail view for a single enquiry. Centralises everything the agent
+ *  needs to see about their own submission: stay details, matched
+ *  properties, guest contact, notes, published proposals (and their
+ *  per-proposal earnings breakdown). Mirrors the admin deal modal
+ *  pattern so the agent portal feels like part of the same product. */
+function EnquiryDetailModal({ enquiry, onClose }: { enquiry: AgentEnquiry; onClose: () => void }) {
+  const [summaryProposal, setSummaryProposal] = useState<PublishedProposal | null>(null);
+  const requestedProperties = enquiry.requestedProperties ?? [];
+  const publishedProposals = enquiry.publishedProposals ?? [];
+  const title = enquiry.agentReference?.trim()
+    || titleCase(enquiry.guestName)
+    || (requestedProperties[0] && titleCase(requestedProperties[0].name))
+    || 'Untitled enquiry';
+  const adults = enquiry.guestsAdults ?? 0;
+  const children = enquiry.guestsChildren ?? 0;
+  const totalGuests = adults + children;
+  const nights = (enquiry.checkIn && enquiry.checkOut)
+    ? Math.max(0, Math.round((new Date(enquiry.checkOut).getTime() - new Date(enquiry.checkIn).getTime()) / 86_400_000))
+    : 0;
+  const propCount = requestedProperties.length;
+
+  const subtitle = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap' }}>
+      <span className={`ops-status-pill ops-status-pill--${pillVariantFor(enquiry.status)}`}>
+        <span className="ops-status-pill-dot" />
+        {statusLabel(enquiry.status)}
+      </span>
+      <span style={{ color: 'var(--text-secondary)' }}>
+        {enquiry.checkIn} → {enquiry.checkOut}
+        {nights > 0 ? ` · ${nights}n` : ''}
+      </span>
+    </span>
+  );
+
+  return (
+    <ActionModal
+      title={title}
+      subtitle={subtitle}
+      width={720}
+      onClose={onClose}
+      hideFooter
+    >
+      {publishedProposals.length > 0 && (
+        <div style={enquiryExpandedSectionStyle}>
+          <div style={enquiryExpandedLabelStyle}>Proposals from Southern Escapes</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {publishedProposals.map(p => (
+              <PublishedProposalRow
+                key={p.refCode}
+                proposal={p}
+                onSummary={() => setSummaryProposal(p)}
+              />
+            ))}
           </div>
-          {enquiry.lastUpdated && (
-            <div style={{ marginTop: 'var(--s-3)', fontSize: '0.75rem', color: 'var(--text-light)' }}>
-              Last updated {enquiry.lastUpdated}
-            </div>
-          )}
         </div>
       )}
+
+      <div style={enquiryExpandedSectionStyle}>
+        <div style={enquiryExpandedLabelStyle}>Stay details</div>
+        <div style={defGridStyle}>
+          <DefRow
+            label="Dates"
+            value={
+              <>
+                {enquiry.checkIn} → {enquiry.checkOut}
+                {nights > 0 ? <span style={{ color: 'var(--text-light)' }}> · {nights} night{nights === 1 ? '' : 's'}</span> : null}
+              </>
+            }
+          />
+          <DefRow
+            label="Guests"
+            value={
+              totalGuests > 0
+                ? <>{adults} adult{adults === 1 ? '' : 's'}{children > 0 ? ` · ${children} ${children === 1 ? 'child' : 'children'}` : ''}</>
+                : '—'
+            }
+          />
+          <DefRow
+            label="Nationality"
+            value={enquiry.guestNationality ? titleCase(enquiry.guestNationality) : '—'}
+          />
+          <DefRow
+            label="Budget tiers"
+            value={
+              (enquiry.budgetTiers && enquiry.budgetTiers.length > 0)
+                ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {enquiry.budgetTiers.map(t => (
+                        <span key={t} style={tierChipStyle}>{TIER_LABEL[t] || t}</span>
+                      ))}
+                    </div>
+                  )
+                : '—'
+            }
+          />
+        </div>
+      </div>
+
+      {propCount > 0 && (
+        <div style={enquiryExpandedSectionStyle}>
+          <div style={enquiryExpandedLabelStyle}>Properties matched to your brief</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {requestedProperties.map((p, i) => (
+              <span key={p.slug || `${p.name}-${i}`} style={propertyChipStyle}>
+                {titleCase(p.name)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(enquiry.guestName || enquiry.guestEmail || enquiry.guestPhone) && (
+        <div style={enquiryExpandedSectionStyle}>
+          <div style={enquiryExpandedLabelStyle}>Guest contact</div>
+          <div style={defGridStyle}>
+            {enquiry.guestName  && <DefRow label="Name"  value={titleCase(enquiry.guestName)} />}
+            {enquiry.guestEmail && <DefRow label="Email" value={enquiry.guestEmail} />}
+            {enquiry.guestPhone && <DefRow label="Phone" value={enquiry.guestPhone} />}
+          </div>
+        </div>
+      )}
+
+      {enquiry.notes && (
+        <div style={enquiryExpandedSectionStyle}>
+          <div style={enquiryExpandedLabelStyle}>Notes</div>
+          <div style={{
+            fontSize: '0.875rem',
+            color: 'var(--text)',
+            whiteSpace: 'pre-wrap',
+            padding: 'var(--s-3)',
+            background: 'var(--bg)',
+            border: '1px solid var(--border-light)',
+            borderRadius: 'var(--radius-sm)',
+            lineHeight: 1.5,
+          }}>
+            {enquiry.notes}
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 'var(--s-3)',
+        paddingTop: 'var(--s-2)',
+        borderTop: '1px solid var(--border-light)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: 'var(--s-3)',
+        fontSize: '0.6875rem',
+        color: 'var(--text-light)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        fontWeight: 600,
+      }}>
+        <span>Submitted {enquiry.submittedAt || '—'}</span>
+        {enquiry.lastUpdated && <span>Updated {enquiry.lastUpdated}</span>}
+      </div>
+
       {summaryProposal && (
         <ProposalSummaryModal
           proposal={summaryProposal}
           onClose={() => setSummaryProposal(null)}
         />
       )}
-    </div>
+    </ActionModal>
   );
 }
 
@@ -638,58 +693,309 @@ function EnquiryRow({ enquiry }: { enquiry: AgentEnquiry }) {
  */
 function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProposal; onSummary: () => void }) {
   const isTerminal = TERMINAL_PROPOSAL_STATUSES.has(proposal.status);
+  // Stop click bubbling so toggling the earnings details doesn't also
+  // collapse the parent enquiry row.
+  const stop = (e: React.MouseEvent | React.KeyboardEvent) => e.stopPropagation();
+
+  // Version list + selected index lifted from the earnings card so the
+  // View proposal link can include a ?snapshot=<id> param when the
+  // agent is viewing a historical version — proposal.html resolves the
+  // snapshot id against this proposal's chain to render the historical
+  // pricing instead of the current one.
+  const versions = useMemo(() => {
+    if (proposal.pricingVersions && proposal.pricingVersions.length > 0) return proposal.pricingVersions;
+    if (proposal.guestPrice != null && proposal.agentEarningPerNight != null) {
+      return [{
+        snapshotId: '__live__',
+        createdAt: '',
+        isCurrent: true,
+        guestPrice: proposal.guestPrice,
+        ownerNet: proposal.ownerNet,
+        southernEscapesPerNight: proposal.southernEscapesPerNight,
+        agentEarningPerNight: proposal.agentEarningPerNight,
+        agentPct: proposal.agentPct,
+      }];
+    }
+    return [];
+  }, [proposal]);
+  const currentIdx = Math.max(0, versions.findIndex(v => v.isCurrent));
+  const [selectedIdx, setSelectedIdx] = useState(currentIdx);
+  useEffect(() => { setSelectedIdx(currentIdx); }, [currentIdx, versions.length]);
+  const selected = versions[selectedIdx];
+
+  // Build the View proposal URL — include the snapshot id only when the
+  // agent is looking at a historical version, so the public link stays
+  // clean for the live case.
+  const proposalHref = (() => {
+    const base = `/proposal.html?ref=${encodeURIComponent(proposal.refCode)}`;
+    if (selected && !selected.isCurrent && selected.snapshotId && selected.snapshotId !== '__live__') {
+      return base + `&snapshot=${encodeURIComponent(selected.snapshotId)}`;
+    }
+    return base;
+  })();
+
   return (
     <div
+      onClick={stop}
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 10px',
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-sm)',
-        gap: 'var(--s-3)',
+        overflow: 'hidden',
       }}
     >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text)' }}>
-          {titleCase(proposal.propertyName) || 'Proposal'}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 12px',
+          gap: 'var(--s-3)',
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text)' }}>
+            {titleCase(proposal.propertyName) || 'Proposal'}
+          </div>
+          <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', fontFamily: 'monospace' }}>
+            {proposal.refCode}
+            {!isTerminal && proposal.expiresOn ? <> · expires {proposal.expiresOn}</> : null}
+          </div>
         </div>
-        <div style={{ fontSize: '0.6875rem', color: 'var(--text-light)', fontFamily: 'monospace' }}>
-          {proposal.refCode}
-          {/* Expiry is only meaningful while the proposal is still
-              an offer the agent can act on. Once it's terminal
-              (booked / accepted / declined / cancelled / expired)
-              the date is misleading — the proposal has been
-              resolved, not "expiring". */}
-          {!isTerminal && proposal.expiresOn ? <> · expires {proposal.expiresOn}</> : null}
-        </div>
+        {isTerminal ? (
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ fontSize: '0.8125rem' }}
+            onClick={(e) => { e.stopPropagation(); onSummary(); }}
+            title="Booking is confirmed — open the read-only summary"
+          >
+            View summary
+          </button>
+        ) : (
+          <a
+            className="btn btn-primary"
+            style={{ fontSize: '0.8125rem' }}
+            href={proposalHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={selected && !selected.isCurrent
+              ? 'Opens the proposal page rendered with this historical pricing'
+              : undefined}
+          >
+            View proposal →
+          </a>
+        )}
       </div>
-      {isTerminal ? (
-        <button
-          type="button"
-          className="btn btn-outline"
-          style={{ fontSize: '0.8125rem' }}
-          onClick={(e) => { e.stopPropagation(); onSummary(); }}
-          title="Booking is confirmed — open the read-only summary"
-        >
-          View summary
-        </button>
-      ) : (
-        <a
-          className="btn btn-primary"
-          style={{ fontSize: '0.8125rem' }}
-          href={`/proposal.html?ref=${encodeURIComponent(proposal.refCode)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-        >
-          View proposal →
-        </a>
-      )}
+      <ProposalEarningsCard
+        versions={versions}
+        selectedIdx={selectedIdx}
+        onSelectedIdxChange={setSelectedIdx}
+        nights={(proposal.checkIn && proposal.checkOut)
+          ? Math.max(0, Math.round((new Date(proposal.checkOut).getTime() - new Date(proposal.checkIn).getTime()) / 86_400_000))
+          : 0}
+      />
     </div>
   );
 }
+
+/** Agent-only earnings breakdown attached to each published proposal.
+ *  Full transparency stack: Guest pays / Owner gets / Southern Escapes
+ *  commission / Your commission. The proposal page (proposal.html)
+ *  deliberately doesn't show this — agents routinely forward that
+ *  page on to guests, and we don't want guest-facing pricing to leak
+ *  the commission stack. The portal is the agent-only surface where
+ *  it's safe.
+ *
+ *  Hidden entirely when we don't have a pricing snapshot to compute
+ *  against — legacy proposals show no card rather than empty rows. */
+function ProposalEarningsCard({
+  versions,
+  selectedIdx,
+  onSelectedIdxChange,
+  nights,
+}: {
+  versions: PublishedProposal['pricingVersions'];
+  selectedIdx: number;
+  onSelectedIdxChange: (idx: number) => void;
+  nights: number;
+}) {
+  const selected = versions[selectedIdx];
+  if (!selected || selected.guestPrice == null || selected.agentEarningPerNight == null) {
+    return null;
+  }
+
+  const rows: Array<{ label: string; perNight: number; highlight?: boolean }> = [
+    { label: 'Guest pays',         perNight: selected.guestPrice },
+    { label: 'Your commission',    perNight: selected.agentEarningPerNight, highlight: true },
+  ];
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--border-light)',
+      background: 'var(--bg)',
+      padding: 'var(--s-3) var(--s-4) var(--s-4)',
+    }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 'var(--s-2)',
+      }}>
+        <span style={earningsHeaderLabelStyle}>Pricing breakdown</span>
+        {selected.agentPct != null && (
+          <span style={commissionBadgeStyle}>
+            {Number(selected.agentPct).toFixed(0)}% your commission
+          </span>
+        )}
+      </div>
+
+      {/* Version toggle — only when there's history to flip through.
+          The current snapshot is always last in the list (newest at end);
+          earlier saves are audit history. */}
+      {versions.length > 1 && (
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 6,
+          marginBottom: 'var(--s-2)',
+          paddingBottom: 'var(--s-2)',
+          borderBottom: '1px dashed var(--border-light)',
+        }}>
+          <span style={{
+            fontSize: '0.625rem',
+            fontWeight: 600,
+            color: 'var(--text-light)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            alignSelf: 'center',
+            marginRight: 4,
+          }}>
+            Version
+          </span>
+          {versions.map((v, i) => {
+            const active = i === selectedIdx;
+            return (
+              <button
+                key={v.snapshotId || `v${i}`}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSelectedIdxChange(i); }}
+                style={{
+                  fontSize: '0.6875rem',
+                  fontWeight: 600,
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  border: '1px solid',
+                  borderColor: active ? 'var(--color-primary)' : 'var(--border)',
+                  background: active ? 'var(--color-primary)' : 'var(--surface)',
+                  color: active ? '#fff' : 'var(--text-secondary)',
+                  fontFamily: 'inherit',
+                  letterSpacing: '0.02em',
+                }}
+                title={v.createdAt ? `Saved ${v.createdAt.slice(0, 10)}` : undefined}
+              >
+                v{i + 1}{v.isCurrent ? ' · current' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <table style={{
+        width: '100%',
+        borderCollapse: 'collapse',
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        <thead>
+          <tr>
+            <th style={earningsThStyle}></th>
+            <th style={{ ...earningsThStyle, textAlign: 'right' }}>Per night</th>
+            <th style={{ ...earningsThStyle, textAlign: 'right' }}>
+              {nights > 0 ? `Total (${nights}n)` : 'Total'}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const total = nights > 0 ? r.perNight * nights : null;
+            return (
+              <tr key={r.label} style={r.highlight ? earningsHighlightRowStyle : undefined}>
+                <td style={{ ...earningsTdStyle, fontWeight: r.highlight ? 700 : 500, color: r.highlight ? 'var(--color-primary)' : 'var(--text)' }}>
+                  {r.label}
+                </td>
+                <td style={{ ...earningsTdStyle, textAlign: 'right', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  {fmtRand(r.perNight)}
+                </td>
+                <td style={{ ...earningsTdStyle, textAlign: 'right', fontWeight: r.highlight ? 700 : 600, color: r.highlight ? 'var(--color-primary)' : 'var(--text)' }}>
+                  {total != null ? fmtRand(total) : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div style={{
+        fontSize: '0.6875rem',
+        color: 'var(--text-light)',
+        marginTop: 'var(--s-3)',
+        lineHeight: 1.4,
+      }}>
+        {selected.isCurrent
+          ? 'This proposal is ready to send to your guest.'
+          : 'View proposal will open the proposal rendered with this historical pricing.'}
+      </div>
+    </div>
+  );
+}
+
+function fmtRand(n: number): string {
+  return `R${Math.round(n).toLocaleString('en-ZA')}`;
+}
+
+// ── Earnings card style tokens ──────────────────────────────────────
+
+const earningsHeaderLabelStyle: React.CSSProperties = {
+  fontSize: '0.625rem',
+  fontWeight: 700,
+  color: 'var(--text-secondary)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+};
+
+const commissionBadgeStyle: React.CSSProperties = {
+  fontSize: '0.625rem',
+  fontWeight: 700,
+  color: 'var(--color-primary)',
+  background: 'var(--color-primary-bg)',
+  padding: '3px 8px',
+  borderRadius: 4,
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+};
+
+const earningsThStyle: React.CSSProperties = {
+  padding: '4px 0 6px',
+  fontSize: '0.625rem',
+  fontWeight: 600,
+  color: 'var(--text-light)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  borderBottom: '1px solid var(--border-light)',
+  textAlign: 'left',
+};
+
+const earningsTdStyle: React.CSSProperties = {
+  padding: '8px 0',
+  fontSize: '0.875rem',
+  borderBottom: '1px solid var(--border-light)',
+};
+
+const earningsHighlightRowStyle: React.CSSProperties = {
+  background: 'rgba(15, 76, 117, 0.05)',
+};
 
 /** Read-only summary modal for terminal-state proposals (booked /
  *  accepted / declined / cancelled / expired). Mirrors the level of
@@ -834,6 +1140,29 @@ function ProposalSummaryModal({ proposal, onClose }: { proposal: PublishedPropos
   );
 }
 
+/** Definition-list row inside the expanded enquiry body — small
+ *  label on top, value underneath. Used for stay details + guest
+ *  contact blocks so they read like a clean form summary. */
+function DefRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: '0.625rem',
+        fontWeight: 700,
+        color: 'var(--text-light)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        marginBottom: 2,
+      }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '0.875rem', color: 'var(--text)', lineHeight: 1.4 }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function pillVariantFor(status: AgentEnquiryStatus): string {
   switch (status) {
     case 'new':           return 'new';
@@ -865,63 +1194,31 @@ function FullScreenMessage({ title, message }: { title?: string; message: string
 // Uses design tokens only. Layout / positioning / containers; no new
 // CSS classes introduced.
 
-const pageOuterStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'var(--bg)',
-  padding: 'var(--s-6) var(--s-4)',
-};
-
-const canvasStyle: React.CSSProperties = {
-  maxWidth: 1100,
-  margin: '0 auto',
-  background: 'var(--surface)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  boxShadow: 'var(--shadow-lg)',
-  padding: 'var(--s-6) var(--s-6) var(--s-8)',
-};
-
-const greetingLineStyle: React.CSSProperties = {
-  fontSize: '0.9375rem',
-  color: 'var(--text)',
+const statsRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gap: 'var(--s-3)',
   marginBottom: 'var(--s-5)',
 };
 
-const selectionBarStyle: React.CSSProperties = {
-  position: 'sticky',
-  top: 'var(--s-4)',
-  zIndex: 5,
-  marginBottom: 'var(--s-4)',
+const statTileStyle: React.CSSProperties = {
   padding: 'var(--s-3) var(--s-4)',
-  background: 'var(--surface)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)',
-  boxShadow: 'var(--shadow-md, 0 4px 12px rgba(0,0,0,0.06))',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 'var(--s-3)',
-  flexWrap: 'wrap',
 };
 
-function checkboxBubbleStyle(selected: boolean): React.CSSProperties {
-  return {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    zIndex: 2,
-    width: 32,
-    height: 32,
-    borderRadius: '50%',
-    background: selected ? 'var(--color-primary)' : 'rgba(255, 255, 255, 0.92)',
-    border: selected ? '2px solid var(--color-primary)' : '1px solid var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-    transition: 'background 120ms, border-color 120ms',
-  };
-}
+const sectionHeadingStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  gap: 'var(--s-3)',
+  fontSize: '0.6875rem',
+  fontWeight: 700,
+  color: 'var(--text-secondary)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  marginBottom: 'var(--s-3)',
+  paddingBottom: 'var(--s-2)',
+  borderBottom: '1px solid var(--border-light)',
+};
 
 const emptyStateStyle: React.CSSProperties = {
   padding: 'var(--s-8) var(--s-4)',
@@ -936,19 +1233,47 @@ const enquiryRowStyle: React.CSSProperties = {
   gap: 'var(--s-4)',
 };
 
-const enquiryExpandedStyle: React.CSSProperties = {
-  padding: 'var(--s-3) var(--s-4) var(--s-4)',
-  borderTop: '1px solid var(--border-light)',
-  background: 'var(--bg)',
-};
-
 const enquiryExpandedLabelStyle: React.CSSProperties = {
   fontSize: '0.75rem',
   fontWeight: 600,
   color: 'var(--text-secondary)',
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
-  marginBottom: 4,
+  marginBottom: 'var(--s-2)',
+};
+
+const enquiryExpandedSectionStyle: React.CSSProperties = {
+  marginBottom: 'var(--s-4)',
+};
+
+const defGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+  gap: 'var(--s-3) var(--s-4)',
+};
+
+const tierChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '2px 8px',
+  fontSize: '0.6875rem',
+  fontWeight: 600,
+  background: 'var(--color-primary-bg)',
+  color: 'var(--color-primary)',
+  border: '1px solid var(--color-primary-bg)',
+  borderRadius: 4,
+};
+
+const propertyChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 10px',
+  fontSize: '0.8125rem',
+  fontWeight: 500,
+  background: 'var(--surface)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
 };
 
 const fullScreenStyle: React.CSSProperties = {
@@ -960,47 +1285,6 @@ const fullScreenStyle: React.CSSProperties = {
   padding: 'var(--s-8) var(--s-5)',
   textAlign: 'center',
   background: 'var(--bg)',
-};
-
-// ── Brand bar styles ────────────────────────────────────────────────
-
-const brandBarStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'flex-end',
-  gap: 'var(--s-4)',
-  marginBottom: 'var(--s-5)',
-  borderBottom: '1px solid var(--border-light)',
-  flexWrap: 'wrap',
-};
-
-const logoPlaceholderStyle: React.CSSProperties = {
-  width: 44,
-  height: 44,
-  borderRadius: 'var(--radius-sm)',
-  background: 'var(--color-primary)',
-  color: '#fff',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: '0.9375rem',
-  fontWeight: 700,
-  letterSpacing: '0.05em',
-  flexShrink: 0,
-};
-
-const brandWordmarkStyle: React.CSSProperties = {
-  fontSize: '1.125rem',
-  fontWeight: 700,
-  color: 'var(--text)',
-  letterSpacing: '0.02em',
-  lineHeight: 1.2,
-};
-
-const brandTaglineStyle: React.CSSProperties = {
-  fontSize: '0.8125rem',
-  color: 'var(--text-secondary)',
-  marginTop: 2,
 };
 
 // ── About tab styles ────────────────────────────────────────────────

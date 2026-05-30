@@ -36,6 +36,12 @@
   var BRAND_MODE = (function() {
     var qp = new URLSearchParams(window.location.search).get('brand');
     if (qp === 'agent' || qp === 'direct' || qp === 'agent-anon') return qp;
+    // /agent-brochures/:slug is the in-portal preview path. The Vercel
+    // / Vite rewrite swaps it server-side to brochure.html with the
+    // brand query param, but the browser URL stays on the original
+    // path — so the query check above misses. Fall back to a pathname
+    // check so the anon mode still activates from a clean URL.
+    if (/^\/agent-brochures\//.test(window.location.pathname || '')) return 'agent-anon';
     var host = (window.location.hostname || '').toLowerCase();
     // Hostnames that should serve the un-branded "agent" variant. The
     // branded domain (southernescapes.co.za) is treated as 'direct' by
@@ -906,7 +912,11 @@
     // even though we rewrote to /brochure.html?slug=…. Fall back to parsing
     // the pathname directly.
     if (!id && !slug) {
-      var pathMatch = window.location.pathname.match(/^\/brochures\/([^/?#]+)/);
+      // Match both /brochures/:slug (branded / agent-share) and
+      // /agent-brochures/:slug (in-portal anon preview). The browser
+      // URL keeps its original form after the server rewrite, so the
+      // pathname regex is what drives slug resolution in practice.
+      var pathMatch = window.location.pathname.match(/^\/(?:agent-)?brochures\/([^/?#]+)/);
       if (pathMatch) slug = decodeURIComponent(pathMatch[1]);
     }
 
