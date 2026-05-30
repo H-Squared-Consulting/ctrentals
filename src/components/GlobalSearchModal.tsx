@@ -328,42 +328,67 @@ function ResultsPane({
         >
           ← Refine filters
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Copy Airbnb links — paste-ready block of Airbnb URLs for
-              the matched properties. Hidden when there are no results
-              or no property in the result set has an Airbnb URL on
-              file. Greeting + intro line are baked in to match what
-              Hayley actually pastes. */}
-          {!searching && withAirbnb.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-outline"
-              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-              onClick={() => setAirbnbPreviewOpen(true)}
-              title={
-                withoutAirbnb > 0
-                  ? `${withoutAirbnb} of these have no Airbnb URL on file — they'll be skipped.`
-                  : 'Preview + copy a paste-ready block of Airbnb links for the matched properties'
-              }
-            >
-              📋 Copy Airbnb links ({withAirbnb.length})
-            </button>
-          )}
-          {filters && (
-            <div style={{
-              fontSize: '0.75rem',
-              color: 'var(--text-secondary)',
-              textAlign: 'right',
-              maxWidth: 320,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}>
-              {summariseFiltersInline(filters) || 'no filters'}
-            </div>
-          )}
-        </div>
+        {filters && (
+          <div style={{
+            fontSize: '0.75rem',
+            color: 'var(--text-secondary)',
+            textAlign: 'right',
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {summariseFiltersInline(filters) || 'no filters'}
+          </div>
+        )}
       </div>
+
+      {/* Big, obvious Airbnb CTA. Lives on its own row above the result
+          grid so it's the second thing the eye reaches after "← Refine
+          filters" — for the dumbest user, this is the one button that
+          answers "I'm replying to an Airbnb enquiry, what now?". Hidden
+          when there are no results or no result has an Airbnb URL on
+          file. */}
+      {!searching && withAirbnb.length > 0 && (
+        <div style={{
+          marginBottom: 'var(--s-3)',
+          background: 'var(--color-primary-bg)',
+          border: '1px solid var(--color-primary)',
+          borderRadius: 'var(--radius-sm)',
+          padding: '12px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 auto' }}>
+            <span style={{ fontSize: '1.5rem', lineHeight: 1, flexShrink: 0 }} aria-hidden>📋</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--color-primary)' }}>
+                Replying to an Airbnb enquiry?
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                Hand the guest a paste-ready block of Airbnb links for these matches.
+                {withoutAirbnb > 0 && (
+                  <span style={{ color: 'var(--text-light)' }}>
+                    {' · '}{withoutAirbnb} skipped (no Airbnb URL on file).
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ fontSize: '0.875rem', padding: '8px 16px', flexShrink: 0 }}
+            onClick={() => setAirbnbPreviewOpen(true)}
+          >
+            📋 Copy Airbnb links ({withAirbnb.length})
+          </button>
+        </div>
+      )}
 
       {searching && (
         <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
