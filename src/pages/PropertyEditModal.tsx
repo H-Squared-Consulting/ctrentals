@@ -699,8 +699,99 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         if (error) throw error;
         savedPropertyId = data.id;
       } else {
-        const { error } = await supabase.from('partner_properties').update(payload).eq('id', property.id);
-        if (error) throw error;
+        // Diff-save: only send columns whose source form field actually
+        // changed since the modal opened. Stops a stale-form save from
+        // clobbering fields that a background job (e.g. the Airbnb
+        // scraper) wrote after this modal mounted.
+        const initial = initialFormRef.current || form;
+        const isDirtyField = (k) => JSON.stringify(form[k]) !== JSON.stringify(initial[k]);
+        // payload key → source form field (null = always include)
+        const fieldMap = {
+          property_name: 'property_name',
+          slug: 'slug',
+          tagline: 'tagline',
+          description: 'description',
+          property_type: 'property_type',
+          address_line1: 'address_line1',
+          address_line2: 'address_line2',
+          suburb: 'suburb',
+          city: 'city',
+          province: 'province',
+          postal_code: 'postal_code',
+          bedrooms: 'bedrooms',
+          bathrooms: 'bathrooms',
+          sleeps: 'sleeps',
+          price_from: 'price_from',
+          price_currency: 'price_currency',
+          gallery_sections: 'gallery_sections',
+          hero_image_url: 'gallery_sections',
+          gallery_images: 'gallery_sections',
+          image_metadata: 'gallery_sections',
+          amenity_tags: 'amenity_tags',
+          listing_urls: 'listing_urls',
+          booking_url: 'listing_urls',
+          listing_links: 'listing_links',
+          contact_email: 'contact_email',
+          contact_phone: 'contact_phone',
+          whatsapp_number: 'whatsapp_number',
+          external_rating: 'external_rating',
+          external_rating_source: 'external_rating_source',
+          external_review_count: 'external_review_count',
+          owner_name: 'owner_name',
+          owner_email: 'owner_email',
+          owner_phone: 'owner_phone',
+          is_published: 'is_published',
+          is_archived: 'is_archived',
+          is_featured: 'is_featured',
+          pos_assured: 'pos_assured',
+          sort_order: 'sort_order',
+          bed_sizes: 'bed_sizes',
+          notes: 'notes',
+        };
+        const diffedPayload = Object.fromEntries(
+          Object.entries(payload).filter(([key]) => {
+            const formKey = fieldMap[key];
+            if (formKey === undefined) return true; // partner_id, owner_id, unknowns
+            return isDirtyField(formKey);
+          })
+        );
+        if (Object.keys(diffedPayload).length === 0) {
+          // Nothing actually changed — skip the round-trip entirely so a
+          // no-op click doesn't bump updated_at or trip triggers.
+        } else {
+          const { error } = await supabase.from('partner_properties').update(diffedPayload).eq('id', property.id);
+          if (error) throw error;
+        }
+      }
+
+      // Best-effort: when an Airbnb URL is present, ask the edge
+      // function to scrape og:title and cache it on
+      // partner_properties.airbnb_title. The function writes the row
+      // itself with service-role auth and returns the title — we
+      // only need to fire it. Fire-and-forget so a slow Airbnb fetch
+      // doesn't block the save toast.
+      const airbnbUrl = ((payload.listing_urls as Record<string, string>)?.airbnb || '').trim();
+      const idForTitleFetch = isNew ? savedPropertyId : property.id;
+      if (airbnbUrl && idForTitleFetch) {
+        try {
+          const fnUrl = (supabase as any).supabaseUrl
+            ? `${((supabase as any).supabaseUrl as string).replace(/\/$/, '')}/functions/v1/fetch-airbnb-title`
+            : '';
+          const anonKey = (supabase as any).supabaseKey as string;
+          if (fnUrl && anonKey) {
+            // No await — title refresh is a side effect, not a save
+            // dependency. If it fails the next save will retry.
+            fetch(fnUrl, {
+              method: 'POST',
+              headers: {
+                'apikey': anonKey,
+                'Authorization': `Bearer ${anonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ url: airbnbUrl, propertyId: idForTitleFetch }),
+            }).catch(() => { /* swallow — see comment above */ });
+          }
+        } catch { /* swallow — non-fatal */ }
       }
 
       // ── Sync property_owners ──
@@ -1884,6 +1975,9 @@ function PropertyLinksSection({
                           ⚠ This looks like a {mismatch} URL — move it to the {mismatch} row instead.
                         </div>
                       )}
+                      {key === 'airbnb' && value && (
+                        <AirbnbTitleRow propertyId={property.id} url={value} initialTitle={(property as any).airbnb_title || null} />
+                      )}
                     </div>
                   </div>
                 );
@@ -1911,6 +2005,98 @@ function PropertyLinksSection({
           Digital guidebook link (e.g. hostful.ly). Surfaces as the 📖 Guidebook button on this property's card.
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Read-only Airbnb listing title display + manual refresh button.
+ *  Sits under the Airbnb URL input so the team can see what the
+ *  "Copy Airbnb links" preview will paste (the Airbnb headline like
+ *  "Spacious 4 Bed Retreat with Stunning Views", not our internal
+ *  property name). Refresh re-runs the fetch-airbnb-title edge fn for
+ *  this property — needed when the listing's title was edited on
+ *  Airbnb after we cached it. */
+function AirbnbTitleRow({
+  propertyId, url, initialTitle,
+}: {
+  propertyId: string | null | undefined;
+  url: string;
+  initialTitle: string | null;
+}) {
+  const toast = useToast();
+  const [title, setTitle] = useState<string | null>(initialTitle);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refresh() {
+    if (refreshing || !url) return;
+    setRefreshing(true);
+    try {
+      const fnUrl = (supabase as any).supabaseUrl
+        ? `${((supabase as any).supabaseUrl as string).replace(/\/$/, '')}/functions/v1/fetch-airbnb-title`
+        : '';
+      const anonKey = (supabase as any).supabaseKey as string;
+      if (!fnUrl || !anonKey) {
+        toast.error('Could not refresh title — Supabase URL/key missing.');
+        return;
+      }
+      const res = await fetch(fnUrl, {
+        method: 'POST',
+        headers: {
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url, propertyId: propertyId || undefined }),
+      });
+      const body = await res.json().catch(() => null);
+      if (body?.ok && body.title) {
+        setTitle(body.title);
+        toast.success('Title refreshed');
+      } else {
+        toast.warning('Could not extract title: ' + (body?.reason || 'unknown'));
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: 6,
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      fontSize: '0.75rem',
+      color: 'var(--text-secondary)',
+      flexWrap: 'wrap',
+    }}>
+      <span style={{
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        fontSize: '0.6875rem',
+        color: 'var(--text-light)',
+      }}>
+        Listing title
+      </span>
+      <span style={{
+        flex: 1,
+        minWidth: 200,
+        color: title ? 'var(--text)' : 'var(--text-light)',
+        fontStyle: title ? 'normal' : 'italic',
+      }}>
+        {title || 'Not fetched yet — click Refresh to pull it from Airbnb.'}
+      </span>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+        onClick={refresh}
+        disabled={refreshing || !propertyId}
+        title="Re-scrape the Airbnb page for its current listing title"
+      >
+        {refreshing ? 'Refreshing…' : '↻ Refresh'}
+      </button>
     </div>
   );
 }

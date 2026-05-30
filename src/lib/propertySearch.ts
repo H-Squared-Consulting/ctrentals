@@ -80,6 +80,18 @@ export interface PropertyResult {
   /** Peak-season property_fixed_rates.guest_rate for the current
    *  year — only populated for fixed-mode properties. */
   fixedPeakGuestRate: number | null;
+  /** External Airbnb listing URL extracted from listing_urls.airbnb.
+   *  Surfaced so the global search "Copy Airbnb links" action can
+   *  hand the team a paste-ready block when replying to an Airbnb
+   *  enquiry. Null when the property isn't listed on Airbnb. */
+  airbnbUrl: string | null;
+  /** Cached Airbnb listing headline ("Spacious 4 Bed Retreat with
+   *  Stunning Views") populated by the fetch-airbnb-title edge
+   *  function on property save. Used in front of each URL in the
+   *  Copy Airbnb links preview so the guest sees the listing's own
+   *  title instead of our internal property name. Falls back to
+   *  property_name when the fetch hasn't completed yet. */
+  airbnbTitle: string | null;
 }
 
 export async function searchProperties(
@@ -93,7 +105,7 @@ export async function searchProperties(
   const restrictMode = !!(f.restrictToIds && f.restrictToIds.length > 0);
   let propsQuery = supabase
     .from('partner_properties')
-    .select('id, slug, property_name, tagline, suburb, city, bedrooms, bathrooms, sleeps, hero_image_url, amenity_tags, is_published, is_archived, pricing_mode')
+    .select('id, slug, property_name, tagline, suburb, city, bedrooms, bathrooms, sleeps, hero_image_url, amenity_tags, is_published, is_archived, pricing_mode, listing_urls, airbnb_title')
     .eq('partner_id', CT_RENTALS_PARTNER_ID)
     .eq('is_published', true)
     .order('property_name');
@@ -242,5 +254,11 @@ export async function searchProperties(
     dailyRate: baselineByProperty.get(p.id) ?? null,
     pricingMode: (p.pricing_mode === 'fixed' || p.pricing_mode === 'system') ? p.pricing_mode : null,
     fixedPeakGuestRate: fixedPeakByProperty.get(p.id) ?? null,
+    airbnbUrl: (p.listing_urls && typeof p.listing_urls === 'object' && typeof p.listing_urls.airbnb === 'string')
+      ? (p.listing_urls.airbnb.trim() || null)
+      : null,
+    airbnbTitle: (typeof p.airbnb_title === 'string' && p.airbnb_title.trim())
+      ? p.airbnb_title.trim()
+      : null,
   }));
 }
