@@ -644,11 +644,40 @@ function AirbnbLinksPreviewModal({
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
-                    fontSize: '0.875rem',
-                    fontWeight: on ? 600 : 500,
-                    color: on ? 'var(--color-primary)' : 'var(--text)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    flexWrap: 'wrap',
                   }}>
-                    {displayTitleFor(p)}
+                    <span style={{
+                      fontSize: '0.875rem',
+                      fontWeight: on ? 600 : 500,
+                      color: on ? 'var(--color-primary)' : 'var(--text)',
+                    }}>
+                      {displayTitleFor(p)}
+                    </span>
+                    {/* Small chip with our internal property name so the
+                        team can spot which house an Airbnb listing
+                        actually is at a glance. Only renders when the
+                        internal name differs from the Airbnb headline
+                        (avoids "Pinehurst · Pinehurst" duplication when
+                        a host happened to title their listing the same
+                        as our internal name). */}
+                    {titleCase(p.name) !== displayTitleFor(p) && (
+                      <span style={{
+                        fontSize: '0.625rem',
+                        fontWeight: 600,
+                        background: 'var(--surface)',
+                        color: 'var(--text-secondary)',
+                        border: '1px solid var(--border)',
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        letterSpacing: '0.02em',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {titleCase(p.name)}
+                      </span>
+                    )}
                   </div>
                   <div style={{
                     fontSize: '0.6875rem',
@@ -656,6 +685,7 @@ function AirbnbLinksPreviewModal({
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    marginTop: 2,
                   }}>
                     {p.airbnbUrl}
                   </div>
