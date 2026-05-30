@@ -299,6 +299,34 @@ function ResultsPane({
   onBack: () => void;
   onClose: () => void;
 }) {
+  // Copy-link UX state. "copied" flips for 2s after a successful clipboard
+  // write so the button visually confirms. Reset when the result list
+  // itself changes (e.g. user refines + re-searches).
+  const [copied, setCopied] = useState(false);
+  const withAirbnb = results.filter(r => !!r.airbnbUrl);
+  const withoutAirbnb = results.length - withAirbnb.length;
+  useEffect(() => { setCopied(false); }, [results]);
+
+  async function copyAirbnbLinks() {
+    if (withAirbnb.length === 0) return;
+    // Match the exact format Hayley pastes when replying to an Airbnb
+    // enquiry — greeting, intro line, then each URL on its own line.
+    const lines = [
+      'Hi,',
+      '',
+      'The following homes would be available:',
+      '',
+      ...withAirbnb.map(r => r.airbnbUrl!),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Clipboard write failed:', err);
+    }
+  }
+
   return (
     <div>
       {/* Header row: ← Back to refine + a compact summary of what
@@ -320,20 +348,43 @@ function ResultsPane({
         >
           ← Refine filters
         </button>
-        {filters && (
-          <div style={{
-            fontSize: '0.75rem',
-            color: 'var(--text-secondary)',
-            textAlign: 'right',
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {summariseFiltersInline(filters) || 'no filters'}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {/* Copy Airbnb links — paste-ready block of Airbnb URLs for
+              the matched properties. Hidden when there are no results
+              or no property in the result set has an Airbnb URL on
+              file. Greeting + intro line are baked in to match what
+              Hayley actually pastes. */}
+          {!searching && withAirbnb.length > 0 && (
+            <button
+              type="button"
+              className={`btn ${copied ? 'btn-primary' : 'btn-outline'}`}
+              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              onClick={copyAirbnbLinks}
+              title={
+                withoutAirbnb > 0
+                  ? `${withoutAirbnb} of these have no Airbnb URL on file — they'll be skipped.`
+                  : 'Copies a paste-ready block of Airbnb links for the matched properties'
+              }
+            >
+              {copied
+                ? `✓ Copied ${withAirbnb.length} link${withAirbnb.length === 1 ? '' : 's'}`
+                : `📋 Copy Airbnb links (${withAirbnb.length})`}
+            </button>
+          )}
+          {filters && (
+            <div style={{
+              fontSize: '0.75rem',
+              color: 'var(--text-secondary)',
+              textAlign: 'right',
+              maxWidth: 320,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {summariseFiltersInline(filters) || 'no filters'}
+            </div>
+          )}
+        </div>
       </div>
 
       {searching && (
