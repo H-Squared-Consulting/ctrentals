@@ -1914,6 +1914,9 @@ function PropertyLinksSection({
                           ⚠ This looks like a {mismatch} URL — move it to the {mismatch} row instead.
                         </div>
                       )}
+                      {key === 'airbnb' && value && (
+                        <AirbnbTitleRow propertyId={property.id} url={value} initialTitle={(property as any).airbnb_title || null} />
+                      )}
                     </div>
                   </div>
                 );
@@ -1941,6 +1944,98 @@ function PropertyLinksSection({
           Digital guidebook link (e.g. hostful.ly). Surfaces as the 📖 Guidebook button on this property's card.
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Read-only Airbnb listing title display + manual refresh button.
+ *  Sits under the Airbnb URL input so the team can see what the
+ *  "Copy Airbnb links" preview will paste (the Airbnb headline like
+ *  "Spacious 4 Bed Retreat with Stunning Views", not our internal
+ *  property name). Refresh re-runs the fetch-airbnb-title edge fn for
+ *  this property — needed when the listing's title was edited on
+ *  Airbnb after we cached it. */
+function AirbnbTitleRow({
+  propertyId, url, initialTitle,
+}: {
+  propertyId: string | null | undefined;
+  url: string;
+  initialTitle: string | null;
+}) {
+  const toast = useToast();
+  const [title, setTitle] = useState<string | null>(initialTitle);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refresh() {
+    if (refreshing || !url) return;
+    setRefreshing(true);
+    try {
+      const fnUrl = (supabase as any).supabaseUrl
+        ? `${((supabase as any).supabaseUrl as string).replace(/\/$/, '')}/functions/v1/fetch-airbnb-title`
+        : '';
+      const anonKey = (supabase as any).supabaseKey as string;
+      if (!fnUrl || !anonKey) {
+        toast.error('Could not refresh title — Supabase URL/key missing.');
+        return;
+      }
+      const res = await fetch(fnUrl, {
+        method: 'POST',
+        headers: {
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url, propertyId: propertyId || undefined }),
+      });
+      const body = await res.json().catch(() => null);
+      if (body?.ok && body.title) {
+        setTitle(body.title);
+        toast.success('Title refreshed');
+      } else {
+        toast.warning('Could not extract title: ' + (body?.reason || 'unknown'));
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: 6,
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      fontSize: '0.75rem',
+      color: 'var(--text-secondary)',
+      flexWrap: 'wrap',
+    }}>
+      <span style={{
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        fontSize: '0.6875rem',
+        color: 'var(--text-light)',
+      }}>
+        Listing title
+      </span>
+      <span style={{
+        flex: 1,
+        minWidth: 200,
+        color: title ? 'var(--text)' : 'var(--text-light)',
+        fontStyle: title ? 'normal' : 'italic',
+      }}>
+        {title || 'Not fetched yet — click Refresh to pull it from Airbnb.'}
+      </span>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+        onClick={refresh}
+        disabled={refreshing || !propertyId}
+        title="Re-scrape the Airbnb page for its current listing title"
+      >
+        {refreshing ? 'Refreshing…' : '↻ Refresh'}
+      </button>
     </div>
   );
 }
