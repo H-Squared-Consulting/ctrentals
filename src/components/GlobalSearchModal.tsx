@@ -567,15 +567,22 @@ function AirbnbLinksPreviewModal({
         }}>
           {properties.map(p => {
             const on = picked.has(p.id);
+            // Row is a plain div with one click handler driving state.
+            // No wrapping <label> + onChange combo — the previous version
+            // double-fired (label.onClick + input.onChange both toggling)
+            // which felt laggy as React reconciled the contradictory updates.
             return (
-              <label
+              <div
                 key={p.id}
-                onClick={(e) => {
-                  // Swallow the implicit click on the wrapping label so
-                  // the row toggle uses our setPicked instead of the
-                  // browser's checkbox-syncs-to-label double-fire.
-                  e.preventDefault();
-                  togglePicked(p.id);
+                role="button"
+                tabIndex={0}
+                aria-pressed={on}
+                onClick={() => togglePicked(p.id)}
+                onKeyDown={(e) => {
+                  if (e.key === ' ' || e.key === 'Enter') {
+                    e.preventDefault();
+                    togglePicked(p.id);
+                  }
                 }}
                 style={{
                   display: 'flex',
@@ -586,21 +593,30 @@ function AirbnbLinksPreviewModal({
                   cursor: 'pointer',
                   background: on ? 'var(--color-primary-bg)' : 'transparent',
                   borderLeft: on ? '3px solid var(--color-primary)' : '3px solid transparent',
-                  transition: 'background 0.1s ease, border-color 0.1s ease',
+                  userSelect: 'none',
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => { /* handled on the label click */ }}
+                {/* Decorative checkbox indicator — purely visual. The
+                    real input affordance is the whole row. */}
+                <span
+                  aria-hidden
                   style={{
                     width: 18,
                     height: 18,
                     flexShrink: 0,
-                    accentColor: 'var(--color-primary)',
-                    cursor: 'pointer',
+                    borderRadius: 4,
+                    border: on ? '2px solid var(--color-primary)' : '2px solid var(--border)',
+                    background: on ? 'var(--color-primary)' : 'var(--surface)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    fontSize: '0.75rem',
+                    lineHeight: 1,
                   }}
-                />
+                >
+                  {on ? '✓' : ''}
+                </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
                     fontSize: '0.875rem',
@@ -619,7 +635,7 @@ function AirbnbLinksPreviewModal({
                     {p.airbnbUrl}
                   </div>
                 </div>
-              </label>
+              </div>
             );
           })}
         </div>
