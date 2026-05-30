@@ -299,33 +299,13 @@ function ResultsPane({
   onBack: () => void;
   onClose: () => void;
 }) {
-  // Copy-link UX state. "copied" flips for 2s after a successful clipboard
-  // write so the button visually confirms. Reset when the result list
-  // itself changes (e.g. user refines + re-searches).
-  const [copied, setCopied] = useState(false);
+  // Airbnb-copy preview modal state. Opens on the Copy Airbnb links
+  // button so the team can sanity-check the property list (title +
+  // URL per row) before pasting into the Airbnb reply.
+  const [airbnbPreviewOpen, setAirbnbPreviewOpen] = useState(false);
   const withAirbnb = results.filter(r => !!r.airbnbUrl);
   const withoutAirbnb = results.length - withAirbnb.length;
-  useEffect(() => { setCopied(false); }, [results]);
-
-  async function copyAirbnbLinks() {
-    if (withAirbnb.length === 0) return;
-    // Match the exact format Hayley pastes when replying to an Airbnb
-    // enquiry — greeting, intro line, then each URL on its own line.
-    const lines = [
-      'Hi,',
-      '',
-      'The following homes would be available:',
-      '',
-      ...withAirbnb.map(r => r.airbnbUrl!),
-    ];
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Clipboard write failed:', err);
-    }
-  }
+  useEffect(() => { setAirbnbPreviewOpen(false); }, [results]);
 
   return (
     <div>
@@ -357,18 +337,16 @@ function ResultsPane({
           {!searching && withAirbnb.length > 0 && (
             <button
               type="button"
-              className={`btn ${copied ? 'btn-primary' : 'btn-outline'}`}
+              className="btn btn-outline"
               style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-              onClick={copyAirbnbLinks}
+              onClick={() => setAirbnbPreviewOpen(true)}
               title={
                 withoutAirbnb > 0
                   ? `${withoutAirbnb} of these have no Airbnb URL on file — they'll be skipped.`
-                  : 'Copies a paste-ready block of Airbnb links for the matched properties'
+                  : 'Preview + copy a paste-ready block of Airbnb links for the matched properties'
               }
             >
-              {copied
-                ? `✓ Copied ${withAirbnb.length} link${withAirbnb.length === 1 ? '' : 's'}`
-                : `📋 Copy Airbnb links (${withAirbnb.length})`}
+              📋 Copy Airbnb links ({withAirbnb.length})
             </button>
           )}
           {filters && (
@@ -439,7 +417,110 @@ function ResultsPane({
           ))}
         </div>
       )}
+      {airbnbPreviewOpen && (
+        <AirbnbLinksPreviewModal
+          properties={withAirbnb}
+          skippedCount={withoutAirbnb}
+          onClose={() => setAirbnbPreviewOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Preview-and-copy modal for the Copy Airbnb links action. Shows the
+ *  exact block that will land on the clipboard — property name +
+ *  Airbnb URL per row — so the team can sanity-check before pasting
+ *  into Airbnb. View-only on the property list; the copy itself is a
+ *  single click. */
+function AirbnbLinksPreviewModal({
+  properties, skippedCount, onClose,
+}: {
+  properties: PropertyResult[];
+  skippedCount: number;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  // The exact text that will go to the clipboard. Each row is the
+  // property name followed by the URL on the same line — matches what
+  // Hayley pastes into Airbnb today, just with the name in front so
+  // the guest can see which house each link is.
+  const blockText = (() => {
+    const lines = [
+      'Hi,',
+      '',
+      'The following homes would be available:',
+      '',
+      ...properties.map(p => `${titleCase(p.name)}: ${p.airbnbUrl}`),
+    ];
+    return lines.join('\n');
+  })();
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(blockText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Clipboard write failed:', err);
+    }
+  }
+
+  return (
+    <ActionModal
+      title="Copy Airbnb links"
+      subtitle={skippedCount > 0
+        ? `${properties.length} property${properties.length === 1 ? '' : 'ies'} with Airbnb URLs · ${skippedCount} skipped (no URL on file)`
+        : `${properties.length} property${properties.length === 1 ? '' : 'ies'} ready to paste`}
+      width={560}
+      onClose={onClose}
+      primaryAction={
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={copy}
+        >
+          {copied ? '✓ Copied to clipboard' : '📋 Copy to clipboard'}
+        </button>
+      }
+    >
+      <div style={{
+        background: 'var(--bg)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        padding: 'var(--s-3)',
+        fontSize: '0.8125rem',
+        lineHeight: 1.6,
+        color: 'var(--text)',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-all',
+        maxHeight: 360,
+        overflowY: 'auto',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      }}>
+        <div style={{ marginBottom: 4 }}>Hi,</div>
+        <div style={{ marginBottom: 4 }}>&nbsp;</div>
+        <div style={{ marginBottom: 4 }}>The following homes would be available:</div>
+        <div style={{ marginBottom: 4 }}>&nbsp;</div>
+        {properties.map(p => (
+          <div key={p.id} style={{ marginBottom: 4 }}>
+            <span style={{ fontWeight: 600, color: 'var(--text)' }}>
+              {titleCase(p.name)}:
+            </span>{' '}
+            <span style={{ color: 'var(--color-primary)' }}>{p.airbnbUrl}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{
+        marginTop: 'var(--s-3)',
+        fontSize: '0.6875rem',
+        color: 'var(--text-light)',
+        lineHeight: 1.4,
+      }}>
+        Paste straight into the Airbnb reply — formatting is plain text so it travels cleanly.
+      </div>
+    </ActionModal>
   );
 }
 
