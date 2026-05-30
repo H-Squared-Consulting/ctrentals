@@ -699,8 +699,69 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         if (error) throw error;
         savedPropertyId = data.id;
       } else {
-        const { error } = await supabase.from('partner_properties').update(payload).eq('id', property.id);
-        if (error) throw error;
+        // Diff-save: only send columns whose source form field actually
+        // changed since the modal opened. Stops a stale-form save from
+        // clobbering fields that a background job (e.g. the Airbnb
+        // scraper) wrote after this modal mounted.
+        const initial = initialFormRef.current || form;
+        const isDirtyField = (k) => JSON.stringify(form[k]) !== JSON.stringify(initial[k]);
+        // payload key → source form field (null = always include)
+        const fieldMap = {
+          property_name: 'property_name',
+          slug: 'slug',
+          tagline: 'tagline',
+          description: 'description',
+          property_type: 'property_type',
+          address_line1: 'address_line1',
+          address_line2: 'address_line2',
+          suburb: 'suburb',
+          city: 'city',
+          province: 'province',
+          postal_code: 'postal_code',
+          bedrooms: 'bedrooms',
+          bathrooms: 'bathrooms',
+          sleeps: 'sleeps',
+          price_from: 'price_from',
+          price_currency: 'price_currency',
+          gallery_sections: 'gallery_sections',
+          hero_image_url: 'gallery_sections',
+          gallery_images: 'gallery_sections',
+          image_metadata: 'gallery_sections',
+          amenity_tags: 'amenity_tags',
+          listing_urls: 'listing_urls',
+          booking_url: 'listing_urls',
+          listing_links: 'listing_links',
+          contact_email: 'contact_email',
+          contact_phone: 'contact_phone',
+          whatsapp_number: 'whatsapp_number',
+          external_rating: 'external_rating',
+          external_rating_source: 'external_rating_source',
+          external_review_count: 'external_review_count',
+          owner_name: 'owner_name',
+          owner_email: 'owner_email',
+          owner_phone: 'owner_phone',
+          is_published: 'is_published',
+          is_archived: 'is_archived',
+          is_featured: 'is_featured',
+          pos_assured: 'pos_assured',
+          sort_order: 'sort_order',
+          bed_sizes: 'bed_sizes',
+          notes: 'notes',
+        };
+        const diffedPayload = Object.fromEntries(
+          Object.entries(payload).filter(([key]) => {
+            const formKey = fieldMap[key];
+            if (formKey === undefined) return true; // partner_id, owner_id, unknowns
+            return isDirtyField(formKey);
+          })
+        );
+        if (Object.keys(diffedPayload).length === 0) {
+          // Nothing actually changed — skip the round-trip entirely so a
+          // no-op click doesn't bump updated_at or trip triggers.
+        } else {
+          const { error } = await supabase.from('partner_properties').update(diffedPayload).eq('id', property.id);
+          if (error) throw error;
+        }
       }
 
       // Best-effort: when an Airbnb URL is present, ask the edge
