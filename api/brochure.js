@@ -14,9 +14,12 @@ const AGENT_HOSTS = [];
 
 function detectBrandMode(req) {
   // Query param wins so we can test the agent variant locally without
-  // needing to own the neutral domain.
+  // needing to own the neutral domain. 'agent-anon' is the in-portal
+  // discovery preview — same un-branded layout as 'agent' but with
+  // the property name replaced by its CTR code (slug) on every
+  // surface that would otherwise leak it.
   const qp = req.query && (req.query.brand || '');
-  if (qp === 'agent' || qp === 'direct') return qp;
+  if (qp === 'agent' || qp === 'direct' || qp === 'agent-anon') return qp;
   const host = String(req.headers.host || '').toLowerCase().split(':')[0];
   for (const h of AGENT_HOSTS) {
     if (host === h || host.endsWith('.' + h)) return 'agent';
@@ -44,9 +47,18 @@ export default async function handler(req, res) {
       const data = await r.json();
       if (Array.isArray(data) && data[0]) {
         const p = data[0];
-        if (p.property_name) title = p.property_name;
-        const subtitle = p.tagline || (p.description ? p.description.replace(/\s+/g, ' ').slice(0, 180) : '');
-        if (subtitle) description = subtitle;
+        if (brandMode === 'agent-anon') {
+          // Anon mode: surface only the CTR code on every SEO/social
+          // preview surface. Otherwise the property name leaks via
+          // WhatsApp / Slack link previews and defeats the
+          // anonymisation upstream.
+          title = String(slug || '').toUpperCase();
+          description = 'Property preview';
+        } else {
+          if (p.property_name) title = p.property_name;
+          const subtitle = p.tagline || (p.description ? p.description.replace(/\s+/g, ' ').slice(0, 180) : '');
+          if (subtitle) description = subtitle;
+        }
         if (p.hero_image_url) {
           // Same im_w hint we use everywhere else for muscache URLs.
           const u = p.hero_image_url;

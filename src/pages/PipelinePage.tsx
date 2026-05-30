@@ -32,6 +32,7 @@ import NightCount from '../components/NightCount';
 import ProposalDetailModal from '../components/ProposalDetailModal';
 import SendProposalDialog from '../components/SendProposalDialog';
 import PricingModal from './PricingModal';
+import PricingHistoryModal from '../components/PricingHistoryModal';
 import { nightsBetween } from '../lib/nights';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import { fmtRand } from '../lib/pricingEngine';
@@ -143,6 +144,16 @@ interface EnquirySide {
    *  Stamped at insert via initialsForEmail(user.email). Surfaces as a
    *  small pill on the deal card and feeds the "show only mine" filter. */
   created_by_initials: string | null;
+  /** Free-text "why" captured when the team manually moves the deal
+   *  into the Closed column. Surfaces on the closed card so the reason
+   *  is obvious without opening the deal modal. Null on auto-expired
+   *  rows + everything pre-feature. */
+  close_reason: string | null;
+  /** Set once the team archives the deal out of the Closed column to
+   *  keep the board tidy. Archived enquiries are filtered out of the
+   *  kanban query entirely — they're audit history, not active work. */
+  archived_at: string | null;
+  archive_reason: string | null;
   created_at: string;
 }
 
@@ -165,6 +176,10 @@ interface Deal {
    *  derived Kanban stage (so the ladies can mark booked / cancelled
    *  without auto-derivation getting it wrong via agents). */
   manual_status: string | null;
+  /** Why this deal was manually closed. Mirrored from the enquiry's
+   *  close_reason for fast access on the closed card. Null on standalone-
+   *  proposal deals (no parent enquiry) or pre-feature rows. */
+  close_reason: string | null;
   is_agent: boolean;
 }
 
@@ -503,6 +518,10 @@ export default function PipelinePage() {
 
   // Drill-in state
   const [openDeal, setOpenDeal] = useState<{ deal: Deal; mode: 'view' | 'edit'; focusField?: string | null } | null>(null);
+  /** Whether the View archive browser modal is open. The modal owns
+   *  its own fetch so archived deals don't sit in the main `deals`
+   *  array and pad the kanban filter. */
+  const [archiveBrowserOpen, setArchiveBrowserOpen] = useState(false);
   const openDealInMode = (deal: Deal, mode: 'view' | 'edit' = 'view') => setOpenDeal({ deal, mode });
   const [openProposal, setOpenProposal] = useState<ProposalRow | null>(null);
   /** Hydrated pricing_proposals row for the Edit Pricing → PricingDashboard
@@ -593,6 +612,9 @@ export default function PipelinePage() {
         .from('enquiries')
         .select('*, proposals(*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents))')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
+        // Archived deals stay in the DB for reporting / audit but drop
+        // out of the kanban so the Closed column doesn't bloat.
+        .is('archived_at', null)
         .or(ACTIVE_OR_RECENT)
         .order('created_at', { ascending: false })
         // Safety net — even with the recency floor a runaway create-
@@ -645,6 +667,9 @@ export default function PipelinePage() {
         status: e.status,
         deal_status: e.deal_status ?? null,
         created_by_initials: e.created_by_initials ?? null,
+        close_reason: e.close_reason ?? null,
+        archived_at: e.archived_at ?? null,
+        archive_reason: e.archive_reason ?? null,
         created_at: e.created_at,
       },
       proposals: (e.proposals || []).map((p: any) => mapProposalRow(p, { id: e.id, ref_code: e.ref_code })),
@@ -656,6 +681,7 @@ export default function PipelinePage() {
       guests_total: e.guests_total,
       created_at: e.created_at,
       manual_status: e.status,
+      close_reason: e.close_reason ?? null,
       // Deal-level is_agent surfaces the Agent tag on cards. True when
       // the enquiry was explicitly raised on behalf of a guest OR any
       // existing proposal is agent-flagged (older data, pre-flag).
@@ -683,6 +709,7 @@ export default function PipelinePage() {
         guests_total: row.guests_total,
         created_at: row.created_at,
         manual_status: null,
+        close_reason: null,
         is_agent: row.is_agent,
       };
     });
@@ -1136,15 +1163,77 @@ export default function PipelinePage() {
   /** Manual stage move from the modal dropdown. Writes only deal_status,
    *  leaves the legacy enquiry.status alone (won/lost still flow through
    *  updateEnquiryStatus because Mark Booked also creates a booking row). */
-  async function updateDealStage(enquiryId: string, dealStatus: string) {
+  async function updateDealStage(enquiryId: string, dealStatus: string, closeReason?: string) {
+    const patch: Record<string, unknown> = {
+      deal_status: dealStatus,
+      updated_at: new Date().toISOString(),
+    };
+    // Only write close_reason when the deal is being moved into the
+    // Closed column — the reason is the "why" for closure, not a
+    // general note. Move-out-of-Closed flows (won/quoting/etc.) leave
+    // it untouched so the historical reason survives a re-open round-trip.
+    if (dealStatus === 'lost' && typeof closeReason === 'string' && closeReason.trim()) {
+      patch.close_reason = closeReason.trim();
+    }
     await supabase
       .from('enquiries')
-      .update({ deal_status: dealStatus, updated_at: new Date().toISOString() })
+      .update(patch)
       .eq('id', enquiryId);
     // Mirror onto the enquiry's sole proposal (1:1 case) so the user
     // never has to update two surfaces.
     await syncProposalFromEnquiry(supabase, enquiryId, dealStatus as DealStatus);
     setOpenDeal(null);
+    notifyPipelineChanged();
+  }
+
+  /** Bulk-archive flow for the Closed column. Stamps archived_at +
+   *  archive_reason on every selected enquiry — the kanban filter
+   *  drops them out of view, but the rows stay in the DB for audit
+   *  and reporting. No-op when ids is empty. Reason is required at
+   *  the modal level so it's always populated when we get here. */
+  async function archiveEnquiries(ids: string[], reason: string) {
+    if (ids.length === 0) return;
+    const trimmed = reason.trim();
+    if (!trimmed) return;
+    const { error } = await supabase
+      .from('enquiries')
+      .update({
+        archived_at: new Date().toISOString(),
+        archive_reason: trimmed,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', ids);
+    if (error) {
+      console.error('archiveEnquiries failed:', error);
+      toast.error('Could not archive: ' + error.message);
+      return;
+    }
+    toast.success(
+      ids.length === 1
+        ? 'Archived 1 deal'
+        : `Archived ${ids.length} deals`,
+    );
+    notifyPipelineChanged();
+  }
+
+  /** Restore an archived enquiry back to the Closed column. Clears
+   *  both archived_at and archive_reason so the row re-enters the
+   *  kanban query and renders as a normal closed card again. */
+  async function unarchiveEnquiry(id: string) {
+    const { error } = await supabase
+      .from('enquiries')
+      .update({
+        archived_at: null,
+        archive_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (error) {
+      console.error('unarchiveEnquiry failed:', error);
+      toast.error('Could not unarchive: ' + error.message);
+      return;
+    }
+    toast.success('Restored to Closed');
     notifyPipelineChanged();
   }
 
@@ -1453,6 +1542,15 @@ export default function PipelinePage() {
             </div>
           </div>
           <div className="list-toolbar-right" style={{ gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              onClick={() => setArchiveBrowserOpen(true)}
+              title="Browse archived deals — restore them back to the Closed column if needed"
+            >
+              🗄 View archive
+            </button>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
               {filtered.length} of {deals.length}
             </span>
@@ -1475,6 +1573,7 @@ export default function PipelinePage() {
           onOpen={(d) => openDealInMode(d, 'view')}
           onQuote={startQuote}
           onSend={startSend}
+          onArchive={archiveEnquiries}
           flashStage={flashStage}
           highlightedDealId={highlightedDealId}
         />
@@ -1917,6 +2016,14 @@ export default function PipelinePage() {
           </ActionModal>
         );
       })()}
+      {archiveBrowserOpen && (
+        <ArchiveBrowserModal
+          onClose={() => setArchiveBrowserOpen(false)}
+          onUnarchive={async (id) => {
+            await unarchiveEnquiry(id);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1924,7 +2031,7 @@ export default function PipelinePage() {
 // ─── Kanban ─────────────────────────────────────────────────────────────
 
 function KanbanView({
-  byStage, columnSort, onColumnSortChange, onOpen, onQuote, onSend, flashStage, highlightedDealId,
+  byStage, columnSort, onColumnSortChange, onOpen, onQuote, onSend, onArchive, flashStage, highlightedDealId,
 }: {
   byStage: Record<string, Deal[]>;
   columnSort: Record<string, string>;
@@ -1932,12 +2039,21 @@ function KanbanView({
   onOpen: (d: Deal) => void;
   onQuote: (d: Deal) => void;
   onSend: (d: Deal) => void;
+  /** Bulk archive — only used by the Closed column's header action. */
+  onArchive: (enquiryIds: string[], reason: string) => Promise<void>;
   flashStage?: string | null;
   highlightedDealId?: string | null;
 }) {
+  const [archiveOpen, setArchiveOpen] = useState(false);
   return (
     <div className="ops-board">
-      {STAGES.map(col => (
+      {STAGES.map(col => {
+        const isClosedCol = col.key === 'closed';
+        const closedDeals = isClosedCol ? byStage[col.key] : [];
+        // Only enquiry-rooted deals can be archived — standalone
+        // proposals don't have an enquiry row to flip archived_at on.
+        const archivable = closedDeals.filter(d => d.type === 'enquiry' && !!d.enquiry?.id);
+        return (
         <div
           key={col.key}
           className={`ops-board-column ${flashStage === col.key ? 'ops-board-column--flash' : ''}`}
@@ -1952,11 +2068,17 @@ function KanbanView({
             </div>
             <div className="ops-board-column-header-bottom">
               <span className="ops-board-column-sub">{col.description}</span>
-              {/* Per-column sort dropdown removed — the smart per-
-                  column defaults (FIFO triage for Arrived, upcoming
-                  check-in first for Quoting/Responded/Booked, most-
-                  recent for Closed) are what the team actually wants,
-                  and an unused control just added noise to the header. */}
+              {isClosedCol && archivable.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+                  onClick={() => setArchiveOpen(true)}
+                  title="Move closed deals out of view — they stay in the DB for audit"
+                >
+                  🗄 Archive…
+                </button>
+              )}
             </div>
           </div>
           <KanbanColumnBody
@@ -1969,8 +2091,344 @@ function KanbanView({
             highlightedDealId={highlightedDealId}
           />
         </div>
-      ))}
+        );
+      })}
+      {archiveOpen && (
+        <BulkArchiveModal
+          candidates={(byStage['closed'] || []).filter(d => d.type === 'enquiry' && !!d.enquiry?.id)}
+          onCancel={() => setArchiveOpen(false)}
+          onConfirm={async (ids, reason) => {
+            await onArchive(ids, reason);
+            setArchiveOpen(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Bulk-archive picker — list every closed enquiry with a checkbox,
+ *  capture a single shared reason, and confirm. Standalone-proposal
+ *  deals aren't shown (no enquiry row to flip the archive flags on).
+ *  Reason is required; the Confirm button stays disabled until both at
+ *  least one deal is selected AND the reason has content. */
+function BulkArchiveModal({
+  candidates, onCancel, onConfirm,
+}: {
+  candidates: Deal[];
+  onCancel: () => void;
+  onConfirm: (ids: string[], reason: string) => void | Promise<void>;
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const allIds = candidates.map(d => d.enquiry!.id);
+  const allPicked = allIds.length > 0 && allIds.every(id => picked.has(id));
+  const canConfirm = picked.size > 0 && reason.trim().length > 0 && !submitting;
+
+  function toggle(id: string) {
+    setPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setPicked(allPicked ? new Set() : new Set(allIds));
+  }
+  async function confirm() {
+    if (!canConfirm) return;
+    setSubmitting(true);
+    try {
+      await onConfirm([...picked], reason.trim());
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ActionModal
+      title="Archive closed deals"
+      subtitle="Hide closed deals from the kanban while keeping the records for audit."
+      width={620}
+      onClose={onCancel}
+      primaryAction={
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!canConfirm}
+          onClick={confirm}
+          title={
+            picked.size === 0
+              ? 'Pick at least one deal to archive'
+              : !reason.trim()
+                ? 'Add an archive reason to enable'
+                : undefined
+          }
+        >
+          {submitting
+            ? 'Archiving…'
+            : picked.size === 0
+              ? 'Archive'
+              : picked.size === 1
+                ? 'Archive 1 deal'
+                : `Archive ${picked.size} deals`}
+        </button>
+      }
+    >
+      {candidates.length === 0 ? (
+        <div style={{ padding: 'var(--s-5) 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          Nothing to archive — the Closed column is empty.
+        </div>
+      ) : (
+        <>
+          <div className="form-group" style={{ marginBottom: 'var(--s-4)' }}>
+            <label className="form-label">Reason for archive *</label>
+            <textarea
+              className="form-input"
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Q1 housekeeping · Pre-launch board cleanup · Beyond the 90-day window"
+              maxLength={500}
+              autoFocus
+            />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Stored on every selected deal so the "why" survives.
+            </div>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 'var(--s-2)',
+          }}>
+            <span style={{
+              fontSize: '0.6875rem',
+              fontWeight: 700,
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}>
+              Pick deals to archive ({picked.size}/{candidates.length})
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+              onClick={toggleAll}
+            >
+              {allPicked ? 'Clear all' : 'Select all'}
+            </button>
+          </div>
+
+          <div style={{
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            maxHeight: 320,
+            overflowY: 'auto',
+          }}>
+            {candidates.map(d => {
+              const id = d.enquiry!.id;
+              const checked = picked.has(id);
+              const headline = (d.enquiry?.subject?.trim())
+                || titleCase(d.client_name)
+                || d.enquiry?.ref_code
+                || 'Untitled';
+              const sub = (d.check_in && d.check_out)
+                ? `${fmtDate(d.check_in)} → ${fmtDate(d.check_out)}`
+                : null;
+              return (
+                <label
+                  key={id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 'var(--s-3)',
+                    padding: '10px 12px',
+                    borderBottom: '1px solid var(--border-light)',
+                    cursor: 'pointer',
+                    background: checked ? 'var(--color-primary-bg)' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(id)}
+                    style={{ marginTop: 3, flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>{headline}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {sub}
+                      {d.close_reason && (
+                        <>
+                          {sub ? ' · ' : ''}
+                          <span style={{ fontStyle: 'italic' }}>Closed: {d.close_reason}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </ActionModal>
+  );
+}
+
+/** Read-only archive browser. Owns its own fetch (archived rows don't
+ *  sit in the main `deals` array so they can't be searched via the
+ *  toolbar filters anyway) and offers a per-row Unarchive action that
+ *  drops the row back into the Closed column. Closes the modal on the
+ *  first restore so the user can see the deal reappear on the kanban. */
+function ArchiveBrowserModal({
+  onClose, onUnarchive,
+}: {
+  onClose: () => void;
+  onUnarchive: (id: string) => Promise<void>;
+}) {
+  const { supabase } = useAuth();
+  type ArchivedRow = {
+    id: string;
+    subject: string | null;
+    client_name: string;
+    ref_code: string | null;
+    check_in: string | null;
+    check_out: string | null;
+    close_reason: string | null;
+    archive_reason: string | null;
+    archived_at: string | null;
+  };
+  const [rows, setRows] = useState<ArchivedRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('enquiries')
+      .select('id, subject, client_name, ref_code, check_in, check_out, close_reason, archive_reason, archived_at')
+      .eq('partner_id', CT_RENTALS_PARTNER_ID)
+      .not('archived_at', 'is', null)
+      .order('archived_at', { ascending: false })
+      .limit(500);
+    if (error) {
+      console.error('archive browser load failed:', error);
+      setRows([]);
+    } else {
+      setRows((data || []) as ArchivedRow[]);
+    }
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function handleUnarchive(id: string) {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await onUnarchive(id);
+      // Optimistic update — drop the row locally so the modal stays
+      // useful for additional restores without a second fetch.
+      setRows(prev => prev.filter(r => r.id !== id));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <ActionModal
+      title="Archive"
+      subtitle="Closed deals you've moved out of the kanban. Restore one to drop it back into Closed."
+      width={680}
+      onClose={onClose}
+      hideFooter
+    >
+      {loading ? (
+        <div style={{ padding: 'var(--s-6) 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          Loading…
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 'var(--s-6) 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          Nothing in the archive yet.
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--s-2)',
+          maxHeight: 480,
+          overflowY: 'auto',
+        }}>
+          {rows.map(r => {
+            const headline = (r.subject?.trim())
+              || titleCase(r.client_name)
+              || r.ref_code
+              || 'Untitled';
+            const dateBit = (r.check_in && r.check_out)
+              ? `${fmtDate(r.check_in)} → ${fmtDate(r.check_out)}`
+              : null;
+            return (
+              <div
+                key={r.id}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 'var(--s-3)',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
+                    {headline}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                    {dateBit}
+                    {r.ref_code && (
+                      <>
+                        {dateBit ? ' · ' : ''}
+                        <span style={{ fontFamily: 'monospace' }}>{r.ref_code}</span>
+                      </>
+                    )}
+                  </div>
+                  {r.close_reason && (
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>
+                      <strong>Closed:</strong> {r.close_reason}
+                    </div>
+                  )}
+                  {r.archive_reason && (
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                      <strong>Archived:</strong> {r.archive_reason}
+                      {r.archived_at && (
+                        <span style={{ color: 'var(--text-light)', marginLeft: 6 }}>
+                          {fmtDate(r.archived_at.slice(0, 10))}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', flexShrink: 0 }}
+                  disabled={busyId === r.id}
+                  onClick={() => handleUnarchive(r.id)}
+                  title="Restore this deal to the Closed column"
+                >
+                  {busyId === r.id ? 'Restoring…' : '↺ Unarchive'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </ActionModal>
   );
 }
 
@@ -2536,6 +2994,32 @@ function DealCardImpl({
       </div>
       )}
 
+      {/* Manual close reason — captured via the Set stage prompt and
+          surfaced on the closed card so the "why" is obvious at a
+          glance. Only renders in the Closed column and only when a
+          reason exists (auto-expired rows leave it null). */}
+      {isClosedCol && deal.close_reason && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: '6px 8px',
+            background: '#FEF3C7',
+            border: '1px solid #FDE68A',
+            borderRadius: 4,
+            fontSize: '0.6875rem',
+            color: '#78350F',
+            lineHeight: 1.4,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+          title={deal.close_reason}
+        >
+          <span style={{ fontWeight: 700 }}>Closed: </span>
+          {deal.close_reason}
+        </div>
+      )}
     </div>
   );
 }
@@ -2747,8 +3231,10 @@ function ProposalRowInline({
   const isActiveSent = p.status === 'sent' || p.status === 'viewed' || p.status === 'interested';
   const isTerminal = INACTIVE_PROPOSAL_STATUSES.has(p.status);
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
+    <>
     <div
       className="editor-list-row"
       style={{
@@ -2810,6 +3296,20 @@ function ProposalRowInline({
             title="Edit pricing — opens the full calculator with daily rate + per-night totals"
           >
             ✎ Edit pricing
+          </button>
+        )}
+        {/* Read-only audit trail of every Edit pricing save. Hidden when
+            the proposal has no pricing snapshot at all (can't show
+            history that doesn't exist). */}
+        {p.pricing_proposal_id && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+            onClick={stop(() => setHistoryOpen(true))}
+            title="View pricing history — every Edit pricing save against this proposal"
+          >
+            🕓 History
           </button>
         )}
         {isDraft && onPublish && (
@@ -2883,6 +3383,16 @@ function ProposalRowInline({
         )}
       </div>
     </div>
+    {historyOpen && (
+      <PricingHistoryModal
+        proposalId={p.id}
+        proposalRefCode={p.ref_code}
+        currentPricingProposalId={p.pricing_proposal_id}
+        propertyName={p.property_name}
+        onClose={() => setHistoryOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -2904,7 +3414,7 @@ function DealDetailModal({
   onQuote: () => void;
   onUpdateStatus: (enquiryId: string, status: string) => void;
   onUpdateProposalOutcome: (proposalId: string, outcome: 'booked' | 'cancelled' | 'draft') => void;
-  onSetStage: (enquiryId: string, dealStatus: string) => void;
+  onSetStage: (enquiryId: string, dealStatus: string, closeReason?: string) => void;
   onOpenProposal: (p: ProposalRow) => void;
   /** Open SendProposalDialog for a single proposal (drafting/ready). */
   onSendProposal: (p: ProposalRow) => void;
@@ -3408,6 +3918,10 @@ function DealDetailModal({
   // re-enables. Title attrs explain the why on hover.
   const isEditing = mode === 'edit';
   const editingDisabledTitle = 'Save or cancel your edits to use this action';
+  // Close-reason prompt — opened by the Set stage → Closed flow. Holds
+  // the enquiry id so the prompt can call onSetStage with the reason
+  // after the user confirms. Null = no prompt shown.
+  const [closeReasonPrompt, setCloseReasonPrompt] = useState<{ enquiryId: string } | null>(null);
   const footerActions = (
     <>
       {/* Add Proposal is hidden on terminal-state deals (Booked /
@@ -3440,17 +3954,21 @@ function DealDetailModal({
           className="list-filter-select"
           value=""
           disabled={isEditing}
-          onChange={(ev) => { if (ev.target.value) onSetStage(e.id, ev.target.value); }}
+          onChange={(ev) => {
+            if (!ev.target.value) return;
+            // Closing is a deliberate, semi-destructive action — bounce
+            // through a reason prompt before flipping the stage so the
+            // closed card has a "why" attached to it.
+            if (ev.target.value === 'lost') {
+              setCloseReasonPrompt({ enquiryId: e.id });
+              return;
+            }
+            onSetStage(e.id, ev.target.value);
+          }}
           title={isEditing ? editingDisabledTitle : 'Move this deal to a different column'}
         >
           <option value="" disabled>Set stage…</option>
-          {/* "Quoting" was here but the natural way to move a deal
-              into Quoting is to create a proposal (which auto-flips
-              the deal_status). A manual stage flip with no proposal
-              left empty Quoting cards on the board — confusing. */}
           <option value="lost">Closed</option>
-          {/* "Booked" isn't here — Mark Booked is the dedicated path
-              because it also writes a bookings row. */}
         </select>
       )}
       {/* Mark Booked / Mark Lost dropped from the footer — both are
@@ -3479,6 +3997,7 @@ function DealDetailModal({
     : <>Click <strong>Edit</strong> to change client details.</>;
 
   return (
+    <>
     <DetailModal
       title={title}
       subtitle={subtitle}
@@ -3553,10 +4072,6 @@ function DealDetailModal({
                     <label className="form-label">Phone</label>
                     <input className="form-input" value={form.client_phone} disabled readOnly />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Nationality</label>
-                    <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} disabled={fieldsDisabled} />
-                  </div>
                 </div>
               </DetailModalSection>
               <DetailModalSection
@@ -3582,6 +4097,10 @@ function DealDetailModal({
                     <div className="form-group">
                       <label className="form-label">Guest phone</label>
                       <input className="form-input" value={form.guest_phone} onChange={ev => update('guest_phone', ev.target.value)} placeholder="+27 …" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Nationality</label>
+                      <input className="form-input" value={form.nationality} onChange={ev => update('nationality', ev.target.value)} placeholder="e.g. UK" />
                     </div>
                   </div>
                   {fieldsDisabled && !form.guest_name && (
@@ -3936,5 +4455,66 @@ function DealDetailModal({
         </ActionModal>
       )}
     </DetailModal>
+    {closeReasonPrompt && (
+      <CloseReasonModal
+        onCancel={() => setCloseReasonPrompt(null)}
+        onConfirm={(reason) => {
+          const { enquiryId } = closeReasonPrompt;
+          setCloseReasonPrompt(null);
+          onSetStage(enquiryId, 'lost', reason);
+        }}
+      />
+    )}
+    </>
+  );
+}
+
+/** Reason-required confirmation modal for the Set stage → Closed flow.
+ *  Forces the user to type at least a one-liner before closing — the
+ *  closed card surfaces this text so the "why" is obvious without
+ *  drilling into the deal modal. */
+function CloseReasonModal({
+  onCancel, onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const trimmed = reason.trim();
+  const canConfirm = trimmed.length > 0;
+  return (
+    <ActionModal
+      title="Close this deal?"
+      subtitle="Add a short reason so the closed card explains itself later."
+      width={520}
+      onClose={onCancel}
+      primaryAction={
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={!canConfirm}
+          onClick={() => onConfirm(trimmed)}
+          title={canConfirm ? 'Move this deal to the Closed column' : 'Type a reason to enable'}
+        >
+          Confirm close
+        </button>
+      }
+    >
+      <div className="form-group">
+        <label className="form-label">Reason for closing *</label>
+        <textarea
+          className="form-input"
+          rows={4}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Guest went elsewhere · Dates no longer needed · Booked direct with owner"
+          autoFocus
+          maxLength={500}
+        />
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+          Appears on the closed card. Up to 500 characters.
+        </div>
+      </div>
+    </ActionModal>
   );
 }

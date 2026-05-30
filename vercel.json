@@ -6,6 +6,7 @@
     { "source": "/proposal.html", "destination": "/proposal.html" },
     { "source": "/brochure.html", "destination": "/brochure.html" },
     { "source": "/brochures/:slug", "destination": "/api/brochure?slug=:slug" },
+    { "source": "/agent-brochures/:slug", "destination": "/api/brochure?slug=:slug&brand=agent-anon" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

@@ -3,23 +3,28 @@ import react from '@vitejs/plugin-react'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Mirrors the production Vercel rewrite ({ "source": "/brochures/:slug",
-// "destination": "/api/brochure?slug=:slug" }) so /brochures/<slug> works
-// against the local dev server too. Without this, Vite's SPA fallback
-// serves index.html for /brochures/anything, which dumps the user on the
-// React app's wildcard redirect.
+// Mirrors the production Vercel rewrites so /brochures/<slug> and
+// /agent-brochures/<slug> work against the local dev server too. Without
+// these, Vite's SPA fallback serves index.html for the path, which dumps
+// the user on the React app's wildcard redirect (→ /dashboard).
+//
+//   /brochures/CTR0011        → /brochure.html?slug=CTR0011
+//   /agent-brochures/CTR0011  → /brochure.html?slug=CTR0011&brand=agent-anon
+//
+// The api/brochure.js function (Vercel) only handles OG-meta injection for
+// social previews; in dev we serve brochure.html directly. brochure.html
+// reads the slug + brand from the URL on its own.
 const brochureRewrite = () => ({
   name: 'brochures-rewrite',
   configureServer(server) {
     server.middlewares.use((req, _res, next) => {
       const url = req.url || '';
-      const m = url.match(/^\/brochures\/([^/?#]+)(\?.*)?$/);
-      if (m) {
-        // The api/brochure.js function is only deployed on Vercel; locally we
-        // skip OG-tag injection and serve brochure.html directly. The page
-        // reads the slug from the pathname so the original URL is preserved
-        // in the browser bar.
-        req.url = `/brochure.html?slug=${encodeURIComponent(m[1])}${m[2] ? '&' + m[2].slice(1) : ''}`;
+      const branded = url.match(/^\/brochures\/([^/?#]+)(\?.*)?$/);
+      const anon    = url.match(/^\/agent-brochures\/([^/?#]+)(\?.*)?$/);
+      if (branded) {
+        req.url = `/brochure.html?slug=${encodeURIComponent(branded[1])}${branded[2] ? '&' + branded[2].slice(1) : ''}`;
+      } else if (anon) {
+        req.url = `/brochure.html?slug=${encodeURIComponent(anon[1])}&brand=agent-anon${anon[2] ? '&' + anon[2].slice(1) : ''}`;
       }
       next();
     });

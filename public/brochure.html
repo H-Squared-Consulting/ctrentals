@@ -24,16 +24,24 @@
   var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1udnhpdGV4Y2Rnb2h6Z3R2d3pnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MTM4NTMsImV4cCI6MjA4OTQ4OTg1M30.h2Y1nIxV1xkvCyeSOknAiu-SrjPwijsueaJel10JoA4';
 
   // ── Brand mode ──
-  // 'direct' renders the branded variant (logo, company contact, book-direct
-  // CTA). 'agent' is the neutral variant served on the agent-share domain —
-  // identical content minus the branding, with an "Enquire through your
-  // agent" contact block. Until the agent domain is registered we pick the
-  // mode from a query param so it's testable locally.
-  // Once the neutral domain is live, swap the hostname check below for the
-  // real domain comparison.
+  // 'direct'      — branded variant (logo, company contact, book-direct CTA).
+  // 'agent'       — neutral variant served on the agent-share domain;
+  //                 identical content minus the branding, with an "Enquire
+  //                 through your agent" contact block. Name + tagline shown.
+  // 'agent-anon'  — in-portal discovery preview; same neutral layout but the
+  //                 property name is replaced by its CTR code (slug) and the
+  //                 tagline is suppressed so nothing identifying the house
+  //                 leaks to an agent who hasn't yet been quoted on it. Only
+  //                 activated via ?brand=agent-anon — never by hostname.
   var BRAND_MODE = (function() {
     var qp = new URLSearchParams(window.location.search).get('brand');
-    if (qp === 'agent' || qp === 'direct') return qp;
+    if (qp === 'agent' || qp === 'direct' || qp === 'agent-anon') return qp;
+    // /agent-brochures/:slug is the in-portal preview path. The Vercel
+    // / Vite rewrite swaps it server-side to brochure.html with the
+    // brand query param, but the browser URL stays on the original
+    // path — so the query check above misses. Fall back to a pathname
+    // check so the anon mode still activates from a clean URL.
+    if (/^\/agent-brochures\//.test(window.location.pathname || '')) return 'agent-anon';
     var host = (window.location.hostname || '').toLowerCase();
     // Hostnames that should serve the un-branded "agent" variant. The
     // branded domain (southernescapes.co.za) is treated as 'direct' by
@@ -45,6 +53,13 @@
     }
     return 'direct';
   })();
+  // Anon mode is the only one where the visible house identifier is the
+  // CTR code rather than the property name. Pulled into a helper so
+  // every render site (hero, title, gallery alt) uses the same value.
+  function displayName(p) {
+    if (BRAND_MODE === 'agent-anon') return String(p && p.slug || '').toUpperCase();
+    return (p && p.property_name) || '';
+  }
 
   // ── Helpers ──
   function esc(str) {
@@ -624,7 +639,7 @@
     var heroImg = p.hero_image_url || (gallery.length ? gallery[0] : '');
     html += '<section class="br-hero">';
     if (heroImg) {
-      html += '<img class="br-hero-img" src="' + esc(sizedImgUrl(heroImg, 1920)) + '" alt="' + esc(p.property_name) + '">';
+      html += '<img class="br-hero-img" src="' + esc(sizedImgUrl(heroImg, 1920)) + '" alt="' + esc(displayName(p)) + '">';
     }
     html += '<div class="br-hero-overlay"></div>';
     html += '<div class="br-hero-content">';
@@ -639,8 +654,11 @@
         '<span class="br-hero-brand-sans">Escapes</span>' +
         '</div>';
     }
-    html += '<h1 class="br-hero-title">' + esc(p.property_name) + '</h1>';
-    if (p.tagline) {
+    html += '<h1 class="br-hero-title">' + esc(displayName(p)) + '</h1>';
+    // Tagline suppressed in anon mode — copy often names the suburb or
+    // the house ("Bordeaux House overlooking…") and we don't want any
+    // route to the property identity outside the CTR code.
+    if (p.tagline && BRAND_MODE !== 'agent-anon') {
       html += '<div class="br-hero-tagline">' + esc(p.tagline) + '</div>';
     }
     html += '</div>';
@@ -701,7 +719,10 @@
     }
 
     // Section 3: ABOUT
-    if (!cfg.hide('about') && p.description) {
+    // Suppressed in anon mode — owner-written description copy nearly
+    // always names the house ("Welcome to 12 Bordeaux…"). Photos + stats
+    // + amenities give the agent enough to decide whether to enquire.
+    if (!cfg.hide('about') && p.description && BRAND_MODE !== 'agent-anon') {
       var descParagraphs = p.description.split(/\n\n|\n/).filter(function(s) { return s.trim(); });
       html += '<section class="br-about reveal">';
       html += '<h2 class="br-about-heading">About This Property</h2>';
@@ -795,7 +816,7 @@
           queue.push(g.photos[px]);
         }
       }
-      window._brGalleryQueue = { items: queue, propertyName: p.property_name };
+      window._brGalleryQueue = { items: queue, propertyName: displayName(p) };
       html += '<div class="br-gallery-grid" id="br-gallery-grid"></div>';
       if (galleryTruncated && isPreviewMode) {
         html += '<div style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-light);font-style:italic">Preview shows first ' + cap + ' photos.</div>';
@@ -825,11 +846,16 @@
     // the branded "book direct" CTA on the company-domain variant. This keeps
     // the agent flow honest: the client sees nothing that would let them go
     // around the agent.
+    // 'agent-anon' is the in-portal preview — the agent is already in their
+    // own portal, no contact CTA needed (and a Southern Escapes one would
+    // leak the brand). Render nothing for that mode.
     if (BRAND_MODE === 'agent') {
       html += '<section class="br-agent-contact reveal">';
       html += '<h2 class="br-agent-contact-heading">Interested in this property?</h2>';
       html += '<div class="br-agent-contact-body">Speak to your agent for availability, pricing and booking.</div>';
       html += '</section>';
+    } else if (BRAND_MODE === 'agent-anon') {
+      // intentionally blank
     } else {
       // Branded "Book Direct" panel — only appears on the company domain.
       // The contact email is the admin who shared the brochure, resolved
@@ -848,9 +874,10 @@
     }
 
     // Section 7: SHARE
-    // Hide the share section in agent mode so the recipient doesn't get a
-    // re-share button — the agent is the one doing the sharing.
-    if (!cfg.hide('share') && BRAND_MODE !== 'agent') {
+    // Hide the share section in agent / agent-anon mode so the recipient
+    // doesn't get a re-share button — the agent is the one doing the
+    // sharing in 'agent', and 'agent-anon' is a private in-portal preview.
+    if (!cfg.hide('share') && BRAND_MODE !== 'agent' && BRAND_MODE !== 'agent-anon') {
       html += '<section class="br-share reveal">';
       html += '<h2 class="br-share-heading">Share This Property</h2>';
       html += '<button class="br-btn-primary" id="btn-copy-link">Copy Link</button>';
@@ -885,7 +912,11 @@
     // even though we rewrote to /brochure.html?slug=…. Fall back to parsing
     // the pathname directly.
     if (!id && !slug) {
-      var pathMatch = window.location.pathname.match(/^\/brochures\/([^/?#]+)/);
+      // Match both /brochures/:slug (branded / agent-share) and
+      // /agent-brochures/:slug (in-portal anon preview). The browser
+      // URL keeps its original form after the server rewrite, so the
+      // pathname regex is what drives slug resolution in practice.
+      var pathMatch = window.location.pathname.match(/^\/(?:agent-)?brochures\/([^/?#]+)/);
       if (pathMatch) slug = decodeURIComponent(pathMatch[1]);
     }
 
@@ -941,8 +972,9 @@
       var p = data[0];
       window._brProperty = p; // referenced by the preview-mode postMessage handler below
 
-      // Set page title
-      document.title = (p.property_name || 'Property Brochure');
+      // Set page title. In anon mode the only allowed visible identifier
+      // is the CTR code — same rule as the OG tags emitted by api/brochure.
+      document.title = displayName(p) || 'Property Brochure';
 
       // Render brochure. Wrap in try/catch so any rendering exception lands
       // in a visible error block rather than leaving the canvas blank.

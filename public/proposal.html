@@ -514,29 +514,27 @@
 
     var html = '';
 
+    // Display identifier — use CTR code (slug uppercased) as the
+    // headline everywhere instead of the property name + address.
+    var displayCode = String(pr.slug || '').toUpperCase() || pr.property_name;
+
     // Section 1 - HERO
     html += '<section class="pos-hero">';
     if (pr.hero_image_url) {
-      html += '<img class="pos-hero-img" src="' + esc(sizedImgUrl(pr.hero_image_url, 1920)) + '" alt="' + esc(pr.property_name) + '">';
+      html += '<img class="pos-hero-img" src="' + esc(sizedImgUrl(pr.hero_image_url, 1920)) + '" alt="' + esc(displayCode) + '">';
     }
     html += '<div class="pos-hero-overlay"></div>';
     html += '<div class="pos-hero-content">';
     if (!isAgent) html += '<div class="pos-hero-brand">Southern Escapes</div>';
-    html += '<h1 class="pos-hero-title">' + esc(pr.property_name) + '</h1>';
+    html += '<h1 class="pos-hero-title">' + esc(displayCode) + '</h1>';
     html += '</div>';
     html += '</section>';
 
     // Section 2 - PERSONAL GREETING
-    // First name only for warmth — full name on file is for ops, not the salutation.
-    var firstName = (p.guest_name || '').trim().split(/\s+/)[0] || p.guest_name || '';
     html += '<section class="pos-greeting reveal">';
     html += '<div class="pos-greeting-meta">Prepared ' + esc(fmtDate(p.created_at)) + ' &nbsp;|&nbsp; Ref: ' + esc(p.ref_code) + '</div>';
     html += '<div class="pos-greeting-rule"></div>';
-    html += '<div class="pos-greeting-dear">Dear ' + esc(firstName) + ',</div>';
-    html += '<p class="pos-greeting-body">' + (isAgent
-      ? 'Please find a proposal for ' + esc(pr.property_name) + ' below.'
-      : 'Please find your proposal for ' + esc(pr.property_name) + ' below.'
-    ) + '</p>';
+    html += '<p class="pos-greeting-body">Please find a proposal for ' + esc(displayCode) + ' below.</p>';
     if (p.notes) {
       html += '<div class="pos-greeting-notes">' + esc(p.notes) + '</div>';
     }
@@ -544,7 +542,7 @@
 
     // Section 3 - PROPERTY OVERVIEW
     html += '<section class="pos-overview reveal">';
-    html += '<h2 class="pos-overview-name">' + esc(pr.property_name) + '</h2>';
+    html += '<h2 class="pos-overview-name">' + esc(displayCode) + '</h2>';
     if (pr.tagline) {
       html += '<div class="pos-overview-tagline">' + esc(pr.tagline) + '</div>';
     }
@@ -681,7 +679,7 @@
     } else {
       var alreadyInterested = (p.status === 'interested');
       html += '<section class="pos-cta reveal">';
-      html += '<h2 class="pos-cta-heading">Interested in ' + esc(pr.property_name) + '?</h2>';
+      html += '<h2 class="pos-cta-heading">Interested in ' + esc(displayCode) + '?</h2>';
       html += '<div class="pos-cta-buttons">';
       html += '<button id="btn-interested" class="pos-btn-interested"' + (alreadyInterested ? ' disabled' : '') + '>' +
         (alreadyInterested ? 'Interest Registered' : 'I\'m Interested') + '</button>';
@@ -795,6 +793,14 @@
   (function init() {
     var params = new URLSearchParams(window.location.search);
     var ref = params.get('ref');
+    // Optional snapshot id — when present, render the proposal page
+    // against a specific historical pricing snapshot instead of the
+    // currently-linked one. Used by the agent portal's version-toggle
+    // so an agent can view what the proposal looked like at v1 vs v3.
+    // Validated server-side via the proposal_id back-ref before we
+    // swap it in; if the snapshot doesn't belong to this proposal we
+    // silently fall back to the current pricing.
+    var snapshotId = params.get('snapshot');
 
     if (!ref) {
       showError('missing_ref');
@@ -820,7 +826,27 @@
           return;
         }
 
+        // Optional: swap in a historical pricing snapshot when one was
+        // requested via ?snapshot=. Goes through a SECURITY DEFINER RPC
+        // because RLS on pricing_proposals blocks anon direct reads —
+        // the RPC enforces the proposal_id ↔ ref_code match internally
+        // so an arbitrary snapshot id can't be smuggled into someone
+        // else's proposal page.
+        var pricingSwap = Promise.resolve();
+        if (snapshotId) {
+          pricingSwap = sbGet(
+            'rpc/get_proposal_snapshot'
+              + '?p_ref_code=' + encodedRef
+              + '&p_snapshot_id=' + encodeURIComponent(snapshotId)
+          ).then(function(snaps) {
+            if (snaps && snaps.length > 0) {
+              proposal.pricing_proposals = snaps[0];
+            }
+          }).catch(function() { /* silent fallback to current pricing */ });
+        }
+
         // Step 2: Fetch property
+        pricingSwap.then(function() {
         sbGet('partner_properties?id=eq.' + encodeURIComponent(proposal.property_id) + '&select=*&limit=1')
           .then(function(properties) {
             if (!properties || properties.length === 0) {
@@ -829,12 +855,16 @@
             }
             var property = properties[0];
 
-            // Step 3: Mark as viewed
-            sbPatch('proposals?ref_code=eq.' + encodedRef, {
-              viewed_at: new Date().toISOString()
-            }).catch(function() {
-              // Non-blocking — continue rendering
-            });
+            // Step 3: Mark as viewed (only when looking at the live
+            // version — viewing a historical snapshot shouldn't bump
+            // the viewed_at timestamp because that drives ops alerts).
+            if (!snapshotId) {
+              sbPatch('proposals?ref_code=eq.' + encodedRef, {
+                viewed_at: new Date().toISOString()
+              }).catch(function() {
+                // Non-blocking — continue rendering
+              });
+            }
 
             // Step 4: Render
             render(proposal, property);
@@ -842,6 +872,7 @@
           .catch(function() {
             showError('error');
           });
+        });
       })
       .catch(function() {
         showError('error');

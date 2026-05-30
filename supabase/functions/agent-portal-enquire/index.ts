@@ -50,10 +50,17 @@ interface EnquireBody {
   guestName?: unknown;
   guestEmail?: unknown;
   guestPhone?: unknown;
+  /** Guest nationality — required on the agent enquiry form so the
+   *  team has it from the off. Stored on enquiries.nationality. */
+  guestNationality?: unknown;
   checkIn?: unknown;
   checkOut?: unknown;
   guestsAdults?: unknown;
   guestsChildren?: unknown;
+  /** Price-tier picks the agent made on the search form. Stored as a
+   *  text[] on enquiries.budget_tiers so the kanban deal modal renders
+   *  the same band chips the admin uses for direct enquiries. */
+  budgetTiers?: unknown;
   notes?: unknown;
 }
 
@@ -144,13 +151,22 @@ Deno.serve(async (req) => {
   const propertyIds    = normalisePropertyIds(body);
   const subject        = asString(body.subject, 120);
   const agentReference = asString(body.agentReference, 120);
-  const guestName   = asString(body.guestName, 200);
-  const guestEmail  = asString(body.guestEmail, 200).toLowerCase();
-  const guestPhone  = asString(body.guestPhone, 60);
-  const checkIn     = asString(body.checkIn, 20);
+  const guestName        = asString(body.guestName, 200);
+  const guestEmail       = asString(body.guestEmail, 200).toLowerCase();
+  const guestPhone       = asString(body.guestPhone, 60);
+  const guestNationality = asString(body.guestNationality, 60);
+  const checkIn          = asString(body.checkIn, 20);
   const checkOut    = asString(body.checkOut, 20);
   const adults      = asInt(body.guestsAdults);
   const children    = asInt(body.guestsChildren);
+  // budget_tiers is a text[] of canonical tier keys. Anything not in
+  // the allowed set gets dropped silently — the kanban renderer
+  // matches against the same set, so an invalid value would just
+  // render nothing anyway.
+  const VALID_TIERS = new Set(['very_low', 'low', 'medium', 'high', 'very_high']);
+  const budgetTiers = Array.isArray(body.budgetTiers)
+    ? body.budgetTiers.filter((t): t is string => typeof t === 'string' && VALID_TIERS.has(t))
+    : [];
   const notes       = asString(body.notes, 2000);
 
   if (!token || token.length < 16) {
@@ -223,17 +239,37 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 3. Compute total guests if both adults+children given.
+  // 3. Duplicate-subject guard. The client blocks this at form time
+  //    but a forged request would slip through, so we re-check here.
+  //    Case-insensitive: "Test" and "test" collide. Scoped to the
+  //    agent so two different agencies can both use "Easter trip".
+  {
+    const { data: dupes, error: dupeErr } = await admin
+      .from('enquiries')
+      .select('id')
+      .eq('agent_id', agent.id)
+      .ilike('agent_reference', agentReference)
+      .limit(1);
+    if (dupeErr) {
+      console.error('duplicate-subject lookup failed:', dupeErr);
+      return json(500, { ok: false, reason: 'lookup-failed' });
+    }
+    if ((dupes || []).length > 0) {
+      return json(409, { ok: false, reason: 'duplicate-subject' });
+    }
+  }
+
+  // 4. Compute total guests if both adults+children given.
   const guestsTotal = (adults || 0) + (children || 0) || null;
 
-  // 4. Mint a ref_code in the AHH/N scheme. For agent enquiries the
+  // 5. Mint a ref_code in the AHH/N scheme. For agent enquiries the
   //    subject doubles as the ref_code (matches how the manual
   //    /enquiry/new flow handles it). If the caller supplied a
   //    subject we ignore it — the AHH/N code is what the kanban
   //    card shows by design.
   const refCode = await nextAgentEnquiryRefCode(admin, agent.id, agent.ref_code);
 
-  // 5. Insert the enquiry. Mirrors the manual agent-enquiry insert in
+  // 6. Insert the enquiry. Mirrors the manual agent-enquiry insert in
   //    src/pages/EnquiryForm.tsx (Save / close path): client_* is the
   //    agent (the recipient Hayley actually communicates with), guest_*
   //    is the optionally disclosed guest, and requested_property_ids
@@ -257,12 +293,14 @@ Deno.serve(async (req) => {
     guest_name: guestName || null,
     guest_email: guestEmail || null,
     guest_phone: guestPhone || null,
+    nationality: guestNationality || null,
     check_in: checkIn,
     check_out: checkOut,
     bedrooms_needed: null,
     guests_total: guestsTotal,
     guests_adults: adults,
     guests_children: children,
+    budget_tiers: budgetTiers.length > 0 ? budgetTiers : null,
     notes: notes || (subject ? `Agent note: ${subject}` : null),
     // Every agent-portal enquiry is auto-assigned to BOTH team
     // members so either can pick it up. Stored as a comma-separated
