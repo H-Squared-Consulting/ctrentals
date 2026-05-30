@@ -48,9 +48,10 @@ function isAirbnbUrl(input: string): boolean {
   }
 }
 
-/** Strip wrapping whitespace, HTML entities and a trailing "· Airbnb"
- *  suffix that Airbnb sometimes appends to `<title>`. og:title is
- *  cleaner so this only really matters for the fallback path. */
+/** Strip wrapping whitespace, HTML entities and Airbnb-specific
+ *  trailing decorations (" - Airbnb", " · <City>, <Country> - Airbnb",
+ *  etc.) so what we cache reads like a listing headline, not a SEO
+ *  string. */
 function tidy(title: string): string {
   return title
     .replace(/&amp;/g, '&')
@@ -58,23 +59,58 @@ function tidy(title: string): string {
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    // Drop a trailing " - Airbnb" / "· Airbnb".
     .replace(/\s*[·-]\s*Airbnb\s*$/i, '')
+    // Drop a trailing " - <City>, <Country>" (e.g. "- Cape Town,
+    // South Africa") so the cached title is just the listing name.
+    .replace(/\s*-\s*[^-]+,\s*[^-]+$/i, '')
     .trim();
 }
 
+/** Airbnb's og:title is a stock SEO string of the form
+ *    "Home in Cape Town · 4 bedrooms · 4 beds · 4.5 private baths"
+ *  — every listing in a city looks identical. The host-set custom
+ *  name ("Spacious 4 Bed Retreat with Stunning Views") lives in the
+ *  <title> tag and JSON-LD instead. This detector lets the extractor
+ *  skip og:title when it matches the stock pattern. */
+function looksGeneric(s: string): boolean {
+  return /^(Home|Villa|Apartment|Condo|Cottage|Cabin|Loft|Studio|Place to stay)\s+in\s+.+\s+(·|-).+(bedroom|bed|bath)/i.test(s);
+}
+
 function extractTitle(html: string): string | null {
-  // og:title first — that's what Airbnb hand-renders for the listing
-  // headline. Property attribute can be in either order so the regex
-  // is intentionally loose on attribute position.
+  // 1) <title> tag — Airbnb sets it to
+  //    "<custom listing name> - <City>, <Country> - Airbnb"
+  //    so once we tidy off the trailing location + " - Airbnb" we get
+  //    the host's title. This is the most reliable source.
+  const t = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  if (t && t[1]) {
+    const cleaned = tidy(t[1]);
+    if (cleaned && !looksGeneric(cleaned)) return cleaned;
+  }
+  // 2) JSON-LD "name" — Airbnb embeds a structured-data blob with
+  //    name: "<custom listing name>". Lives inside
+  //    <script type="application/ld+json">{...}</script>.
+  const ld = html.match(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/i);
+  if (ld && ld[1]) {
+    try {
+      const data = JSON.parse(ld[1]);
+      const candidates = Array.isArray(data) ? data : [data];
+      for (const node of candidates) {
+        if (node && typeof node === 'object' && typeof (node as any).name === 'string') {
+          const cleaned = tidy((node as any).name);
+          if (cleaned && !looksGeneric(cleaned)) return cleaned;
+        }
+      }
+    } catch { /* ignore parse failure, fall through to og:title */ }
+  }
+  // 3) og:title — last resort. Often the generic SEO string but
+  //    better than nothing if the other two paths missed.
   const og = html.match(
     /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
   ) || html.match(
     /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,
   );
   if (og && og[1]) return tidy(og[1]);
-  // Fallback to <title>.
-  const t = html.match(/<title>([^<]+)<\/title>/i);
-  if (t && t[1]) return tidy(t[1]);
   return null;
 }
 
