@@ -27,6 +27,8 @@ import { nextDirectEnquiryRefCode, nextAgentEnquiryRefCode, nextPlatformEnquiryR
 import { initialsForEmail } from '../lib/userInitials';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import type { EnquiryPrefill } from '../components/CreateProposalModal';
+import { AirbnbLinksPreviewModal } from '../components/GlobalSearchModal';
+import { searchProperties, type PropertyResult } from '../lib/propertySearch';
 
 const EMPTY_FORM = {
   subject: '',
@@ -75,6 +77,17 @@ export function EnquiryForm() {
   const [saving, setSaving] = useState(false);
   const [savedEnquiry, setSavedEnquiry] = useState<EnquiryPrefill | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  /** Airbnb-links picker state for the platform-enquiry post-save
+   *  flow. `searching` is true while we run searchProperties against
+   *  the saved enquiry's filters; `results` holds the matched
+   *  properties once the search returns and drives the picker modal. */
+  const [airbnbPickerOpen, setAirbnbPickerOpen] = useState(false);
+  const [airbnbPickerSearching, setAirbnbPickerSearching] = useState(false);
+  const [airbnbPickerResults, setAirbnbPickerResults] = useState<PropertyResult[]>([]);
+  /** When the platform submit flow opens the picker directly (rather
+   *  than via the success-modal CTA), the picker's onClose should
+   *  navigate to the kanban deal. Holds the enquiry id for that hop. */
+  const [postPickerNavigateId, setPostPickerNavigateId] = useState<string | null>(null);
   /** Set once the user creates at least one proposal from the launcher.
    *  Swaps the success screen from "Enquiry saved" → "Proposal created"
    *  so the next-step CTA reads "+ Another proposal for this enquiry"
@@ -330,7 +343,7 @@ export function EnquiryForm() {
    *  with the A### / V### ref code and source='platform' without
    *  going through the property match step. Mirrors Direct/Agent
    *  Quick Save so the team has parity across all three sources. */
-  async function handlePlatformSaveOnly() {
+  async function handlePlatformSaveOnly({ andOpenAirbnbPicker = false }: { andOpenAirbnbPicker?: boolean } = {}) {
     if (saving) return;
     if (!platformChannel) { toast.warning('Pick the platform — Airbnb or VRBO'); return; }
     if (!form.source_url.trim()) { toast.warning('Add the conversation URL from the platform'); return; }
@@ -391,7 +404,28 @@ export function EnquiryForm() {
       }
       notifyPipelineChanged();
       toast.success(`Enquiry ${enq.ref_code} saved`);
-      navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
+      if (andOpenAirbnbPicker) {
+        // Skip the kanban navigation — run the property search now
+        // and pop the Airbnb picker. The picker's onClose handler
+        // navigates the user to the kanban when they're done. This
+        // keeps "save record" and "send links" inside a single click.
+        try {
+          const results = await searchProperties(supabase, {
+            checkIn:  form.check_in || undefined,
+            checkOut: form.check_out || undefined,
+            bedrooms: form.bedrooms_options.length > 0 ? form.bedrooms_options : undefined,
+          });
+          setAirbnbPickerResults(results);
+          setPostPickerNavigateId(enq.id);
+          setAirbnbPickerOpen(true);
+        } catch (err) {
+          console.error('Property search failed:', err);
+          toast.error('Saved, but could not load properties for the picker. Open the global search to send links.');
+          navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
+        }
+      } else {
+        navigate(`/operations/enquiries?deal=${encodeURIComponent(enq.id)}&highlight=1`);
+      }
     } catch (err: any) {
       console.error('handlePlatformSaveOnly failed:', err);
       toast.error('Failed to save: ' + (err?.message || String(err)));
@@ -503,6 +537,16 @@ export function EnquiryForm() {
     if (form.bedrooms_options.length === 0) { toast.warning('Pick at least one bedroom count'); return; }
     if (!form.guests_total || Number(form.guests_total) < 1) { toast.warning('Pick the guest count'); return; }
 
+    // Platform enquiries divert from the proposal-match page to the
+    // Airbnb-picker. Save the enquiry inline and open the picker —
+    // no proposal builder, no extra click. The picker's close handler
+    // navigates the user to the kanban, so the team never lands in a
+    // state where they replied to a guest without an audit trail.
+    if (isPlatform) {
+      await handlePlatformSaveOnly({ andOpenAirbnbPicker: true });
+      return;
+    }
+
     // All three sources now route through step 2 (property match page).
     // location.state carries everything the match page needs to insert
     // the enquiry + linked proposals atomically. Platform pre-supplies
@@ -564,6 +608,34 @@ export function EnquiryForm() {
 
   const close = () => navigate('/operations/enquiries');
 
+  /** Run the property search using the saved enquiry's filters and
+   *  open the Copy Airbnb links picker. Wired to the primary CTA on
+   *  the platform-enquiry success screen so the team can paste links
+   *  into the Airbnb / VRBO reply without leaving the enquiry flow —
+   *  the record is already saved, this just hands them the links. */
+  async function openAirbnbPicker() {
+    if (!savedEnquiry || airbnbPickerSearching) return;
+    setAirbnbPickerSearching(true);
+    try {
+      const results = await searchProperties(supabase, {
+        checkIn:  savedEnquiry.check_in || undefined,
+        checkOut: savedEnquiry.check_out || undefined,
+        // Mirror the form's bedroom filter. propertySearch handles
+        // availability via the date range, so we don't need to
+        // pre-filter on guests count here — the picker lets the team
+        // tick the houses they actually want to send.
+        bedrooms: form.bedrooms_options.length > 0 ? form.bedrooms_options : undefined,
+      });
+      setAirbnbPickerResults(results);
+      setAirbnbPickerOpen(true);
+    } catch (err) {
+      console.error('Property search failed:', err);
+      toast.error('Could not load matching properties. Try the global search instead.');
+    } finally {
+      setAirbnbPickerSearching(false);
+    }
+  }
+
   // ── Post-save success state ──
   if (savedEnquiry) {
     const hasProposals = proposalsCreatedCount > 0;
@@ -592,6 +664,19 @@ export function EnquiryForm() {
               >
                 📋 Review proposals
               </button>
+            ) : isPlatform ? (
+              // Platform enquiries (Airbnb / VRBO) most likely start
+              // with the team replying to the conversation with a list
+              // of links. Making the picker the primary action ties
+              // "save the record" and "send the links" into one button
+              // — no risk of a rushed day skipping the enquiry record.
+              <button
+                className="btn btn-primary"
+                onClick={openAirbnbPicker}
+                disabled={airbnbPickerSearching}
+              >
+                {airbnbPickerSearching ? 'Searching properties…' : '📋 Copy Airbnb links'}
+              </button>
             ) : (
               <button className="btn btn-primary" onClick={() => setLauncherOpen(true)}>
                 📝 Create Proposal
@@ -603,6 +688,15 @@ export function EnquiryForm() {
               {hasProposals && (
                 <button className="btn btn-ghost" onClick={() => setLauncherOpen(true)}>
                   + Another proposal for this enquiry
+                </button>
+              )}
+              {isPlatform && !hasProposals && (
+                // Keep "Create Proposal" reachable on platform
+                // enquiries too — when the conversation has progressed
+                // far enough that a full proposal makes sense, the
+                // team can still drop into the launcher from here.
+                <button className="btn btn-ghost" onClick={() => setLauncherOpen(true)}>
+                  📝 Create Proposal instead
                 </button>
               )}
               <button className="btn btn-ghost" onClick={startAnother}>+ New enquiry</button>
@@ -628,6 +722,14 @@ export function EnquiryForm() {
             enquiryPrefill={savedEnquiry}
             onClose={() => setLauncherOpen(false)}
             onCreated={() => setProposalsCreatedCount(c => c + 1)}
+          />
+        )}
+
+        {airbnbPickerOpen && (
+          <AirbnbLinksPreviewModal
+            properties={airbnbPickerResults.filter(r => !!r.airbnbUrl)}
+            skippedCount={airbnbPickerResults.filter(r => !r.airbnbUrl).length}
+            onClose={() => setAirbnbPickerOpen(false)}
           />
         )}
       </>
@@ -749,7 +851,7 @@ export function EnquiryForm() {
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={handlePlatformSaveOnly}
+                    onClick={() => handlePlatformSaveOnly()}
                     disabled={saving}
                     title="Save the enquiry now and close — fill the rest in from the kanban later"
                   >
@@ -761,10 +863,10 @@ export function EnquiryForm() {
                     className="btn btn-primary"
                     disabled={saving || !canContinue}
                     title={canContinue
-                      ? 'Continue to pick matching properties + price them'
-                      : 'Add dates, bedrooms and guests to continue to the property picker'}
+                      ? 'Save the enquiry and pick Airbnb links to send the guest'
+                      : 'Add dates, bedrooms and guests to continue to the Airbnb picker'}
                   >
-                    {saving ? 'Saving…' : 'Continue to proposals →'}
+                    {saving ? 'Saving…' : 'Continue to Airbnb links →'}
                   </button>
                 </div>
               );
@@ -1127,6 +1229,24 @@ export function EnquiryForm() {
         </>)}
       </ActionModal>
 
+      {/* Airbnb-picker overlay for the platform-submit path. Save flow
+          sets airbnbPickerResults + opens this modal instead of
+          navigating; close handler hops to the kanban deal so the
+          enquiry record is the next thing the user sees. */}
+      {airbnbPickerOpen && (
+        <AirbnbLinksPreviewModal
+          properties={airbnbPickerResults.filter(r => !!r.airbnbUrl)}
+          skippedCount={airbnbPickerResults.filter(r => !r.airbnbUrl).length}
+          onClose={() => {
+            setAirbnbPickerOpen(false);
+            if (postPickerNavigateId) {
+              const id = postPickerNavigateId;
+              setPostPickerNavigateId(null);
+              navigate(`/operations/enquiries?deal=${encodeURIComponent(id)}&highlight=1`);
+            }
+          }}
+        />
+      )}
     </form>
   );
 }
