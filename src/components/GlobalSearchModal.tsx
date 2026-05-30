@@ -461,8 +461,13 @@ function ResultsPane({
  *    3. Live preview of the exact block that will go to the clipboard
  *  Forced centre placement + skipStackRegister so the parent search
  *  modal doesn't side-dock relative to this — the preview should
- *  always feel like the focused modal. */
-function AirbnbLinksPreviewModal({
+ *  always feel like the focused modal.
+ *
+ *  Exported because the new-enquiry form reuses this same picker as
+ *  the primary post-save action on platform (Airbnb/VRBO) enquiries —
+ *  the team gets to send the guest's links AND save the enquiry
+ *  record in one button click instead of via two surfaces. */
+export function AirbnbLinksPreviewModal({
   properties, skippedCount, onClose,
 }: {
   properties: PropertyResult[];
