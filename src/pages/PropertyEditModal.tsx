@@ -703,6 +703,36 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         if (error) throw error;
       }
 
+      // Best-effort: when an Airbnb URL is present, ask the edge
+      // function to scrape og:title and cache it on
+      // partner_properties.airbnb_title. The function writes the row
+      // itself with service-role auth and returns the title — we
+      // only need to fire it. Fire-and-forget so a slow Airbnb fetch
+      // doesn't block the save toast.
+      const airbnbUrl = ((payload.listing_urls as Record<string, string>)?.airbnb || '').trim();
+      const idForTitleFetch = isNew ? savedPropertyId : property.id;
+      if (airbnbUrl && idForTitleFetch) {
+        try {
+          const fnUrl = (supabase as any).supabaseUrl
+            ? `${((supabase as any).supabaseUrl as string).replace(/\/$/, '')}/functions/v1/fetch-airbnb-title`
+            : '';
+          const anonKey = (supabase as any).supabaseKey as string;
+          if (fnUrl && anonKey) {
+            // No await — title refresh is a side effect, not a save
+            // dependency. If it fails the next save will retry.
+            fetch(fnUrl, {
+              method: 'POST',
+              headers: {
+                'apikey': anonKey,
+                'Authorization': `Bearer ${anonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ url: airbnbUrl, propertyId: idForTitleFetch }),
+            }).catch(() => { /* swallow — see comment above */ });
+          }
+        } catch { /* swallow — non-fatal */ }
+      }
+
       // ── Sync property_owners ──
       // Order matters: clear primary on every kept row first so the
       // partial unique index can't reject an INSERT/UPDATE later.

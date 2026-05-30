@@ -442,17 +442,23 @@ function AirbnbLinksPreviewModal({
 }) {
   const [copied, setCopied] = useState(false);
 
-  // The exact text that will go to the clipboard. Each row is the
-  // property name followed by the URL on the same line — matches what
-  // Hayley pastes into Airbnb today, just with the name in front so
-  // the guest can see which house each link is.
+  // Prefer the cached Airbnb listing headline (populated by the
+  // fetch-airbnb-title edge fn on property save) over our internal
+  // property name — that's the title the guest already sees on Airbnb.
+  // Falls back to the property name when the title hasn't been cached
+  // yet (new URL, edge fn failure).
+  function displayTitleFor(p: PropertyResult): string {
+    return (p.airbnbTitle && p.airbnbTitle.trim()) || titleCase(p.name);
+  }
+
+  // The exact text that will go to the clipboard.
   const blockText = (() => {
     const lines = [
       'Hi,',
       '',
       'The following homes would be available:',
       '',
-      ...properties.map(p => `${titleCase(p.name)}: ${p.airbnbUrl}`),
+      ...properties.map(p => `${displayTitleFor(p)}: ${p.airbnbUrl}`),
     ];
     return lines.join('\n');
   })();
@@ -506,7 +512,7 @@ function AirbnbLinksPreviewModal({
         {properties.map(p => (
           <div key={p.id} style={{ marginBottom: 4 }}>
             <span style={{ fontWeight: 600, color: 'var(--text)' }}>
-              {titleCase(p.name)}:
+              {displayTitleFor(p)}:
             </span>{' '}
             <span style={{ color: 'var(--color-primary)' }}>{p.airbnbUrl}</span>
           </div>
