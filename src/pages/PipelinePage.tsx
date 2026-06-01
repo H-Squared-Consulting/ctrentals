@@ -62,6 +62,11 @@ interface ProposalRow {
   ref_code: string;
   property_id: string;
   property_name: string;
+  /** Airbnb listing URL for this property (from partner_properties.
+   *  listing_urls.airbnb). Drives the 🔗 Airbnb button on the proposal
+   *  row so the team can hop straight to the listing when replying to
+   *  an Airbnb conversation. Null when the property isn't on Airbnb. */
+  airbnb_url: string | null;
   pricing_proposal_id: string | null;
   status: string;
   is_agent: boolean;
@@ -451,6 +456,14 @@ function mapProposalRow(p: any, parentEnquiry?: { id: string; ref_code: string }
     ref_code: p.ref_code,
     property_id: p.property_id,
     property_name: p.partner_properties?.property_name || '—',
+    airbnb_url: (() => {
+      const lu = p.partner_properties?.listing_urls;
+      if (lu && typeof lu === 'object' && typeof lu.airbnb === 'string') {
+        const v = lu.airbnb.trim();
+        return v || null;
+      }
+      return null;
+    })(),
     pricing_proposal_id: p.pricing_proposal_id,
     status: p.status,
     is_agent: p.is_agent,
@@ -610,7 +623,7 @@ export default function PipelinePage() {
       // Enquiries with all their proposals + property + pricing joined.
       supabase
         .from('enquiries')
-        .select('*, proposals(*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents))')
+        .select('*, proposals(*, partner_properties(property_name, listing_urls), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents))')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         // Archived deals stay in the DB for reporting / audit but drop
         // out of the kanban so the Closed column doesn't bloat.
@@ -626,7 +639,7 @@ export default function PipelinePage() {
       // so a flat created_at floor is enough.
       supabase
         .from('proposals')
-        .select('*, partner_properties(property_name), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)')
+        .select('*, partner_properties(property_name, listing_urls), pricing_proposals(client_price_excl_vat, scenario_type, season_tag, owner_net, company_take, agents)')
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .is('enquiry_id', null)
         .gte('created_at', closedFloor)
@@ -3340,6 +3353,25 @@ function ProposalRowInline({
         >
           👁 View
         </a>
+        {/* Open the property's Airbnb listing in a new tab. Shows
+            whenever the joined property has an Airbnb URL on file —
+            useful for platform deals (the team can jump straight to
+            the listing while replying to the conversation) and harmless
+            on direct / agent deals (just a quick way to see what
+            Airbnb shows the public). */}
+        {p.airbnb_url && (
+          <a
+            href={p.airbnb_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="btn btn-ghost"
+            style={{ fontSize: '0.75rem', padding: '4px 8px', textDecoration: 'none' }}
+            title="Open this property's Airbnb listing in a new tab"
+          >
+            🔗 Airbnb
+          </a>
+        )}
         {onEditPricing && (
           <button
             type="button"
@@ -3442,6 +3474,7 @@ function ProposalRowInline({
         proposalRefCode={p.ref_code}
         currentPricingProposalId={p.pricing_proposal_id}
         propertyName={p.property_name}
+        nights={nightsBetween(p.check_in, p.check_out)}
         onClose={() => setHistoryOpen(false)}
       />
     )}
@@ -4376,7 +4409,11 @@ function DealDetailModal({
                   gap: 10,
                 }}>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                    🤝 Agent requested quotes for {requestedIds.length} propert{requestedIds.length === 1 ? 'y' : 'ies'}:
+                    {deal.is_agent
+                      ? <>🤝 Agent requested quotes for {requestedIds.length} propert{requestedIds.length === 1 ? 'y' : 'ies'}:</>
+                      : (e?.source === 'platform')
+                        ? <>💬 Conversation about {requestedIds.length === 1 ? 'this property' : `these ${requestedIds.length} properties`}:</>
+                        : <>📋 Properties earmarked for this enquiry:</>}
                   </div>
                   <ul style={{
                     margin: 0,
@@ -4410,9 +4447,11 @@ function DealDetailModal({
                   >
                     📝 Generate proposals for {requestedIds.length === 1 ? 'this property' : `these ${requestedIds.length}`} →
                   </button>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', lineHeight: 1.4 }}>
-                    The match modal will open showing only the agent's picks — review pricing and untick any you don't want to quote.
-                  </div>
+                  {deal.is_agent && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', lineHeight: 1.4 }}>
+                      The match modal will open showing only the agent's picks — review pricing and untick any you don't want to quote.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>

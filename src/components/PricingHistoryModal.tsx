@@ -30,6 +30,7 @@ export default function PricingHistoryModal({
   proposalRefCode,
   currentPricingProposalId,
   propertyName,
+  nights,
   onClose,
 }: {
   proposalId: string;
@@ -38,6 +39,9 @@ export default function PricingHistoryModal({
    *  flag which row is the live one. */
   currentPricingProposalId: string | null;
   propertyName: string;
+  /** Stay length, used to surface a Total column alongside the per-night
+   *  rates. Null when the deal has no dates set yet. */
+  nights: number | null;
   onClose: () => void;
 }) {
   const [versions, setVersions] = useState<Version[]>([]);
@@ -122,6 +126,7 @@ export default function PricingHistoryModal({
                 versionNumber={versionNumber}
                 isCurrent={isCurrent}
                 agentNames={agentNames}
+                nights={nights}
               />
             );
           })}
@@ -132,23 +137,28 @@ export default function PricingHistoryModal({
 }
 
 function VersionCard({
-  version, versionNumber, isCurrent, agentNames,
+  version, versionNumber, isCurrent, agentNames, nights,
 }: {
   version: Version;
   versionNumber: number;
   isCurrent: boolean;
   agentNames: Record<string, string>;
+  nights: number | null;
 }) {
   const v = version;
   const guestPrice = v.client_price_excl_vat != null ? Math.round(Number(v.client_price_excl_vat)) : null;
   const ownerNet = v.owner_net != null ? Math.round(Number(v.owner_net)) : null;
   const ctrTake = v.company_take != null ? Math.round(Number(v.company_take)) : null;
-  // Total agent take = guest − owner − CTR. Split by agents JSONB.
-  const totalAgentTake = (guestPrice != null && ownerNet != null && ctrTake != null)
+  // Total commission take = guest − owner − CTR. On agent deals this is
+  // split by the agents JSONB; on platform deals (no agents) it's the
+  // platform's commission line.
+  const totalCommission = (guestPrice != null && ownerNet != null && ctrTake != null)
     ? guestPrice - ownerNet - ctrTake
     : null;
   const agents = Array.isArray(v.agents) ? v.agents.filter(a => !!a?.id) : [];
   const totalPct = agents.reduce((s, a) => s + (Number(a.pct) || 0), 0);
+  const isPlatform = v.scenario_type === 'platform';
+  const showTotal = nights != null && nights > 0;
 
   return (
     <div
@@ -195,22 +205,37 @@ function VersionCard({
         borderCollapse: 'collapse',
         fontVariantNumeric: 'tabular-nums',
       }}>
+        {showTotal && (
+          <thead>
+            <tr>
+              <th />
+              <th style={headStyle}>Per night</th>
+              <th style={headStyle}>Total ({nights} night{nights === 1 ? '' : 's'})</th>
+            </tr>
+          </thead>
+        )}
         <tbody>
-          <Row label="Guest pays / night"   value={guestPrice} />
-          <Row label="Owner gets / night"   value={ownerNet} />
-          <Row label="Southern Escapes"     value={ctrTake} />
-          {agents.length === 0 && totalAgentTake != null && totalAgentTake > 0 && (
-            <Row label="Agent commission"   value={totalAgentTake} highlight />
+          <Row label="Guest pays"        value={guestPrice} nights={nights} />
+          <Row label="Owner gets"        value={ownerNet}   nights={nights} />
+          <Row label="Southern Escapes"  value={ctrTake}    nights={nights} />
+          {agents.length === 0 && totalCommission != null && totalCommission > 0 && (
+            <Row
+              label={isPlatform ? 'Platform commission' : 'Agent commission'}
+              value={totalCommission}
+              nights={nights}
+              highlight
+            />
           )}
-          {agents.length > 0 && totalAgentTake != null && totalAgentTake > 0 && agents.map(a => {
+          {agents.length > 0 && totalCommission != null && totalCommission > 0 && agents.map(a => {
             const share = totalPct > 0
-              ? Math.round((Number(a.pct) / totalPct) * totalAgentTake)
+              ? Math.round((Number(a.pct) / totalPct) * totalCommission)
               : null;
             return (
               <Row
                 key={a.id}
                 label={`${agentNames[a.id] || 'Agent'} (${Number(a.pct).toFixed(0)}%)`}
                 value={share}
+                nights={nights}
                 highlight
               />
             );
@@ -221,7 +246,14 @@ function VersionCard({
   );
 }
 
-function Row({ label, value, highlight }: { label: string; value: number | null; highlight?: boolean }) {
+function Row({ label, value, nights, highlight }: {
+  label: string;
+  value: number | null;
+  nights: number | null;
+  highlight?: boolean;
+}) {
+  const total = (value != null && nights != null && nights > 0) ? value * nights : null;
+  const showTotal = nights != null && nights > 0;
   return (
     <tr>
       <td style={{
@@ -241,9 +273,30 @@ function Row({ label, value, highlight }: { label: string; value: number | null;
       }}>
         {value != null ? fmtRand(value) : '—'}
       </td>
+      {showTotal && (
+        <td style={{
+          padding: '4px 0 4px var(--s-4)',
+          textAlign: 'right',
+          fontSize: '0.875rem',
+          fontWeight: highlight ? 700 : 600,
+          color: highlight ? 'var(--color-primary)' : 'var(--text)',
+        }}>
+          {total != null ? fmtRand(total) : '—'}
+        </td>
+      )}
     </tr>
   );
 }
+
+const headStyle: React.CSSProperties = {
+  padding: '0 0 4px 0',
+  textAlign: 'right',
+  fontSize: '0.6875rem',
+  fontWeight: 600,
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+  color: 'var(--text-secondary)',
+};
 
 function fmtRand(n: number): string {
   return `R${Math.round(n).toLocaleString('en-ZA')}`;

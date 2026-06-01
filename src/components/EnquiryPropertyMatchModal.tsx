@@ -35,6 +35,7 @@ import { syncEnquiryFromProposal } from '../lib/statusSync';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 import { searchProperties } from '../lib/propertySearch';
 import PricingModal from '../pages/PricingModal';
+import { AirbnbLinksPreviewModal } from './GlobalSearchModal';
 import type { PricingSnapshot } from './PricingDashboard';
 
 function titleCase(s: string | null | undefined): string {
@@ -63,6 +64,12 @@ interface PropertyRow {
   bedrooms: number | null;
   sleeps: number | null;
   hero_image_url: string | null;
+  /** Airbnb listing URL + cached title — carried through so the
+   *  platform-enquiry save flow can pop the Copy Airbnb links picker
+   *  pre-loaded with the picked properties' Airbnb info without a
+   *  second round-trip. Null when the property isn't on Airbnb. */
+  airbnb_url: string | null;
+  airbnb_title: string | null;
 }
 
 interface BaselineRow {
@@ -396,6 +403,13 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
    *  error + Retry button instead of leaving the user stuck on a
    *  spinner forever, which is what we used to do before. */
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Platform-source enquiries chain Save → Copy Airbnb links picker
+   *  → onSaved. These hold the post-save context so the picker's
+   *  onClose can finally call back to the parent (which closes both
+   *  modals + navigates to the kanban deal). */
+  const [airbnbPickerOpen, setAirbnbPickerOpen] = useState(false);
+  const [airbnbPickerRows, setAirbnbPickerRows] = useState<PropertyRow[]>([]);
+  const [postPickerInfo, setPostPickerInfo] = useState<{ enquiryId: string; refCode: string } | null>(null);
   /** Bump to force the startup effect to re-run on Retry. */
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = useState('');
@@ -500,6 +514,8 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
         bedrooms: p.bedrooms,
         sleeps: p.sleeps,
         hero_image_url: p.heroImageUrl,
+        airbnb_url: p.airbnbUrl,
+        airbnb_title: p.airbnbTitle,
       }));
       setProperties(free);
       // Pre-tick any caller-supplied selections that survived the
@@ -839,7 +855,20 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
       }
 
       notifyPipelineChanged();
-      onSaved(enq.id, enq.ref_code);
+
+      // Platform enquiries chain into the Copy Airbnb links picker
+      // so the team can paste the proposal-backed property URLs into
+      // the Airbnb conversation in the same flow. Proposals
+      // created = links sent = full audit trail. Direct + agent
+      // enquiries skip this and just call onSaved.
+      if (enquiry.source === 'platform' && selectedCount > 0) {
+        const pickedRows = properties.filter(p => selected.has(p.id));
+        setAirbnbPickerRows(pickedRows);
+        setPostPickerInfo({ enquiryId: enq.id, refCode: enq.ref_code });
+        setAirbnbPickerOpen(true);
+      } else {
+        onSaved(enq.id, enq.ref_code);
+      }
     } catch (err: any) {
       console.error('handleSaveAll failed:', err);
       toast.error('Failed to save: ' + (err?.message || String(err)));
@@ -849,9 +878,12 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
   }
 
   const selectedCount = selected.size;
+  const isPlatformFlow = enquiry.source === 'platform';
   const primaryLabel = selectedCount === 0
     ? 'Save enquiry'
-    : `Save enquiry + ${selectedCount} proposal${selectedCount === 1 ? '' : 's'}`;
+    : isPlatformFlow
+      ? `Save + ${selectedCount} proposal${selectedCount === 1 ? '' : 's'} → 📋 Airbnb links`
+      : `Save enquiry + ${selectedCount} proposal${selectedCount === 1 ? '' : 's'}`;
 
   return (
     <>
@@ -1125,6 +1157,41 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
           />
         );
       })()}
+
+      {airbnbPickerOpen && (
+        <AirbnbLinksPreviewModal
+          // Shape PropertyRow into the PropertyResult fields the picker
+          // reads. Only airbnbUrl / airbnbTitle / name are surfaced in
+          // the modal so the other fields can be stubbed out.
+          properties={airbnbPickerRows
+            .filter(r => !!r.airbnb_url)
+            .map(r => ({
+              id: r.id,
+              name: r.property_name,
+              suburb: r.suburb,
+              city: r.city,
+              bedrooms: r.bedrooms,
+              sleeps: r.sleeps,
+              bathrooms: null,
+              heroImageUrl: r.hero_image_url,
+              slug: null,
+              tagline: null,
+              amenityTags: '',
+              dailyRate: null,
+              pricingMode: null,
+              fixedPeakGuestRate: null,
+              airbnbUrl: r.airbnb_url,
+              airbnbTitle: r.airbnb_title,
+            }))}
+          skippedCount={airbnbPickerRows.filter(r => !r.airbnb_url).length}
+          onClose={() => {
+            setAirbnbPickerOpen(false);
+            const info = postPickerInfo;
+            setPostPickerInfo(null);
+            if (info) onSaved(info.enquiryId, info.refCode);
+          }}
+        />
+      )}
     </>
   );
 }
