@@ -658,34 +658,11 @@
     // Overview stat cards (Bedrooms / Bathrooms / Sleeps / Location) at the
     // top of the page. Showing it again created redundancy.
 
-    // Section 8 - CTA
-    // Agents get a forward-to-client flow: a clean brochure URL they
-    // can send on, letting them quote their client however they
-    // prefer. Direct guests no longer get a CTA block — the inline
-    // I'm Interested / Share affordances duplicated the contact path
-    // and the section was removed at Nicki's request.
-    if (isAgent) {
-      var brochureUrl = pr.slug
-        ? window.location.origin + '/brochures/' + encodeURIComponent(pr.slug)
-        : null;
-      html += '<section class="pos-cta reveal">';
-      html += '<h2 class="pos-cta-heading">Send to your client</h2>';
-      html += '<div class="pos-cta-buttons">';
-      if (brochureUrl) {
-        html += '<button id="btn-copy-brochure" class="pos-btn-share" data-url="' + esc(brochureUrl) + '">🔗 Copy Brochure Link</button>';
-      } else {
-        html += '<span style="font-size:13px;color:#888;">Brochure link unavailable — contact Southern Escapes.</span>';
-      }
-      html += '</div>';
-      html += '</section>';
-    }
-
-    // Section 11 - FOOTER (agent-only; direct guests get no footer)
-    if (isAgent) {
-      html += '<footer class="pos-footer reveal">';
-      html += '<div class="pos-footer-copy" style="color:var(--text-light)">Property Proposal &mdash; ' + esc(fmtDate(p.created_at)) + '</div>';
-      html += '</footer>';
-    }
+    // Section 8 - CTA + Section 11 - FOOTER removed at Nicki's
+    // request. The public proposal page now ends at the pricing
+    // breakdown; agents copy the brochure link from the admin Send
+    // dialog instead, and direct guests reach out via the channel
+    // they were originally contacted on.
 
     // Inject into canvas
     var canvas = el('canvas');
@@ -697,40 +674,6 @@
 
     // Init reveal animations
     initReveal();
-
-    // ── Button: Copy Brochure Link (agent CTA only) ──
-    var btnCopyBrochure = el('btn-copy-brochure');
-    if (btnCopyBrochure) {
-      btnCopyBrochure.addEventListener('click', function() {
-        var url = btnCopyBrochure.getAttribute('data-url');
-        if (!url) return;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(url).then(function() {
-            showToast('Brochure link copied — paste it to your client');
-          }).catch(function() {
-            fallbackCopy(url);
-          });
-        } else {
-          fallbackCopy(url);
-        }
-      });
-    }
-
-    function fallbackCopy(text) {
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand('copy');
-        showToast('Link copied to clipboard');
-      } catch(e) {
-        showToast('Could not copy link');
-      }
-      document.body.removeChild(ta);
-    }
   }
 
   // ── Main init ──
