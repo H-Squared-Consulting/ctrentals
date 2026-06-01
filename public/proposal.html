@@ -537,13 +537,15 @@
 
     var html = '';
 
-    // Display name — Nicki + Hayley use the road / property name on
-    // every guest-facing surface (the brochure went back to property
-    // names too), so the CTR slug is reserved for internal admin
-    // references and is NEVER surfaced on the proposal page — not
-    // even as a fallback when property_name is missing (an empty
-    // heading is preferable to a CTR code leaking through).
-    var displayName = pr.property_name || '';
+    // Display name — proposals lead with the property's tagline (the
+    // marketing line from the property editor, e.g. "Quintessential
+    // Constantia villa with mountain views") rather than the bare
+    // property name. Nicki wanted the proposal to sell, not label.
+    // Falls back to property_name when no tagline is set so the
+    // hero still has a heading. The CTR slug is NEVER surfaced —
+    // not even as a final fallback (an empty heading is preferable
+    // to a CTR code leaking onto a guest-facing surface).
+    var displayName = pr.tagline || pr.property_name || '';
 
     // Section 1 - HERO
     html += '<section class="pos-hero">';
@@ -584,9 +586,10 @@
     // noise, so the overview opens straight into the tagline +
     // description.
     html += '<section class="pos-overview reveal">';
-    if (pr.tagline) {
-      html += '<div class="pos-overview-tagline">' + esc(pr.tagline) + '</div>';
-    }
+    // Tagline intentionally omitted here — it's now the hero title
+    // (see displayName above) so re-rendering it under the overview
+    // section heading would duplicate the same line twice within
+    // half a page.
     if (pr.description) {
       html += '<p class="pos-overview-desc">' + esc(pr.description) + '</p>';
     }
