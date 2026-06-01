@@ -16,6 +16,7 @@ export interface Agent {
   name: string;
   company: string | null;
   email: string | null;
+  phone: string | null;
   default_commission_pct: number;
   created_at: string;
 }

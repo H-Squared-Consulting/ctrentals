@@ -33,7 +33,7 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
-const EMPTY_FORM = { name: '', company: '', email: '', default_commission_pct: '15' };
+const EMPTY_FORM = { name: '', company: '', email: '', phone: '', default_commission_pct: '15' };
 
 export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
   const toast = useToast();
@@ -160,7 +160,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
     if (searchQuery.trim()) {
       const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       result = result.filter(a => {
-        const text = [a.name, a.company, a.email].filter(Boolean).join(' ').toLowerCase();
+        const text = [a.name, a.company, a.email, a.phone].filter(Boolean).join(' ').toLowerCase();
         return terms.every(t => text.includes(t));
       });
     }
@@ -178,6 +178,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
       name: a.name || '',
       company: a.company || '',
       email: a.email || '',
+      phone: a.phone || '',
       default_commission_pct: String(a.default_commission_pct ?? ''),
     };
     setEditing(a);
@@ -198,6 +199,7 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
         name: form.name.trim(),
         company: form.company.trim() || null,
         email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
         default_commission_pct: parseFloat(form.default_commission_pct) || 0,
       };
       if (editing?.id) {
@@ -447,6 +449,16 @@ export default function AgentsPage({ embedded }: { embedded?: boolean } = {}) {
                   />
                 </div>
                 <div className="form-group">
+                  <label className="form-label">Mobile</label>
+                  <input
+                    type="tel"
+                    className="form-input"
+                    placeholder="+27 ..."
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
                   <label className="form-label">Default commission %</label>
                   <input
                     type="number"
@@ -637,8 +649,10 @@ function AgentGroupRow({
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, color: 'var(--text)' }}>{titleCase(agent.name)}</div>
-        {agent.email && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{agent.email.toLowerCase()}</div>
+        {(agent.email || agent.phone) && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            {[agent.email?.toLowerCase(), agent.phone].filter(Boolean).join(' · ')}
+          </div>
         )}
       </div>
 
