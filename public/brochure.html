@@ -53,11 +53,14 @@
     }
     return 'direct';
   })();
-  // Anon mode is the only one where the visible house identifier is the
-  // CTR code rather than the property name. Pulled into a helper so
-  // every render site (hero, title, gallery alt) uses the same value.
+  // Brochures show the CTR code (slug) as the house identifier in
+  // every brand mode now — matches the proposal page convention and
+  // keeps the house name out of public-facing copy. Falls back to the
+  // property name only when no slug is present so a misconfigured row
+  // doesn't render a blank heading.
   function displayName(p) {
-    if (BRAND_MODE === 'agent-anon') return String(p && p.slug || '').toUpperCase();
+    var slug = p && p.slug ? String(p.slug).toUpperCase() : '';
+    if (slug) return slug;
     return (p && p.property_name) || '';
   }
 
