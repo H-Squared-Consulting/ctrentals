@@ -1124,6 +1124,10 @@ function BookingsBoard({
 
 // ─── List view ─────────────────────────────────────────────────────────
 
+/** When this booking sits relative to today — drives the row tint
+ *  and the "When" column pill. Computed once per row at render. */
+type BookingTimeBucket = 'past' | 'inhouse' | 'upcoming';
+
 interface BookingRow extends DataRow {
   id: string;
   code: string;
@@ -1136,8 +1140,22 @@ interface BookingRow extends DataRow {
   total: number;
   status: string;
   ref: string;
+  bucket: BookingTimeBucket;
   booking: Booking;
 }
+
+function bucketFor(checkIn: string | null, checkOut: string | null, todayIso: string): BookingTimeBucket {
+  if (!checkIn || !checkOut) return 'upcoming';
+  if ((checkOut || '') < todayIso) return 'past';
+  if ((checkIn || '') <= todayIso && (checkOut || '') >= todayIso) return 'inhouse';
+  return 'upcoming';
+}
+
+const BUCKET_STYLE: Record<BookingTimeBucket, { bg: string; fg: string; label: string }> = {
+  past:     { bg: '#FEF3C7', fg: '#92400E', label: 'Past' },         // amber — guest already checked out
+  inhouse:  { bg: '#DBEAFE', fg: '#1E40AF', label: 'In house' },     // blue — currently staying
+  upcoming: { bg: '#D1FAE5', fg: '#065F46', label: 'Upcoming' },     // green — future check-in
+};
 
 function BookingsList({
   bookings, propertyById, onOpen,
@@ -1146,6 +1164,11 @@ function BookingsList({
   propertyById: Map<string, Property>;
   onOpen: (b: Booking) => void;
 }) {
+  const todayIso = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString().slice(0, 10);
+  })();
   const rows: BookingRow[] = bookings.map(b => {
     const prop = propertyById.get(b.property_id);
     return {
@@ -1160,6 +1183,7 @@ function BookingsList({
       total: Number(b.total_amount) || 0,
       status: b.status,
       ref: (b.id || '').slice(0, 8),
+      bucket: bucketFor(b.check_in, b.check_out, todayIso),
       booking: b,
     };
   });
@@ -1200,6 +1224,27 @@ function BookingsList({
         return (
           <span className="list-dates">
             {fmtShort(r.check_in)}<span className="list-dates-arrow">→</span>{fmtShort(r.check_out)}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'bucket', label: 'When', sortable: true, align: 'center' as const, width: '110px',
+      render: (row: DataRow) => {
+        const s = BUCKET_STYLE[(row as BookingRow).bucket];
+        return (
+          <span style={{
+            display: 'inline-block',
+            padding: '2px 10px',
+            borderRadius: 12,
+            fontSize: '0.6875rem',
+            fontWeight: 700,
+            letterSpacing: '0.02em',
+            textTransform: 'uppercase',
+            background: s.bg,
+            color: s.fg,
+          }}>
+            {s.label}
           </span>
         );
       },
