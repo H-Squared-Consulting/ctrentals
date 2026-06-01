@@ -53,14 +53,11 @@
     }
     return 'direct';
   })();
-  // Brochures show the CTR code (slug) as the house identifier in
-  // every brand mode now — matches the proposal page convention and
-  // keeps the house name out of public-facing copy. Falls back to the
-  // property name only when no slug is present so a misconfigured row
-  // doesn't render a blank heading.
+  // Brochures show the property name (road / house name) on every
+  // brand mode. Nicki + Hayley reverted to road names instead of CTR
+  // slugs across all guest-facing surfaces — the slug is internal-
+  // admin-only now.
   function displayName(p) {
-    var slug = p && p.slug ? String(p.slug).toUpperCase() : '';
-    if (slug) return slug;
     return (p && p.property_name) || '';
   }
 

@@ -113,6 +113,10 @@ export default function BookingCalendarPage() {
   // availability view; 'booked' hides blocks.
   const [occupancyView, setOccupancyView] = useState<'all' | 'booked' | 'available'>('all');
   const [propertyStatusFilter, setPropertyStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
+  /** List-view-only filter: hide past bookings by default so the
+   *  default load looks current. Board + calendar always show
+   *  everything (history is the whole point of those surfaces). */
+  const [timeFilter, setTimeFilter] = useState<'upcoming' | 'past' | 'all'>('upcoming');
   const boardMode: 'occupancy' | 'availability' = occupancyView === 'available' ? 'availability' : 'occupancy';
 
   // "Find availability" — narrows property list to those free for an enquiry
@@ -311,6 +315,20 @@ export default function BookingCalendarPage() {
       });
     }
 
+    // List view only: apply the upcoming / past / all-time time
+    // filter. Defaults to Upcoming so a Nicki who opens the list
+    // doesn't have to scroll past last year's stays before seeing
+    // anything actionable. Board + calendar skip this filter on
+    // purpose — they exist to navigate history.
+    if (view === 'list' && timeFilter !== 'all') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayIso = today.toISOString().slice(0, 10);
+      result = timeFilter === 'upcoming'
+        ? result.filter(b => (b.check_out || '') >= todayIso)
+        : result.filter(b => (b.check_out || '') < todayIso);
+    }
+
     // Same mode-gate as filteredProperties: in Availability the date
     // range narrows the booking list to the window (so the list view
     // matches what's filtered on the board); in All / Booked it's
@@ -329,7 +347,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex, boardMode]);
+  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex, boardMode, view, timeFilter]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
@@ -533,6 +551,31 @@ export default function BookingCalendarPage() {
                 ▤ Calendar
               </button>
             </div>
+            {view === 'list' && (
+              <div className="view-toggle" title="Hide / show past bookings">
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'upcoming' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('upcoming')}
+                  title="Only bookings whose checkout is today or later"
+                >
+                  Upcoming
+                </button>
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'past' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('past')}
+                  title="Bookings that have already checked out"
+                >
+                  Past
+                </button>
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('all')}
+                  title="Show every booking ever"
+                >
+                  All time
+                </button>
+              </div>
+            )}
             {view !== 'calendar' && (
               <div className="view-toggle" title="What to show">
                 <button
@@ -1081,6 +1124,10 @@ function BookingsBoard({
 
 // ─── List view ─────────────────────────────────────────────────────────
 
+/** When this booking sits relative to today — drives the row tint
+ *  and the "When" column pill. Computed once per row at render. */
+type BookingTimeBucket = 'past' | 'inhouse' | 'upcoming';
+
 interface BookingRow extends DataRow {
   id: string;
   code: string;
@@ -1093,8 +1140,22 @@ interface BookingRow extends DataRow {
   total: number;
   status: string;
   ref: string;
+  bucket: BookingTimeBucket;
   booking: Booking;
 }
+
+function bucketFor(checkIn: string | null, checkOut: string | null, todayIso: string): BookingTimeBucket {
+  if (!checkIn || !checkOut) return 'upcoming';
+  if ((checkOut || '') < todayIso) return 'past';
+  if ((checkIn || '') <= todayIso && (checkOut || '') >= todayIso) return 'inhouse';
+  return 'upcoming';
+}
+
+const BUCKET_STYLE: Record<BookingTimeBucket, { bg: string; fg: string; label: string }> = {
+  past:     { bg: '#FEF3C7', fg: '#92400E', label: 'Past' },         // amber — guest already checked out
+  inhouse:  { bg: '#DBEAFE', fg: '#1E40AF', label: 'In house' },     // blue — currently staying
+  upcoming: { bg: '#D1FAE5', fg: '#065F46', label: 'Upcoming' },     // green — future check-in
+};
 
 function BookingsList({
   bookings, propertyById, onOpen,
@@ -1103,6 +1164,11 @@ function BookingsList({
   propertyById: Map<string, Property>;
   onOpen: (b: Booking) => void;
 }) {
+  const todayIso = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString().slice(0, 10);
+  })();
   const rows: BookingRow[] = bookings.map(b => {
     const prop = propertyById.get(b.property_id);
     return {
@@ -1117,6 +1183,7 @@ function BookingsList({
       total: Number(b.total_amount) || 0,
       status: b.status,
       ref: (b.id || '').slice(0, 8),
+      bucket: bucketFor(b.check_in, b.check_out, todayIso),
       booking: b,
     };
   });
@@ -1157,6 +1224,27 @@ function BookingsList({
         return (
           <span className="list-dates">
             {fmtShort(r.check_in)}<span className="list-dates-arrow">→</span>{fmtShort(r.check_out)}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'bucket', label: 'When', sortable: true, align: 'center' as const, width: '110px',
+      render: (row: DataRow) => {
+        const s = BUCKET_STYLE[(row as BookingRow).bucket];
+        return (
+          <span style={{
+            display: 'inline-block',
+            padding: '2px 10px',
+            borderRadius: 12,
+            fontSize: '0.6875rem',
+            fontWeight: 700,
+            letterSpacing: '0.02em',
+            textTransform: 'uppercase',
+            background: s.bg,
+            color: s.fg,
+          }}>
+            {s.label}
           </span>
         );
       },

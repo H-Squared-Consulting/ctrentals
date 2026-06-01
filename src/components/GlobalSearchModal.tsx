@@ -100,6 +100,7 @@ export interface PropertyFilters {
    *  the rest of the form (bedrooms, amenities, etc) stays hidden. */
   channel: SearchChannel | null;
   bedrooms: number[];
+  sleeps: number[];
   amenities: string[];
   /** Free-text being typed in the amenity custom input; tracked so
    *  Enter / + Add can flush it into `amenities` without losing
@@ -118,6 +119,7 @@ export interface PropertyFilters {
 const EMPTY_PROPERTY_FILTERS: PropertyFilters = {
   channel: null,
   bedrooms: [],
+  sleeps: [],
   amenities: [],
   amenityDraft: '',
   checkIn: '',
@@ -210,6 +212,7 @@ export default function GlobalSearchModal({ initialScope = 'properties', onClose
     try {
       const apiFilters: PropertySearchFilters = {
         bedrooms: propertyFilters.bedrooms.length > 0 ? propertyFilters.bedrooms : undefined,
+        sleeps: propertyFilters.sleeps.length > 0 ? propertyFilters.sleeps : undefined,
         amenities: propertyFilters.amenities.length > 0 ? propertyFilters.amenities : undefined,
         checkIn: propertyFilters.checkIn || undefined,
         checkOut: propertyFilters.checkOut || undefined,
@@ -833,6 +836,7 @@ function summariseFiltersInline(f: PropertyFilters): string {
   const parts: string[] = [];
   if (f.channel) parts.push(f.channel);
   if (f.bedrooms.length > 0) parts.push(`${f.bedrooms.join(', ')} bed${f.bedrooms.length === 1 && f.bedrooms[0] === 1 ? '' : 's'}`);
+  if (f.sleeps.length > 0) parts.push(`sleeps ${f.sleeps.join(', ')}`);
   if (f.amenities.length > 0) parts.push(f.amenities.join(', '));
   if (f.checkIn && f.checkOut) parts.push(`${f.checkIn} → ${f.checkOut}`);
   if (f.priceTiers.length > 0) parts.push(`${f.priceTiers.map(t => t.replace('_', ' ')).join(' / ')}`);
@@ -849,6 +853,7 @@ function summariseFiltersInline(f: PropertyFilters): string {
 function FilterSummary({ filters }: { filters: PropertyFilters }) {
   const parts: string[] = [];
   if (filters.bedrooms.length > 0) parts.push(`${filters.bedrooms.join(', ')} bed${filters.bedrooms.length === 1 && filters.bedrooms[0] === 1 ? '' : 's'}`);
+  if (filters.sleeps.length > 0) parts.push(`sleeps ${filters.sleeps.join(', ')}`);
   if (filters.amenities.length > 0) parts.push(`${filters.amenities.length} amenity${filters.amenities.length === 1 ? '' : ' filters'}`);
   if (filters.checkIn && filters.checkOut) parts.push(`${filters.checkIn} → ${filters.checkOut}`);
   if (filters.priceTiers.length > 0) {
@@ -965,6 +970,7 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
   const draftMatchesCatalog = catalogHas(amenityCatalog, draft);
 
   const hasAnyFilter = filters.bedrooms.length > 0
+    || filters.sleeps.length > 0
     || filters.amenities.length > 0
     || !!filters.checkIn
     || !!filters.checkOut
@@ -979,7 +985,11 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <FilterSummary filters={filters} />
 
-      {/* ── 2.1 Bedrooms ────────────────────────────────────────── */}
+      {/* ── 2.1 Bedrooms + Sleeps ───────────────────────────────────
+          Both are exact-match multi-selects: clicking 4 returns
+          only 4-bed (or 4-sleep) properties, ticking 4 + 6 returns
+          4 OR 6. Mirrors the bedroom semantics Hayley + the team
+          have been using for months. */}
       <div>
         <FilterSectionLabel>Bedrooms</FilterSectionLabel>
         <NumericMultiSelect
@@ -989,6 +999,17 @@ function PropertyFiltersBlock({ filters, onChange, onReset, onSearch, amenityCat
           placeholder="Any bedroom count"
           singular="bedroom"
           plural="bedrooms"
+        />
+      </div>
+      <div>
+        <FilterSectionLabel>Sleeps</FilterSectionLabel>
+        <NumericMultiSelect
+          max={16}
+          value={filters.sleeps}
+          onChange={(next) => onChange({ ...filters, sleeps: next })}
+          placeholder="Any sleeps count"
+          singular="sleeps"
+          plural="sleeps"
         />
       </div>
 

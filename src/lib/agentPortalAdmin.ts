@@ -31,11 +31,19 @@ function generateToken(): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Build the public portal URL for a given token. Uses the current
- *  window origin so localhost dev and production both work without
- *  hard-coded domains. */
+/** Build the public portal URL for a given token. Agents see the
+ *  neutral ctvilla.co.za domain in production (mirrors the agent-
+ *  brochure pattern in BrochureShareMenu) so the Southern Escapes
+ *  brand isn't leaked into a link Hayley pastes into a WhatsApp to
+ *  an agent. Dev still falls back to window.location.origin so
+ *  localhost links work without DNS gymnastics. Override the prod
+ *  domain via VITE_AGENT_DOMAIN if the neutral domain ever moves. */
 export function getPortalUrl(token: string): string {
-  return `${window.location.origin}/q/${token}`;
+  const host = window.location.hostname;
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.');
+  if (isLocal) return `${window.location.origin}/q/${token}`;
+  const domain = (import.meta as any).env?.VITE_AGENT_DOMAIN || 'ctvilla.co.za';
+  return `https://${domain}/q/${token}`;
 }
 
 // ── Token lifecycle ────────────────────────────────────────────────
