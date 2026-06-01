@@ -315,6 +315,16 @@ export default function BookingCalendarPage() {
       });
     }
 
+    // List view: hide blocks entirely. Nicki's list is the "guest
+    // stays" surface — owner stays / maintenance holds belong on
+    // the board + calendar where the colour distinction is clear,
+    // not muddled into the same table as paying guests. The
+    // Occupancy "All" / "Booked" toggle still gates blocks for the
+    // board + calendar; list ignores it and stays guest-only.
+    if (view === 'list') {
+      result = result.filter(b => (b as any).kind !== 'block');
+    }
+
     // List view only: apply the upcoming / past / all-time time
     // filter. Defaults to Upcoming so a Nicki who opens the list
     // doesn't have to scroll past last year's stays before seeing
