@@ -28,7 +28,7 @@ function defaultMessage(firstName: string, url: string): string {
   // Single conversational line followed by the link. WhatsApp drops
   // body text when it's separated from the URL by blank lines, so we
   // keep everything compact. No em dashes (house style).
-  return `Hi ${firstName}, here's your Southern Escapes agent portal. Pick a property and submit enquiries directly through the link. Any questions, give me a shout. ${url}`;
+  return `Hi ${firstName}, here's your Southern Escapes agent portal. Please submit enquiries directly through the link. Any questions, give me a shout. ${url}`;
 }
 
 function defaultSubject(): string {
