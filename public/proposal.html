@@ -6,7 +6,7 @@
 <title>Southern Escapes - Property Proposal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Questrial&family=Yellowtail&family=Montserrat:wght@900&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="loading-screen"></div>
@@ -167,9 +167,33 @@
       '  background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.7) 100%);',
       '}',
       '.pos-hero-content { position: relative; z-index: 1; }',
+      /* Hero wordmark — mirrors the Southern Escapes logo treatment
+         from the brochure: "Southern" in Yellowtail (brush script) +
+         "Escapes" in Montserrat 900 caps. Tinted white/gold so it
+         reads on the dark hero gradient (the brochure uses the
+         logo's native dark tones because it sits on a light halo
+         over the photo; here the gradient itself is dark, so we
+         invert the value while keeping the same character). */
       '.pos-hero-brand {',
-      '  color: var(--gold); font-size: 12px; letter-spacing: 3px;',
-      '  text-transform: uppercase; margin-bottom: 12px;',
+      '  display: flex; align-items: baseline; gap: 6px;',
+      '  margin-bottom: 14px; line-height: 1; justify-content: center;',
+      '}',
+      '.pos-hero-brand-script {',
+      '  font-family: "Yellowtail", cursive; font-weight: 400;',
+      '  font-size: 36px; color: var(--white); letter-spacing: 0;',
+      '  transform: translateY(2px);',
+      '  text-shadow: 0 2px 8px rgba(0,0,0,0.4);',
+      '}',
+      '.pos-hero-brand-sans {',
+      '  font-family: "Montserrat", -apple-system, sans-serif; font-weight: 900;',
+      '  font-size: 22px; color: var(--gold); letter-spacing: 1px;',
+      '  text-transform: uppercase;',
+      '  text-shadow: 0 2px 8px rgba(0,0,0,0.4);',
+      '}',
+      '@media (max-width: 767px) {',
+      '  .pos-hero-brand { gap: 5px; margin-bottom: 10px; }',
+      '  .pos-hero-brand-script { font-size: 26px; }',
+      '  .pos-hero-brand-sans   { font-size: 17px; letter-spacing: 1px; }',
       '}',
       '.pos-hero-title {',
       '  color: var(--white); font-size: 36px; line-height: 1.2;',
@@ -514,19 +538,31 @@
 
     var html = '';
 
-    // Display identifier — use CTR code (slug uppercased) as the
-    // headline everywhere instead of the property name + address.
-    var displayCode = String(pr.slug || '').toUpperCase() || pr.property_name;
+    // Display name — Nicki + Hayley use the road / property name on
+    // every guest-facing surface (the brochure went back to property
+    // names too), so the CTR slug is reserved for internal admin
+    // references and isn't surfaced on the proposal page any more.
+    var displayName = pr.property_name || String(pr.slug || '').toUpperCase();
 
     // Section 1 - HERO
     html += '<section class="pos-hero">';
     if (pr.hero_image_url) {
-      html += '<img class="pos-hero-img" src="' + esc(sizedImgUrl(pr.hero_image_url, 1920)) + '" alt="' + esc(displayCode) + '">';
+      html += '<img class="pos-hero-img" src="' + esc(sizedImgUrl(pr.hero_image_url, 1920)) + '" alt="' + esc(displayName) + '">';
     }
     html += '<div class="pos-hero-overlay"></div>';
     html += '<div class="pos-hero-content">';
-    if (!isAgent) html += '<div class="pos-hero-brand">Southern Escapes</div>';
-    html += '<h1 class="pos-hero-title">' + esc(displayCode) + '</h1>';
+    if (!isAgent) {
+      // Wordmark mirrors the brochure's "Southern" (Yellowtail) +
+      // "Escapes" (Montserrat 900 caps) treatment — see brochure.html
+      // for the source colours. The proposal sits on a dark gradient
+      // so the script flips to white and the caps go gold for
+      // contrast.
+      html += '<div class="pos-hero-brand">' +
+        '<span class="pos-hero-brand-script">Southern</span>' +
+        '<span class="pos-hero-brand-sans">Escapes</span>' +
+        '</div>';
+    }
+    html += '<h1 class="pos-hero-title">' + esc(displayName) + '</h1>';
     html += '</div>';
     html += '</section>';
 
@@ -534,7 +570,7 @@
     html += '<section class="pos-greeting reveal">';
     html += '<div class="pos-greeting-meta">Prepared ' + esc(fmtDate(p.created_at)) + ' &nbsp;|&nbsp; Ref: ' + esc(p.ref_code) + '</div>';
     html += '<div class="pos-greeting-rule"></div>';
-    html += '<p class="pos-greeting-body">Please find a proposal for ' + esc(displayCode) + ' below.</p>';
+    html += '<p class="pos-greeting-body">Please find a proposal for ' + esc(displayName) + ' below.</p>';
     if (p.notes) {
       html += '<div class="pos-greeting-notes">' + esc(p.notes) + '</div>';
     }
@@ -542,7 +578,7 @@
 
     // Section 3 - PROPERTY OVERVIEW
     html += '<section class="pos-overview reveal">';
-    html += '<h2 class="pos-overview-name">' + esc(displayCode) + '</h2>';
+    html += '<h2 class="pos-overview-name">' + esc(displayName) + '</h2>';
     if (pr.tagline) {
       html += '<div class="pos-overview-tagline">' + esc(pr.tagline) + '</div>';
     }
