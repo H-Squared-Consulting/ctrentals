@@ -80,6 +80,13 @@ export function EnquiryForm() {
    *  the inline Airbnb listing link. Null on Direct + Agent (those
    *  pick properties on the match step instead). */
   const [platformPropertyId, setPlatformPropertyId] = useState<string | null>(null);
+  /** Optional pre-pick for the Direct path: when a guest has
+   *  approached the team naming a specific house (Airbnb DM, agent
+   *  intro, repeat guest), capturing it here pre-ticks the match
+   *  modal AND stamps requested_property_ids on the enquiry so the
+   *  deal modal surfaces it. Always optional — direct enquiries
+   *  without a pre-pick still walk through the full search. */
+  const [directPropertyId, setDirectPropertyId] = useState<string | null>(null);
   /** Set once the user creates at least one proposal from the launcher.
    *  Swaps the success screen from "Enquiry saved" → "Proposal created"
    *  so the next-step CTA reads "+ Another proposal for this enquiry"
@@ -303,6 +310,7 @@ export function EnquiryForm() {
           notes: form.notes.trim() || null,
           source: null,
           source_url: null,
+          requested_property_ids: directPropertyId ? [directPropertyId] : null,
           created_by_initials: initialsForEmail(user?.email),
         })
         .select('id, ref_code')
@@ -540,6 +548,12 @@ export function EnquiryForm() {
       : null;
     navigate('/enquiry/new/match', {
       state: {
+        // Pre-pick from the optional "Specific property" field on the
+        // direct form so the match modal opens with that row already
+        // ticked. Match modal still shows the full list — the team
+        // can add other quote candidates if they want to send a
+        // shortlist on top of the guest's named choice.
+        initiallySelected: !isAgent && !isPlatform && directPropertyId ? [directPropertyId] : null,
         enquiry: {
           // Pre-supplied codes:
           //   Agent    — AHH/N (computed earlier)
@@ -585,6 +599,7 @@ export function EnquiryForm() {
     setAgentGuestOpen(false);
     setPlatformChannel(null);
     setPlatformPropertyId(null);
+    setDirectPropertyId(null);
   }
 
   const close = () => navigate('/operations/enquiries');
@@ -1118,6 +1133,17 @@ export function EnquiryForm() {
         </Section>
 
         <Section title="Context" subtitle="Optional. Useful for matching the right property">
+          {!isAgent && !isPlatform && (
+            <Field label="Specific property (optional)" style={{ marginBottom: 12 }}>
+              <PlatformPropertyPicker
+                value={directPropertyId}
+                onChange={setDirectPropertyId}
+              />
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 4 }}>
+                Use this when the guest has named a specific house. Pre-ticks it on the match step.
+              </div>
+            </Field>
+          )}
           <Field label="Nationality">
             <input className="form-input" name="nationality" value={form.nationality} onChange={handleChange} placeholder="e.g. UK" />
           </Field>

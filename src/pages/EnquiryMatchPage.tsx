@@ -22,7 +22,9 @@ export default function EnquiryMatchPage() {
   const { setPageTitle } = useLayout();
   const navigate = useNavigate();
   const location = useLocation();
-  const enquiry = (location.state as { enquiry?: PendingEnquiry } | null)?.enquiry ?? null;
+  const state = location.state as { enquiry?: PendingEnquiry; initiallySelected?: string[] | null } | null;
+  const enquiry = state?.enquiry ?? null;
+  const initiallySelected = state?.initiallySelected ?? null;
 
   useEffect(() => { setPageTitle('Pick properties to quote'); }, [setPageTitle]);
 
@@ -39,6 +41,7 @@ export default function EnquiryMatchPage() {
     <EnquiryPropertyMatchModal
       supabase={supabase}
       enquiry={enquiry}
+      initiallySelected={initiallySelected}
       onClose={() => navigate('/enquiry/new', { state: { enquiry } })}
       onSaved={(enquiryId) => {
         navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`);

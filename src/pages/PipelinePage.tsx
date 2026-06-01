@@ -206,7 +206,7 @@ const STAGES = [
   // direct bookings) becomes a real enquiry source.
   // Descriptions are intentionally short single-line strings so the
   // column header is the same height in every column.
-  { key: 'new',      label: 'Arrived',  description: 'No proposal yet',   emptyMsg: 'Nothing in inbox' },
+  { key: 'new',      label: 'Enquiry',  description: 'No proposal yet',   emptyMsg: 'Nothing in inbox' },
   { key: 'quoting',  label: 'Quoting',  description: 'Drafts to send',    emptyMsg: 'Nothing quoting' },
   { key: 'sent',     label: 'Responded',description: 'At least 1 sent',   emptyMsg: 'Nothing sent yet' },
   { key: 'booked',   label: 'Booked',   description: 'Proposal accepted', emptyMsg: 'Nothing booked' },
