@@ -38,6 +38,20 @@ export async function linkOrCreateGuestForEnquiry(
 
   if (!name && !email) return { guestId: null, created: false };
 
+  // 0. Idempotency guard: if this enquiry is already linked to a
+  //    guests row, return that id and do nothing. Without this, every
+  //    re-save of an email-less enquiry inserted a fresh guests row
+  //    (no email = nothing to dedupe against), polluting the CRM with
+  //    duplicates each time the user opened and saved the card.
+  const { data: current } = await supabase
+    .from('enquiries')
+    .select('guest_id')
+    .eq('id', payload.enquiryId)
+    .maybeSingle();
+  if (current?.guest_id) {
+    return { guestId: current.guest_id, created: false };
+  }
+
   // 1. Try the dedupe path when we have an email.
   if (email) {
     const { data: found } = await supabase
