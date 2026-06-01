@@ -755,7 +755,14 @@ export default function BookingCalendarPage() {
         <BookingsList
           bookings={filteredBookings}
           propertyById={propertyById}
-          onOpen={(b) => setEditingBooking(b)}
+          onOpen={(b) => {
+            // Same routing as the board + calendar surfaces — a row
+            // with kind='block' is an owner-stay / maintenance hold
+            // and needs the BlockModal, not the BookingModal (which
+            // doesn't know how to surface block_reason cleanly).
+            if (b.kind === 'block') setEditingBlock(b);
+            else setEditingBooking(b);
+          }}
         />
       ) : (
         <BookingsCalendar
@@ -1139,6 +1146,11 @@ interface BookingRow extends DataRow {
   nights: number;
   total: number;
   status: string;
+  /** True when the underlying booking is actually a property block
+   *  (owner stay, maintenance hold, etc) rather than a guest stay.
+   *  Drives the status pill so blocks read "Blocked" instead of
+   *  "Confirmed" and the row routes to BlockModal on click. */
+  isBlock: boolean;
   ref: string;
   bucket: BookingTimeBucket;
   booking: Booking;
@@ -1171,6 +1183,7 @@ function BookingsList({
   })();
   const rows: BookingRow[] = bookings.map(b => {
     const prop = propertyById.get(b.property_id);
+    const isBlock = (b as any).kind === 'block';
     return {
       id: b.id,
       code: prop?.slug || '',
@@ -1182,6 +1195,7 @@ function BookingsList({
       nights: nightsBetween(b.check_in, b.check_out) ?? 0,
       total: Number(b.total_amount) || 0,
       status: b.status,
+      isBlock,
       ref: (b.id || '').slice(0, 8),
       bucket: bucketFor(b.check_in, b.check_out, todayIso),
       booking: b,
@@ -1266,6 +1280,18 @@ function BookingsList({
       key: 'status', label: 'Status', sortable: true, align: 'center' as const,
       render: (row: DataRow) => {
         const r = row as BookingRow;
+        // Blocks borrow the BlockModal's red "declined" pill class so
+        // the row in the list reads the same shape as the modal that
+        // opens when you click it (consistent visual language across
+        // surfaces). Real bookings keep their own status pill.
+        if (r.isBlock) {
+          return (
+            <span className="ops-status-pill ops-status-pill--declined">
+              <span className="ops-status-pill-dot" />
+              Blocked
+            </span>
+          );
+        }
         return (
           <span className={`ops-status-pill ops-status-pill--${r.status}`}>
             <span className="ops-status-pill-dot" />
