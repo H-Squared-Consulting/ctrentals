@@ -578,8 +578,12 @@
     html += '</section>';
 
     // Section 3 - PROPERTY OVERVIEW
+    // Property name intentionally omitted here — it already appears
+    // in the hero title AND the greeting ("Please find a proposal
+    // for {name} below."). A third repetition felt like template
+    // noise, so the overview opens straight into the tagline +
+    // description.
     html += '<section class="pos-overview reveal">';
-    html += '<h2 class="pos-overview-name">' + esc(displayName) + '</h2>';
     if (pr.tagline) {
       html += '<div class="pos-overview-tagline">' + esc(pr.tagline) + '</div>';
     }
