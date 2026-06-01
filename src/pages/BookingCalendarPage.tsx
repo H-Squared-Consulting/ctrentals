@@ -113,6 +113,10 @@ export default function BookingCalendarPage() {
   // availability view; 'booked' hides blocks.
   const [occupancyView, setOccupancyView] = useState<'all' | 'booked' | 'available'>('all');
   const [propertyStatusFilter, setPropertyStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');
+  /** List-view-only filter: hide past bookings by default so the
+   *  default load looks current. Board + calendar always show
+   *  everything (history is the whole point of those surfaces). */
+  const [timeFilter, setTimeFilter] = useState<'upcoming' | 'past' | 'all'>('upcoming');
   const boardMode: 'occupancy' | 'availability' = occupancyView === 'available' ? 'availability' : 'occupancy';
 
   // "Find availability" — narrows property list to those free for an enquiry
@@ -311,6 +315,20 @@ export default function BookingCalendarPage() {
       });
     }
 
+    // List view only: apply the upcoming / past / all-time time
+    // filter. Defaults to Upcoming so a Nicki who opens the list
+    // doesn't have to scroll past last year's stays before seeing
+    // anything actionable. Board + calendar skip this filter on
+    // purpose — they exist to navigate history.
+    if (view === 'list' && timeFilter !== 'all') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayIso = today.toISOString().slice(0, 10);
+      result = timeFilter === 'upcoming'
+        ? result.filter(b => (b.check_out || '') >= todayIso)
+        : result.filter(b => (b.check_out || '') < todayIso);
+    }
+
     // Same mode-gate as filteredProperties: in Availability the date
     // range narrows the booking list to the window (so the list view
     // matches what's filtered on the board); in All / Booked it's
@@ -329,7 +347,7 @@ export default function BookingCalendarPage() {
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex, boardMode]);
+  }, [bookings, occupancyView, searchQuery, propertyAttrMatches, propertyById, searchCheckIn, searchCheckOut, searchFlex, boardMode, view, timeFilter]);
 
   // Continuous timeline: one fixed range, zoom controls density only.
   // rangeStart sits 1 year before today; rangeEnd 2 years after. The user
@@ -533,6 +551,31 @@ export default function BookingCalendarPage() {
                 ▤ Calendar
               </button>
             </div>
+            {view === 'list' && (
+              <div className="view-toggle" title="Hide / show past bookings">
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'upcoming' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('upcoming')}
+                  title="Only bookings whose checkout is today or later"
+                >
+                  Upcoming
+                </button>
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'past' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('past')}
+                  title="Bookings that have already checked out"
+                >
+                  Past
+                </button>
+                <button
+                  className={`view-toggle-btn ${timeFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setTimeFilter('all')}
+                  title="Show every booking ever"
+                >
+                  All time
+                </button>
+              </div>
+            )}
             {view !== 'calendar' && (
               <div className="view-toggle" title="What to show">
                 <button
