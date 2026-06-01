@@ -186,6 +186,88 @@ export async function countLiveSiblings(
   return data?.length ?? 0;
 }
 
+/** Auto-create a bookings row from an accepted proposal, and flip the
+ *  parent enquiry's legacy `status` to 'booked'. Mirrors the path in
+ *  PipelinePage.updateEnquiryStatus('booked') / createBookingFromDeal
+ *  so an Accept click produces the same downstream state as a Mark
+ *  Booked click — without the team having to do both.
+ *
+ *  Idempotent: a no-op when a booking already exists for the parent
+ *  enquiry (e.g. the user already pressed Mark Booked). Best-effort —
+ *  failures are logged and swallowed so the Accept itself still
+ *  completes cleanly. */
+export async function createBookingFromAcceptedProposal(
+  supabase: any,
+  proposalId: string,
+  partnerId: string,
+): Promise<void> {
+  try {
+    const { data: prop } = await supabase
+      .from('proposals')
+      .select('id, enquiry_id, property_id, guest_name, guest_email, guest_phone, guests_total, check_in, check_out, pricing_proposals(client_price_excl_vat)')
+      .eq('id', proposalId)
+      .single();
+    if (!prop) return;
+
+    let enquiry: any = null;
+    if (prop.enquiry_id) {
+      const { data } = await supabase
+        .from('enquiries')
+        .select('id, client_name, client_email, client_phone, nationality, guests_total, guests_adults, guests_children, check_in, check_out')
+        .eq('id', prop.enquiry_id)
+        .single();
+      enquiry = data;
+      // Idempotency: skip insert if a booking row already exists for
+      // this enquiry. Mark Booked may have run earlier.
+      const { data: existing } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('enquiry_id', prop.enquiry_id)
+        .maybeSingle();
+      if (existing) {
+        // Booking already there — still cascade enquiry.status so the
+        // two columns stay coherent.
+        await supabase
+          .from('enquiries')
+          .update({ status: 'booked', updated_at: new Date().toISOString() })
+          .eq('id', prop.enquiry_id);
+        return;
+      }
+    }
+
+    const perNight = Array.isArray(prop.pricing_proposals)
+      ? prop.pricing_proposals[0]?.client_price_excl_vat ?? null
+      : prop.pricing_proposals?.client_price_excl_vat ?? null;
+
+    await supabase.from('bookings').insert({
+      partner_id: partnerId,
+      property_id: prop.property_id,
+      enquiry_id: prop.enquiry_id ?? null,
+      guest_name: prop.guest_name || enquiry?.client_name || '',
+      guest_email: prop.guest_email ?? enquiry?.client_email ?? null,
+      guest_phone: prop.guest_phone ?? enquiry?.client_phone ?? null,
+      guest_nationality: enquiry?.nationality ?? null,
+      guests_total: prop.guests_total ?? enquiry?.guests_total ?? 1,
+      guests_adults: enquiry?.guests_adults ?? null,
+      guests_children: enquiry?.guests_children ?? null,
+      check_in: prop.check_in ?? enquiry?.check_in,
+      check_out: prop.check_out ?? enquiry?.check_out,
+      total_amount: perNight,
+      currency: 'ZAR',
+      status: 'confirmed',
+    });
+
+    if (prop.enquiry_id) {
+      await supabase
+        .from('enquiries')
+        .update({ status: 'booked', updated_at: new Date().toISOString() })
+        .eq('id', prop.enquiry_id);
+    }
+  } catch (err) {
+    console.error('createBookingFromAcceptedProposal failed:', err);
+  }
+}
+
 /** Mirror the enquiry's new deal_status onto its sole proposal. Same
  *  1:1 guard as the reverse direction. No-op when the new deal stage
  *  has no proposal equivalent (e.g. 'new'). */

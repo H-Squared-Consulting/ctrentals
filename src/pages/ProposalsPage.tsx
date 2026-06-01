@@ -24,6 +24,7 @@ import PricingModal from './PricingModal';
 import {
   syncEnquiryFromProposal,
   closeEnquiryOnProposalAccept,
+  createBookingFromAcceptedProposal,
   maybeCloseEnquiryOnProposalDecline,
   countLiveSiblings,
   type ProposalStatus,
@@ -163,6 +164,7 @@ export default function ProposalsPage() {
 
     if (outcome === 'accepted') {
       await closeEnquiryOnProposalAccept(supabase, p.id);
+      await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
     } else if (outcome === 'declined') {
       await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
     } else {

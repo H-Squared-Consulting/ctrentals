@@ -41,6 +41,7 @@ import {
   syncProposalFromEnquiry,
   syncEnquiryFromProposal,
   closeEnquiryOnProposalAccept,
+  createBookingFromAcceptedProposal,
   maybeCloseEnquiryOnProposalDecline,
   countLiveSiblings,
   type DealStatus,
@@ -1439,6 +1440,10 @@ export default function PipelinePage() {
 
     if (outcome === 'accepted') {
       await closeEnquiryOnProposalAccept(supabase, p.id);
+      // Auto-create the booking row so the team doesn't have to do a
+      // separate Mark Booked click on the deal. Idempotent — no-ops
+      // if a booking already exists.
+      await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
     } else if (outcome === 'declined') {
       await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
     } else {
