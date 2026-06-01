@@ -164,31 +164,30 @@
       '}',
       '.pos-hero-overlay {',
       '  position: absolute; inset: 0;',
-      '  background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.7) 100%);',
+      '  background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%);',
       '}',
       '.pos-hero-content { position: relative; z-index: 1; }',
-      /* Hero wordmark — mirrors the Southern Escapes logo treatment
-         from the brochure: "Southern" in Yellowtail (brush script) +
-         "Escapes" in Montserrat 900 caps. Tinted white/gold so it
-         reads on the dark hero gradient (the brochure uses the
-         logo's native dark tones because it sits on a light halo
-         over the photo; here the gradient itself is dark, so we
-         invert the value while keeping the same character). */
+      /* Hero wordmark — direct copy of the brochure's logo treatment.
+         "Southern" in Yellowtail (brush script) + "Escapes" in
+         Montserrat 900 caps, using the source logo's native colours
+         (#6D6D6D + #000) with a bright white halo so the dark ink
+         stays legible over any hero photo. Same gradient + bottom-
+         left positioning as the brochure for one-for-one parity. */
       '.pos-hero-brand {',
       '  display: flex; align-items: baseline; gap: 6px;',
-      '  margin-bottom: 14px; line-height: 1; justify-content: center;',
+      '  margin-bottom: 14px; line-height: 1;',
       '}',
       '.pos-hero-brand-script {',
       '  font-family: "Yellowtail", cursive; font-weight: 400;',
-      '  font-size: 36px; color: var(--white); letter-spacing: 0;',
+      '  font-size: 36px; color: #6D6D6D; letter-spacing: 0;',
       '  transform: translateY(2px);',
-      '  text-shadow: 0 2px 8px rgba(0,0,0,0.4);',
+      '  text-shadow: 0 0 12px rgba(255,255,255,0.95), 0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.25);',
       '}',
       '.pos-hero-brand-sans {',
       '  font-family: "Montserrat", -apple-system, sans-serif; font-weight: 900;',
-      '  font-size: 22px; color: var(--gold); letter-spacing: 1px;',
+      '  font-size: 22px; color: #000; letter-spacing: 1px;',
       '  text-transform: uppercase;',
-      '  text-shadow: 0 2px 8px rgba(0,0,0,0.4);',
+      '  text-shadow: 0 0 12px rgba(255,255,255,0.95), 0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(0,0,0,0.25);',
       '}',
       '@media (max-width: 767px) {',
       '  .pos-hero-brand { gap: 5px; margin-bottom: 10px; }',
@@ -541,8 +540,10 @@
     // Display name — Nicki + Hayley use the road / property name on
     // every guest-facing surface (the brochure went back to property
     // names too), so the CTR slug is reserved for internal admin
-    // references and isn't surfaced on the proposal page any more.
-    var displayName = pr.property_name || String(pr.slug || '').toUpperCase();
+    // references and is NEVER surfaced on the proposal page — not
+    // even as a fallback when property_name is missing (an empty
+    // heading is preferable to a CTR code leaking through).
+    var displayName = pr.property_name || '';
 
     // Section 1 - HERO
     html += '<section class="pos-hero">';
