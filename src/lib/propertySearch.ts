@@ -25,6 +25,9 @@ export interface PropertySearchFilters {
   query?: string;
   /** Exact-match bedroom counts. Empty = no bedroom filter. */
   bedrooms?: number[];
+  /** Exact-match sleeps counts. Same shape + semantics as
+   *  `bedrooms` — multi-select with `.in()`. Empty = no sleeps filter. */
+  sleeps?: number[];
   /** Amenities the property must have. Substring-matched against
    *  the amenity_tags text column case-insensitively, AND'd
    *  across the list ("pool AND jacuzzi"). */
@@ -114,8 +117,13 @@ export async function searchProperties(
     // The caller has named the exact houses; bedroom / text /
     // amenity narrowing on top would just confuse the result.
     propsQuery = propsQuery.in('id', f.restrictToIds as string[]);
-  } else if (f.bedrooms && f.bedrooms.length > 0) {
-    propsQuery = propsQuery.in('bedrooms', f.bedrooms);
+  } else {
+    if (f.bedrooms && f.bedrooms.length > 0) {
+      propsQuery = propsQuery.in('bedrooms', f.bedrooms);
+    }
+    if (f.sleeps && f.sleeps.length > 0) {
+      propsQuery = propsQuery.in('sleeps', f.sleeps);
+    }
   }
   if (!restrictMode && f.query && f.query.trim()) {
     // Strip characters that break PostgREST's .or() syntax
