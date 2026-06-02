@@ -40,6 +40,7 @@ const TIER_LABEL: Record<AgentTierKey, string> = {
 };
 import AgentPortalEnquiryFlow from '../components/AgentPortalEnquiryFlow';
 import ActionModal from '../components/ActionModal';
+import AgentLinkShareModal from '../components/AgentLinkShareModal';
 
 type Tab = 'enquiries' | 'about';
 
@@ -559,6 +560,8 @@ function EnquiryDetailModal({ enquiry, onClose }: { enquiry: AgentEnquiry; onClo
               <PublishedProposalRow
                 key={p.refCode}
                 proposal={p}
+                guestName={enquiry.guestName}
+                guestEmail={enquiry.guestEmail}
                 onSummary={() => setSummaryProposal(p)}
               />
             ))}
@@ -684,7 +687,17 @@ function EnquiryDetailModal({ enquiry, onClose }: { enquiry: AgentEnquiry; onClo
  *  does. Locking the live URL once accepted/booked stops the agent
  *  from re-sharing a stale link after the booking has been confirmed.
  */
-function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProposal; onSummary: () => void }) {
+function PublishedProposalRow({
+  proposal,
+  guestName,
+  guestEmail,
+  onSummary,
+}: {
+  proposal: PublishedProposal;
+  guestName?: string;
+  guestEmail?: string;
+  onSummary: () => void;
+}) {
   const isTerminal = TERMINAL_PROPOSAL_STATUSES.has(proposal.status);
   // Stop click bubbling so toggling the earnings details doesn't also
   // collapse the parent enquiry row.
@@ -727,6 +740,22 @@ function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProp
     return base;
   })();
 
+  // Share-with-guest modal. Proposal link is suppressed once the
+  // proposal hits a terminal status (matches the View proposal lock
+  // above — we don't want agents forwarding a stale post-booking URL).
+  // Brochure stays shareable either way when the property has a slug.
+  // Declined proposals lock the whole action row — no Share / Brochure /
+  // View summary. The agent's read-only signal is a "Declined" pill in
+  // place of the buttons.
+  const isDeclined = proposal.status === 'declined';
+  const [shareOpen, setShareOpen] = useState(false);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const proposalShareUrl = !isTerminal ? `${origin}${proposalHref}` : '';
+  const brochureShareUrl = proposal.propertySlug
+    ? `${origin}/brochures/${encodeURIComponent(proposal.propertySlug)}?brand=agent`
+    : '';
+  const canShare = !isDeclined && (!!proposalShareUrl || !!brochureShareUrl);
+
   return (
     <div
       onClick={stop}
@@ -756,11 +785,31 @@ function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProp
           </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--s-2)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {proposal.propertySlug && (
+          {isDeclined ? (
+            <span
+              className="ops-status-pill ops-status-pill--declined"
+              title="This proposal was declined — no further actions available"
+            >
+              <span className="ops-status-pill-dot" />
+              Declined
+            </span>
+          ) : null}
+          {!isDeclined && canShare && (
+            <button
+              type="button"
+              className="btn btn-outline-primary"
+              style={{ fontSize: '0.8125rem' }}
+              onClick={(e) => { e.stopPropagation(); setShareOpen(true); }}
+              title="Share the proposal and brochure links with your guest"
+            >
+              Share
+            </button>
+          )}
+          {!isDeclined && proposal.propertySlug && (
             <a
               className="btn btn-outline"
               style={{ fontSize: '0.8125rem' }}
-              href={`/brochures/${encodeURIComponent(proposal.propertySlug)}`}
+              href={`/brochures/${encodeURIComponent(proposal.propertySlug)}?brand=agent`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
@@ -769,7 +818,7 @@ function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProp
               Brochure
             </a>
           )}
-          {isTerminal ? (
+          {isDeclined ? null : isTerminal ? (
             <button
               type="button"
               className="btn btn-outline"
@@ -804,6 +853,16 @@ function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProp
           ? Math.max(0, Math.round((new Date(proposal.checkOut).getTime() - new Date(proposal.checkIn).getTime()) / 86_400_000))
           : 0}
       />
+      {shareOpen && (
+        <AgentLinkShareModal
+          propertyName={proposal.propertyName || ''}
+          proposalUrl={proposalShareUrl}
+          brochureUrl={brochureShareUrl || null}
+          guestFirstName={guestName || ''}
+          guestEmail={guestEmail || ''}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   );
 }
