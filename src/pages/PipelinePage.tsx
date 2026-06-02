@@ -3039,19 +3039,27 @@ function DealCardImpl({
           : isResponded
           ? (() => {
               if (proposalCount === 0) return null;
-              const sentLikeStatuses = new Set(['sent', 'viewed', 'interested', 'accepted', 'booked']);
-              const sentCount = deal.proposals.filter(p => sentLikeStatuses.has(p.status)).length;
-              // Green when every proposal's gone out; amber while
-              // some are still in the draft pile so partial coverage
-              // reads as "you still owe the guest a quote".
-              const allSent = sentCount === proposalCount;
-              const color = allSent ? '#047857' : '#B45309';
+              // "To close" — proposals out with the guest that still
+              // need a final disposition (accept / decline / let
+              // expire). Anything terminal (declined, accepted,
+              // booked, cancelled, expired, archived) is already
+              // closed; the team can stop chasing it.
+              const closedStatuses = new Set(['declined', 'accepted', 'booked', 'cancelled', 'expired', 'archived']);
+              const toCloseCount = deal.proposals.filter(p => !closedStatuses.has(p.status)).length;
+              // Green when nothing's left to chase; amber while there
+              // are still open proposals on this guest's plate.
+              const color = toCloseCount === 0 ? '#047857' : '#B45309';
+              const label = toCloseCount === 0
+                ? 'All closed'
+                : `${toCloseCount} to close`;
               return (
                 <span
                   style={{ color, fontWeight: 600 }}
-                  title={`${sentCount} of ${proposalCount} proposals sent`}
+                  title={toCloseCount === 0
+                    ? 'Every proposal on this deal has a final outcome'
+                    : `${toCloseCount} of ${proposalCount} proposals still need a final outcome (accept / decline / let expire)`}
                 >
-                  📤 {sentCount}/{proposalCount} sent
+                  📤 {label}
                 </span>
               );
             })()
