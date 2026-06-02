@@ -356,6 +356,42 @@ export function EnquiryForm() {
     }
     setSaving(true);
     try {
+      // Duplicate guard — platform enquiries can't be deduped by
+      // guest email (Airbnb / VRBO redact it until a booking is
+      // accepted), so we key on the conversation URL instead. This is
+      // how the Victoria duplicate slipped in: same Airbnb thread
+      // logged twice. Match on the trimmed URL among non-archived
+      // rows; if anyone's already logged it, send the user to that
+      // deal instead of letting them create a sibling.
+      const normalisedUrl = form.source_url.trim();
+      const { data: dupes, error: dupeErr } = await supabase
+        .from('enquiries')
+        .select('id, ref_code, client_name, deal_status')
+        .eq('partner_id', CT_RENTALS_PARTNER_ID)
+        .eq('source', 'platform')
+        .eq('source_url', normalisedUrl)
+        .is('archived_at', null)
+        .limit(1);
+      if (dupeErr) {
+        console.error('Platform duplicate check failed:', dupeErr);
+        // Soft-fail — better to let the save proceed than block on a
+        // transient read error. The unique-by-URL guarantee is a UX
+        // affordance, not a data invariant.
+      } else if (dupes && dupes.length > 0) {
+        const existing = dupes[0] as { id: string; ref_code: string | null; client_name: string | null; deal_status: string | null };
+        setSaving(false);
+        const openExisting = window.confirm(
+          `An enquiry already exists for this conversation thread:\n\n` +
+          `Ref:   ${existing.ref_code || '—'}\n` +
+          `Guest: ${existing.client_name || '—'}\n` +
+          `Stage: ${existing.deal_status || 'new'}\n\n` +
+          `Open the existing deal instead of creating a duplicate?`
+        );
+        if (openExisting) {
+          navigate(`/operations/enquiries?deal=${encodeURIComponent(existing.id)}&highlight=1`);
+        }
+        return;
+      }
       const refCode = await nextPlatformEnquiryRefCode(supabase, platformChannel);
       const clientName = form.client_name.trim();
       const clientEmail = form.client_email.trim() || null;
