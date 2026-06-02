@@ -177,6 +177,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     pos_assured: property.pos_assured || false,
     sort_order: property.sort_order ?? 0,
     notes: property.notes || '',
+    security_notes: property.security_notes || '',
   });
 
   const [saving, setSaving] = useState(false);
@@ -690,6 +691,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
         sort_order: parseInt(form.sort_order, 10) || 0,
         bed_sizes: form.bed_sizes.filter(b => b.room || b.bed),
         notes: form.notes.trim() || null,
+        security_notes: form.security_notes.trim() || null,
       };
 
       let savedPropertyId = property.id;
@@ -1096,6 +1098,19 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           <div className="form-group">
             <label className="form-label">Description</label>
             <textarea className="form-input" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="About this property..." />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Security notes</label>
+            <textarea
+              className="form-input"
+              rows={3}
+              value={form.security_notes}
+              onChange={(e) => setForm({ ...form, security_notes: e.target.value })}
+              placeholder="Visible cameras, armed response, electric fence, beams, panic button location, alarm code arrangement…"
+            />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Internal only — never shown to guests, agents, or on the brochure / proposal pages.
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Property Type</label>
