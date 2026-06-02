@@ -762,31 +762,46 @@ function PublishedProposalRow({ proposal, onSummary }: { proposal: PublishedProp
             {!isTerminal && proposal.expiresOn ? <> · expires {proposal.expiresOn}</> : null}
           </div>
         </div>
-        {isTerminal ? (
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{ fontSize: '0.8125rem' }}
-            onClick={(e) => { e.stopPropagation(); onSummary(); }}
-            title="Booking is confirmed — open the read-only summary"
-          >
-            View summary
-          </button>
-        ) : (
-          <a
-            className="btn btn-primary"
-            style={{ fontSize: '0.8125rem' }}
-            href={proposalHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            title={selected && !selected.isCurrent
-              ? 'Opens the proposal page rendered with this historical pricing'
-              : undefined}
-          >
-            View proposal →
-          </a>
-        )}
+        <div style={{ display: 'flex', gap: 'var(--s-2)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {proposal.propertySlug && (
+            <a
+              className="btn btn-outline"
+              style={{ fontSize: '0.8125rem' }}
+              href={`/brochures/${encodeURIComponent(proposal.propertySlug)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Open the full brochure for this property"
+            >
+              Brochure
+            </a>
+          )}
+          {isTerminal ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ fontSize: '0.8125rem' }}
+              onClick={(e) => { e.stopPropagation(); onSummary(); }}
+              title="Booking is confirmed — open the read-only summary"
+            >
+              View summary
+            </button>
+          ) : (
+            <a
+              className="btn btn-primary"
+              style={{ fontSize: '0.8125rem' }}
+              href={proposalHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={selected && !selected.isCurrent
+                ? 'Opens the proposal page rendered with this historical pricing'
+                : undefined}
+            >
+              View proposal →
+            </a>
+          )}
+        </div>
       </div>
       <ProposalEarningsCard
         versions={versions}

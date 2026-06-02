@@ -278,6 +278,9 @@ Deno.serve(async (req) => {
       (publishedByEnquiry[p.enquiry_id] ||= []).push({
         refCode: p.ref_code || '',
         propertyName: prop?.name || '',
+        // Slug surfaces the per-proposal Brochure link button on the
+        // agent portal — same slug the public brochure route uses.
+        propertySlug: prop?.slug || '',
         publishedAt: p.published_to_agent_at || '',
         expiresOn: p.published_to_agent_expires || null,
         status: p.status || '',

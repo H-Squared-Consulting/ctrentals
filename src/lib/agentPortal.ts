@@ -92,6 +92,9 @@ export interface AgentEnquiry {
   publishedProposals: Array<{
     refCode: string;
     propertyName: string;
+    /** Property slug — drives the per-proposal Brochure link on the
+     *  agent portal. Empty string when the property has no slug set. */
+    propertySlug: string;
     publishedAt: string;
     expiresOn: string | null;
     /** Proposal lifecycle status — when 'accepted' / 'booked' (or
