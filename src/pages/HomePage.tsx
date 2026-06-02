@@ -62,9 +62,15 @@ const CLOSED_PROPOSAL_STATUSES = new Set([
   'declined', 'accepted', 'booked', 'cancelled', 'expired', 'archived',
 ]);
 
-/** deal_status values that correspond to the Responded column on the
- *  enquiries board (columnForDeal in PipelinePage.tsx). */
-const RESPONDED_DEAL_STATUSES = ['sent', 'stalled', 'interested'];
+/** Proposal statuses that mean "out with the guest, awaiting a
+ *  decision". A deal is in the Responded column on the kanban iff
+ *  at least one of its proposals sits in one of these. */
+const OPEN_SENT_STATUSES = new Set(['sent', 'viewed', 'interested']);
+
+/** Proposal statuses that flip the deal into Booked — once any
+ *  proposal hits one of these the deal leaves Responded, so it
+ *  shouldn't appear in the to-close queue. */
+const WON_PROPOSAL_STATUSES = new Set(['accepted', 'booked']);
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -131,29 +137,38 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, [supabase, todayIso]);
 
-  // Pull every Responded-column deal + its proposals so we can
-  // count how many proposals still need a final outcome. Filters
-  // to deal_status in ('sent','stalled','interested') — the same
-  // set columnForDeal() maps onto the Responded kanban column.
-  // Archived enquiries are excluded; once nothing's "to close" on
-  // a deal it drops out of this tile (still visible on the board).
+  // Find every enquiry the kanban would classify as Responded and
+  // count its open proposals. We DON'T filter on the stored
+  // deal_status here — it goes stale on multi-proposal deals
+  // (PipelinePage.tsx:373 spells out the same caveat). Instead pull
+  // active enquiries from the last 90 days, then derive Responded
+  // membership from the actual proposal mix:
+  //   ≥1 proposal still out with the guest (sent / viewed /
+  //     interested), AND
+  //   no proposal accepted / booked (those flip the deal to Booked).
+  // Expired deals (check_out in the past) are excluded so the team
+  // isn't asked to chase a guest whose stay has already passed.
   useEffect(() => {
     if (!supabase) return;
     let cancelled = false;
     setToCloseLoading(true);
     (async () => {
+      const lookbackIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
       const { data, error } = await supabase
         .from('enquiries')
         .select(`
           id, ref_code, client_name, guest_name, is_agent,
-          deal_status, archived_at, created_at,
+          check_out, deal_status, archived_at, created_at,
           proposals(id, status, partner_properties(property_name))
         `)
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
-        .in('deal_status', RESPONDED_DEAL_STATUSES)
         .is('archived_at', null)
+        // Stored terminal states are authoritative — drop won/lost early
+        // so the in-memory filter doesn't have to.
+        .or('deal_status.is.null,deal_status.not.in.(won,lost)')
+        .gte('created_at', lookbackIso)
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(400);
       if (cancelled) return;
       if (error) {
         console.error('HomePage to-close fetch failed:', error);
@@ -162,14 +177,26 @@ export default function HomePage() {
         return;
       }
       const now = Date.now();
+      const todayIsoLocal = todayIso;
       const rows: ToCloseRow[] = (data || [])
         .map((e: any): ToCloseRow | null => {
+          // Expired = stay window already gone. Kanban puts these in
+          // Closed; this tile shouldn't surface them.
+          if (e.check_out && e.check_out < todayIsoLocal) return null;
           const props = (e.proposals || []) as Array<{
             id: string; status: string;
             partner_properties: { property_name: string } | null;
           }>;
+          // A deal that's been won (any proposal accepted/booked) has
+          // left Responded — skip it.
+          if (props.some(p => WON_PROPOSAL_STATUSES.has(p.status))) return null;
+          // Open chase pool: anything not in a terminal state. This is
+          // what the user-visible "to close" count is measuring.
           const open = props.filter(p => !CLOSED_PROPOSAL_STATUSES.has(p.status));
           if (open.length === 0) return null;
+          // Must have at least one proposal that's actually been sent
+          // — drafts-only deals belong in Quoting, not Responded.
+          if (!props.some(p => OPEN_SENT_STATUSES.has(p.status))) return null;
           const propertySummary = open.length === 1
             ? (open[0].partner_properties?.property_name || null)
             : `${open.length} properties`;
@@ -190,7 +217,7 @@ export default function HomePage() {
       setToCloseLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [supabase]);
+  }, [supabase, todayIso]);
 
   const { arrivals, departures, inStay } = useMemo(() => {
     const arrivals: TodayBookingRow[] = [];
