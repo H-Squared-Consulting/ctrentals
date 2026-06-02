@@ -57,9 +57,9 @@ export default function HomePage() {
   // Pull every booking touching today — arrivals (check_in === today),
   // departures (check_out === today), and in-stay (check_in < today <
   // check_out). One query covers all three with check_in <= today AND
-  // check_out >= today, then we bucket client-side. Cancelled
-  // bookings + blocks are filtered out (the calendar's "what's
-  // happening today" view shouldn't surface either).
+  // check_out >= today, then we bucket client-side. Cancelled bookings
+  // AND blocks (kind='block' — owner stays / maintenance / holds) are
+  // filtered out; this tile shows real guest movement only.
   useEffect(() => {
     if (!supabase) return;
     let cancelled = false;
@@ -71,7 +71,8 @@ export default function HomePage() {
         .eq('partner_id', CT_RENTALS_PARTNER_ID)
         .lte('check_in', todayIso)
         .gte('check_out', todayIso)
-        .neq('status', 'cancelled');
+        .neq('status', 'cancelled')
+        .neq('kind', 'block');
       if (cancelled) return;
       if (error) {
         console.error('HomePage today fetch failed:', error);
