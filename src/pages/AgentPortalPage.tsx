@@ -146,7 +146,6 @@ export default function AgentPortalPage() {
           {tab === 'enquiries' && (
             <EnquiriesTab
               enquiries={enquiries}
-              portfolioCount={properties.length}
               activeProposalCount={activeProposalCount}
               onStartEnquiry={() => setEnquiryFlowOpen(true)}
             />
@@ -344,15 +343,10 @@ function ContactCard({ name, role, whatsappE164, whatsappDisplay, email }: {
 
 function EnquiriesTab({
   enquiries,
-  portfolioCount,
   activeProposalCount,
   onStartEnquiry,
 }: {
   enquiries: AgentEnquiry[];
-  /** How many houses the agent has been assigned. Surfaced as a
-   *  small reach signal at the top of the tab — the agent never
-   *  sees which houses, only how many are in their portfolio. */
-  portfolioCount: number;
   /** Count of proposals Southern Escapes has published back to this
    *  agent across all of their enquiries. */
   activeProposalCount: number;
@@ -360,7 +354,6 @@ function EnquiriesTab({
 }) {
   const stats = (
     <div style={statsRowStyle}>
-      <StatTile label="Houses in portfolio" value={portfolioCount} />
       <StatTile label="Enquiries"           value={enquiries.length} />
       <StatTile label="Proposals received"  value={activeProposalCount} />
     </div>
