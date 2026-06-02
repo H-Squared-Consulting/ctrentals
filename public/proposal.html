@@ -537,15 +537,13 @@
 
     var html = '';
 
-    // Display name — proposals lead with the property's tagline (the
-    // marketing line from the property editor, e.g. "Quintessential
-    // Constantia villa with mountain views") rather than the bare
-    // property name. Nicki wanted the proposal to sell, not label.
-    // Falls back to property_name when no tagline is set so the
-    // hero still has a heading. The CTR slug is NEVER surfaced —
-    // not even as a final fallback (an empty heading is preferable
-    // to a CTR code leaking onto a guest-facing surface).
-    var displayName = pr.tagline || pr.property_name || '';
+    // Display name — proposals show the property's tagline (the
+    // marketing line from the property editor) as the headline.
+    // Nicki's hard rule: property_name AND the CTR slug are both
+    // internal-admin-only and must NEVER leak to a guest-facing
+    // surface, not even as a fallback. An empty heading is
+    // preferable to either one slipping through.
+    var displayName = pr.tagline || '';
 
     // Section 1 - HERO
     html += '<section class="pos-hero">';
@@ -615,7 +613,7 @@
       for (var i = 0; i < visibleGallery.length; i++) {
         var gItem = visibleGallery[i];
         html += '<figure class="pos-gallery-fig">';
-        html += '<img src="' + esc(sizedImgUrl(gItem.url, 1200)) + '" alt="' + esc(pr.property_name) + ' gallery image ' + (i + 1) + '" loading="lazy">';
+        html += '<img src="' + esc(sizedImgUrl(gItem.url, 1200)) + '" alt="' + esc(displayName) + ' gallery image ' + (i + 1) + '" loading="lazy">';
         if (gItem.caption) {
           html += '<figcaption class="pos-gallery-caption">' + esc(gItem.caption) + '</figcaption>';
         }

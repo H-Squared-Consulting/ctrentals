@@ -53,12 +53,14 @@
     }
     return 'direct';
   })();
-  // Brochures show the property name (road / house name) on every
-  // brand mode. Nicki + Hayley reverted to road names instead of CTR
-  // slugs across all guest-facing surfaces — the slug is internal-
-  // admin-only now.
+  // Brochures show the tagline (the marketing line set on the
+  // property editor) as the house identifier in every brand mode.
+  // Nicki's rule: property_name is internal-admin-only and must
+  // NEVER be surfaced on a guest-facing surface, not even as a
+  // fallback. An empty heading is preferable to leaking the bare
+  // house name.
   function displayName(p) {
-    return (p && p.property_name) || '';
+    return (p && p.tagline) || '';
   }
 
   // ── Helpers ──
@@ -655,12 +657,9 @@
         '</div>';
     }
     html += '<h1 class="br-hero-title">' + esc(displayName(p)) + '</h1>';
-    // Tagline suppressed in anon mode — copy often names the suburb or
-    // the house ("Bordeaux House overlooking…") and we don't want any
-    // route to the property identity outside the CTR code.
-    if (p.tagline && BRAND_MODE !== 'agent-anon') {
-      html += '<div class="br-hero-tagline">' + esc(p.tagline) + '</div>';
-    }
+    // Standalone tagline rendering removed — the hero title IS the
+    // tagline now (see displayName above), so a second copy below
+    // would just repeat the same line within the same block.
     html += '</div>';
     html += '</section>';
 
