@@ -182,7 +182,7 @@ export function Icon({ name }: { name: string }) {
  * iframe embed so the demo still renders without a token. Either way
  * the navigate CTAs deep-link to Google Maps (also per §10.1). */
 
-const MAPBOX_TOKEN = (import.meta as any).env?.VITE_MAPBOX_TOKEN as string | undefined;
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 export function MapEmbed({
   lat, lng, label, height = 260,

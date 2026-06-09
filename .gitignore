@@ -3,4 +3,5 @@ dist
 .env
 .env.local
 .vite
+.vercel
 supabase/.temp/
