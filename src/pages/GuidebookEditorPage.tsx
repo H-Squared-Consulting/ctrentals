@@ -28,7 +28,6 @@ import GuidebookHouseManualPanel from '../components/GuidebookHouseManualPanel';
 import GuidebookArrivalPanel from '../components/GuidebookArrivalPanel';
 import GuidebookEmergencyPanel from '../components/GuidebookEmergencyPanel';
 import GuidebookRecommendationsPanel from '../components/GuidebookRecommendationsPanel';
-import GuidebookDeparturePanel from '../components/GuidebookDeparturePanel';
 
 type Guidebook = {
   id: string;
@@ -41,14 +40,13 @@ type Guidebook = {
   updated_at: string;
 };
 
-type Section = 'basics' | 'arrival' | 'manual' | 'recommendations' | 'departure' | 'emergency' | 'preview';
+type Section = 'basics' | 'arrival' | 'manual' | 'recommendations' | 'emergency' | 'preview';
 
 const SECTIONS: { id: Section; label: string; futurePR?: number }[] = [
   { id: 'basics',          label: 'Basics' },
   { id: 'arrival',         label: 'Arrival & WiFi' },
   { id: 'manual',          label: 'House Manual' },
   { id: 'recommendations', label: 'Recommendations' },
-  { id: 'departure',       label: 'Departure' },
   { id: 'emergency',       label: 'Emergency' },
   { id: 'preview',         label: 'Preview' },
 ];
@@ -262,9 +260,6 @@ export default function GuidebookEditorPage() {
               </div>
               <GuidebookRecommendationsPanel guidebookId={guidebook.id} />
             </div>
-          )}
-          {section === 'departure' && (
-            <GuidebookDeparturePanel guidebookId={guidebook.id} />
           )}
           {section === 'emergency' && (
             <GuidebookEmergencyPanel guidebookId={guidebook.id} />

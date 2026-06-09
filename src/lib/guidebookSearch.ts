@@ -4,8 +4,6 @@
  *
  * One doc per WiFi credential, address, host contact, manual card,
  * recommendation, and emergency contact (hospital + armed-response).
- * National SA emergency numbers (10111, 10177, 112) are seeded too
- * so a panicked guest typing "police" finds them immediately.
  *
  * No analytics — per §10.4 we DO NOT log queries in v1.
  */
@@ -16,7 +14,7 @@ import { toCanonicalCategory } from './guidebookTaxonomy';
 
 export type SearchDoc = {
   id: string;
-  kind: 'wifi' | 'address' | 'host' | 'manual' | 'recommendation' | 'emergency' | 'checkout' | 'checkin';
+  kind: 'wifi' | 'address' | 'host' | 'manual' | 'recommendation' | 'emergency' | 'checkin';
   title: string;
   body: string;          // stripped of HTML
   category?: string;     // for source attribution (e.g. "House Manual → Safety")
@@ -107,20 +105,6 @@ export function buildSearchIndex(
       icon: 'clock',
     });
   }
-  if (guidebook.checkout_text || guidebook.checkout_time) {
-    docs.push({
-      id: 'checkout',
-      kind: 'checkout',
-      title: guidebook.checkout_time
-        ? `Check-out (${(guidebook.checkout_time as string).slice(0, 5)})`
-        : 'Check-out',
-      body: strip(guidebook.checkout_text),
-      source: 'Departure',
-      href: `#departure`,
-      icon: 'key',
-    });
-  }
-
   // Manuals
   for (const m of manuals) {
     const canonical = toCanonicalCategory(m.category) || (m.category || 'Manual');
@@ -150,7 +134,8 @@ export function buildSearchIndex(
     });
   }
 
-  // Emergency contacts (per-property + SA hardcoded nationals)
+  // Emergency contacts (per-property only — national SA lines removed
+  // per Nicki; the Emergency page leads with SE's own contacts).
   if (guidebook.nearest_hospital_name) {
     docs.push({
       id: 'hospital',
@@ -173,36 +158,6 @@ export function buildSearchIndex(
       icon: 'shield',
     });
   }
-  // SA national lines (hardcoded per §10.10).
-  docs.push(
-    {
-      id: 'saps',
-      kind: 'emergency',
-      title: 'Police (SAPS) · 10111',
-      body: 'saps police emergency 10111',
-      source: 'Emergency → National',
-      href: `/g/${slug}/emergency`,
-      icon: 'alert',
-    },
-    {
-      id: 'ambulance',
-      kind: 'emergency',
-      title: 'Ambulance · 10177',
-      body: 'ambulance medical emergency 10177',
-      source: 'Emergency → National',
-      href: `/g/${slug}/emergency`,
-      icon: 'hospital',
-    },
-    {
-      id: 'national-emergency',
-      kind: 'emergency',
-      title: 'National emergency · +27 86 12 12 300',
-      body: 'national emergency 112 cell mobile',
-      source: 'Emergency → National',
-      href: `/g/${slug}/emergency`,
-      icon: 'phone',
-    },
-  );
 
   return docs;
 }
@@ -230,7 +185,7 @@ export function search(
 ): SearchDoc[] {
   const q = query.trim();
   if (!q) {
-    const suggestedKinds: SearchDoc['kind'][] = ['wifi', 'address', 'host', 'emergency', 'checkout', 'recommendation'];
+    const suggestedKinds: SearchDoc['kind'][] = ['wifi', 'address', 'host', 'emergency', 'recommendation'];
     const buckets = new Map<string, SearchDoc>();
     for (const d of docs) {
       // One per kind for the suggested bucket — keep it compact.
