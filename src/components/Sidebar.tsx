@@ -27,6 +27,16 @@ const ADMIN_ONLY_EMAILS = [
   'jordon@hsquared-consulting.com',
   'jordon.harrod2003@gmail.com',
 ];
+
+/** Emails allowed to see the Guidebooks section — the admins plus the
+ *  Southern Escapes hosts (Hayley, Nicki) who own guidebook content.
+ *  Kept separate from ADMIN_ONLY_EMAILS so hosts get Guidebooks without
+ *  also unlocking admin-only surfaces like Price tiers. */
+const GUIDEBOOK_EMAILS = [
+  ...ADMIN_ONLY_EMAILS,
+  'hayley@capetrentals.com',
+  'nicki@capetrentals.com',
+];
 type NavItem = {
   to: string;
   label: string;
@@ -52,7 +62,7 @@ const NAV: NavItem[] = [
   // redirect so stale bookmarks don't 404.
   { to: '/operations/bookings',    label: 'Bookings',   icon: '📅' },
   { to: '/properties',             label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
-  { to: '/guidebooks',             label: 'Guidebooks', icon: '📖', restrictedTo: ADMIN_ONLY_EMAILS },
+  { to: '/guidebooks',             label: 'Guidebooks', icon: '📖', restrictedTo: GUIDEBOOK_EMAILS },
   { to: '/crm/people',             label: 'People',     icon: '👥', aliases: ['/crm/home-owners'] },
   { to: '/crm/guests',             label: 'Guests',     icon: '🛏' },
   { to: '/finance',                label: 'Finance',    icon: '💰', comingSoon: true },

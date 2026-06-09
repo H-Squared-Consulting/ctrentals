@@ -28,12 +28,10 @@ import {
   fullAddress,
   telHref,
   waHref,
-  formatCheckoutTime,
   type Guidebook,
   type Manual,
   type RecPin,
   type RecMapHandle,
-  type ChecklistItem,
 } from '../lib/guidebookShared';
 import { groupByCategory, type GuidebookCategory } from '../lib/guidebookTaxonomy';
 
@@ -58,7 +56,7 @@ export default function GuidebookPage() {
   const [guidebook, setGuidebook] = useState<Guidebook | null>(null);
   const [manuals, setManuals] = useState<Manual[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
-  const [activeSection, setActiveSection] = useState<'home' | 'arrival' | 'stay' | 'departure' | 'explore'>('home');
+  const [activeSection, setActiveSection] = useState<'home' | 'arrival' | 'stay' | 'explore'>('home');
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -128,7 +126,7 @@ export default function GuidebookPage() {
   // <section> wrappers in the canvas (Home, Arrival, Stay, Explore).
   useEffect(() => {
     if (loading || notFound) return;
-    const ids = ['home', 'arrival', 'stay', 'departure', 'explore'] as const;
+    const ids = ['home', 'arrival', 'stay', 'explore'] as const;
     const observer = new IntersectionObserver((entries) => {
       // Pick the section closest to the top that's still intersecting.
       const visible = entries
@@ -201,7 +199,6 @@ export default function GuidebookPage() {
           scroll; desktop centred row. */}
       <QuickActionsStrip
         guidebook={guidebook}
-        scrollTo={scrollTo}
         showToast={showToast}
       />
 
@@ -213,7 +210,6 @@ export default function GuidebookPage() {
               { id: 'home',      label: 'Home' },
               { id: 'arrival',   label: 'Arrival' },
               { id: 'stay',      label: 'Your Stay' },
-              { id: 'departure', label: 'Departure' },
               { id: 'explore',   label: 'Explore' },
             ] as const).map(s => (
               <button
@@ -249,8 +245,7 @@ export default function GuidebookPage() {
             {/* Two-column row first: Check-in + Parking. */}
             <ArrivalCard icon="clock" title="Check-in" body={guidebook.checkin_text} />
             <ArrivalCard icon="car"   title="Parking"  body={guidebook.parking_text} />
-            {/* Full-width rows: Directions (map + CTAs), WiFi. Check-out
-                lives in the Departure section below. */}
+            {/* Full-width rows: Directions (map + CTAs), WiFi. */}
             <DirectionsCard guidebook={guidebook} showToast={showToast} />
             <WifiCard
               ssid={guidebook.wifi_ssid}
@@ -274,9 +269,6 @@ export default function GuidebookPage() {
 
           <ManualGroups manuals={manuals} />
         </section>
-
-        {/* ── Departure (checkout + checklist) ────────────────────── */}
-        <DepartureSection guidebook={guidebook} />
 
         {/* ── Explore (recommendations) ───────────────────────────── */}
         <ExploreSection
@@ -473,25 +465,17 @@ function DirectionsCard({
  *
  * Chip behaviours (§4.1):
  *   WiFi      → expands inline; reveals SSID/password with copy + toast
- *   Check-out → smooth-scrolls to the Check-out card in Arrival
- *               (Departure section arrives in PR #8)
  *   Call host → real <a href="tel:"> link
- *   Emergency → routes to /g/:slug/emergency (built in PR #4)
+ *   Emergency → routes to /g/:slug/emergency
  *   Address   → copies the full address + opens Google Maps in a tab
  */
 function QuickActionsStrip({
-  guidebook, scrollTo, showToast,
+  guidebook, showToast,
 }: {
   guidebook: Guidebook;
-  scrollTo: (id: string) => void;
   showToast: (msg: string) => void;
 }) {
   const [wifiExpanded, setWifiExpanded] = useState(false);
-
-  const checkoutLabel = useMemo(() => {
-    const t = formatCheckoutTime(guidebook.checkout_time);
-    return t ? `Check-out ${t}` : 'Check-out';
-  }, [guidebook.checkout_time]);
 
   const address = fullAddress(guidebook);
   const mapsHref = address
@@ -521,17 +505,6 @@ function QuickActionsStrip({
         >
           <Icon name="wifi" />
           <span className="gb-qa-chip-label">WiFi</span>
-        </button>
-
-        {/* Check-out — jumps to the Departure section. */}
-        <button
-          type="button"
-          className="gb-qa-chip"
-          onClick={() => scrollTo('departure')}
-          aria-label={checkoutLabel}
-        >
-          <Icon name="clock" />
-          <span className="gb-qa-chip-label">{checkoutLabel}</span>
         </button>
 
         {/* Call host */}
@@ -683,31 +656,12 @@ function HostCard({ guidebook }: { guidebook: Guidebook }) {
  */
 function ManualGroups({ manuals }: { manuals: Manual[] }) {
   const groups = useMemo(() => groupByCategory(manuals), [manuals]);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Desktop ≥769px: force every <details> open so the body shows
-  // unconditionally. Mobile: leave the user's open/closed state alone.
-  // Re-syncs on resize when the user crosses the breakpoint.
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const mq = window.matchMedia('(min-width: 769px)');
-    function syncOpen() {
-      const isDesktop = mq.matches;
-      const els = wrapRef.current?.querySelectorAll<HTMLDetailsElement>('.gb-manual-details');
-      if (!els) return;
-      els.forEach(d => {
-        if (isDesktop) d.setAttribute('open', '');
-        // Don't auto-close on mobile — respect whatever the user did.
-      });
-    }
-    syncOpen();
-    mq.addEventListener('change', syncOpen);
-    return () => mq.removeEventListener('change', syncOpen);
-  }, [groups]);
-
+  // Cards are collapsed by default and freely collapsible on every screen —
+  // a clean, scannable list of titles the guest taps to expand.
   if (groups.length === 0) return null;
   return (
-    <div ref={wrapRef} className="gb-manual-groups">
+    <div className="gb-manual-groups">
       {groups.map((group, i) => (
         <div key={group.category} className="gb-manual-group">
           <div className="gb-manual-group-head">
@@ -729,16 +683,8 @@ function ManualGroups({ manuals }: { manuals: Manual[] }) {
 }
 
 function ManualCard({ manual, category }: { manual: Manual; category: GuidebookCategory }) {
-  const hasPhoto = !!manual.image_url;
   return (
-    <article className={`gb-manual-card gb-manual-card--v2 ${hasPhoto ? 'gb-manual-card--photo' : ''}`}>
-      {hasPhoto && (
-        <div
-          className="gb-manual-photo"
-          style={{ backgroundImage: `url(${manual.image_url})` }}
-          aria-hidden
-        />
-      )}
+    <article className="gb-manual-card gb-manual-card--v2">
       <details className="gb-manual-details">
         <summary className="gb-manual-summary">
           <div className="gb-manual-summary-icon" aria-hidden>
@@ -1053,142 +999,5 @@ function RecCard({
         </div>
       </div>
     </article>
-  );
-}
-
-/* ─────────────────── Departure (checklist) ──────────────────────
- * Per §4.4 — a real, checkable, per-device persistent checklist
- * with progress bar. Default closed/unchecked; state lives in
- * localStorage keyed by guidebook slug so it survives reload.
- */
-function DepartureSection({ guidebook }: { guidebook: Guidebook }) {
-  const checklist: ChecklistItem[] = useMemo(() => {
-    const raw = guidebook.checkout_checklist;
-    return Array.isArray(raw) ? raw.filter(i => i && i.id && i.label) : [];
-  }, [guidebook.checkout_checklist]);
-
-  const storageKey = `gb-${guidebook.slug}-checklist`;
-  const [checked, setChecked] = useState<Record<string, boolean>>(() => {
-    if (typeof window === 'undefined') return {};
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
-    } catch { return {}; }
-  });
-
-  useEffect(() => {
-    try { window.localStorage.setItem(storageKey, JSON.stringify(checked)); } catch {}
-  }, [checked, storageKey]);
-
-  const total = checklist.length;
-  const done = checklist.filter(i => checked[i.id]).length;
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  const allDone = total > 0 && done === total;
-
-  function toggle(id: string) {
-    setChecked(prev => ({ ...prev, [id]: !prev[id] }));
-  }
-  function reset() {
-    setChecked({});
-  }
-
-  const formatted = formatCheckoutTime(guidebook.checkout_time);
-
-  // Empty-state: hide the whole section if the host hasn't set up
-  // a time, prose or a checklist. Don't render an empty placeholder.
-  if (!formatted && !guidebook.checkout_text && checklist.length === 0) {
-    return (
-      <section id="departure" className="gb-section gb-section--cream" aria-hidden />
-    );
-  }
-
-  return (
-    <section id="departure" className="gb-section gb-section--cream">
-      <div className="gb-section-head">
-        <div className="gb-eyebrow">Section Four</div>
-        <h2 className="gb-section-title">Departure</h2>
-        <div className="gb-rule" />
-        <p className="gb-section-lede">A short list to leave the home as you found it. Your ticks stay on this device.</p>
-      </div>
-
-      {formatted && (
-        <div className="gb-departure-time">
-          <div className="gb-departure-time-eyebrow">Check-out by</div>
-          <div className="gb-departure-time-value">{formatted}</div>
-        </div>
-      )}
-
-      {guidebook.checkout_text && (
-        <article className="gb-arrival-card gb-arrival-card--full">
-          <div className="gb-arrival-icon" aria-hidden><Emoji name="key" /></div>
-          <h3 className="gb-arrival-title">Check-out instructions</h3>
-          <div className="gb-prose" dangerouslySetInnerHTML={{ __html: guidebook.checkout_text }} />
-        </article>
-      )}
-
-      {checklist.length > 0 && (
-        <article className="gb-arrival-card gb-arrival-card--full gb-checklist-card">
-          <header className="gb-checklist-head">
-            <div>
-              <h3 className="gb-arrival-title">Departure checklist</h3>
-              <p className="gb-checklist-sub">{done} of {total} done</p>
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost gb-checklist-reset"
-              onClick={reset}
-              disabled={done === 0}
-            >
-              Reset
-            </button>
-          </header>
-
-          <div
-            className="gb-checklist-progress"
-            role="progressbar"
-            aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}
-            aria-label={`Departure checklist progress: ${pct}%`}
-          >
-            <div className="gb-checklist-progress-fill" style={{ width: `${pct}%` }} />
-          </div>
-
-          <ul className="gb-checklist">
-            {checklist.map(item => {
-              const isOn = !!checked[item.id];
-              const inputId = `gb-check-${item.id}`;
-              return (
-                <li key={item.id} className={`gb-checklist-item ${isOn ? 'is-done' : ''}`}>
-                  <label htmlFor={inputId} className="gb-checklist-label">
-                    <input
-                      id={inputId}
-                      type="checkbox"
-                      className="gb-checklist-input"
-                      checked={isOn}
-                      onChange={() => toggle(item.id)}
-                    />
-                    <span className="gb-checklist-box" aria-hidden>
-                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 8l3 3 7-7" />
-                      </svg>
-                    </span>
-                    {item.icon && (
-                      <span className="gb-checklist-emoji" aria-hidden><Emoji name={item.icon} /></span>
-                    )}
-                    <span className="gb-checklist-text">{item.label}</span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-
-          {allDone && (
-            <div className="gb-checklist-done">
-              <span className="gb-checklist-done-emoji" aria-hidden>🌅</span>
-              <span>Safe travels — thank you for staying with us.</span>
-            </div>
-          )}
-        </article>
-      )}
-    </section>
   );
 }

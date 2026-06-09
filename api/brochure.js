@@ -4,8 +4,11 @@
 // Crawlers don't run JS, so the static brochure.html's title can't reach
 // them via client-side document.title updates.
 
-const SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1udnhpdGV4Y2Rnb2h6Z3R2d3pnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MTM4NTMsImV4cCI6MjA4OTQ4OTg1M30.h2Y1nIxV1xkvCyeSOknAiu-SrjPwijsueaJel10JoA4';
+// Reuses the same VITE_-prefixed vars as the client bundle — Vercel exposes
+// every dashboard env var to serverless functions via process.env regardless
+// of prefix, and `vercel dev` loads them from .env locally. One source of truth.
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 
 // Hostnames served as the neutral (agent-share) variant. Add the registered
 // domain here when it's chosen — until then we only fall back to the
@@ -38,7 +41,7 @@ export default async function handler(req, res) {
   let description = 'View this property brochure';
   let image = '';
 
-  if (slug) {
+  if (slug && SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
       const lookup = `${SUPABASE_URL}/rest/v1/partner_properties?slug=eq.${encodeURIComponent(slug)}&select=property_name,tagline,description,hero_image_url&limit=1`;
       const r = await fetch(lookup, {

@@ -5478,13 +5478,10 @@ button.ops-board-card-tag--clickable:active {
   .gb-manual-body { padding-left: 0; }
 }
 
-/* Desktop — JS in ManualGroups forces every <details> to [open] so
-   the body shows unconditionally. CSS just hides the chevron and
-   drops the pointer cursor so the summary doesn't read as clickable. */
+/* Cards collapse on every screen — the summary is always the click target
+   and the chevron rotates to show open/closed state. */
 @media (min-width: 769px) {
   .gb-manual-details { padding-bottom: 18px; }
-  .gb-manual-details .gb-manual-summary { cursor: default; }
-  .gb-manual-summary-chevron { display: none; }
 }
 @media (max-width: 560px) {
   .gb-manual-card { grid-template-columns: 1fr; gap: 12px; }
@@ -6277,43 +6274,43 @@ button.ops-board-card-tag--clickable:active {
   gap: 8px;
   text-decoration: none;
   font-family: inherit;
-  font-weight: 700;
-  font-size: 0.8125rem;
+  font-weight: 600;
+  font-size: 0.75rem;
   letter-spacing: 0.02em;
   border-radius: 999px;
-  padding: 14px 18px;
+  padding: 9px 14px;
   z-index: 90;
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
-.gb-fab svg { width: 20px; height: 20px; }
+.gb-fab svg { width: 16px; height: 16px; }
 .gb-fab-label { line-height: 1; }
 .gb-fab:hover { transform: translateY(-2px); }
 .gb-fab:active { transform: translateY(0); }
 
+/* Quiet by request (Nicki): a light chip with a red accent rather than a
+   solid-red glowing button. Still one tap and clearly the emergency
+   action, but it no longer dominates the page. */
 .gb-fab--emergency {
-  background: var(--color-danger);
-  color: #fff;
-  box-shadow: 0 8px 22px rgba(220,38,38,0.45);
+  background: var(--gb-paper, #fff);
+  color: var(--color-danger);
+  border: 1px solid rgba(220,38,38,0.30);
+  box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0,0,0,0.08));
   bottom: 18px;
   right: 18px;
 }
 .gb-fab--emergency:hover {
-  background: #B91C1C;
-  box-shadow: 0 12px 28px rgba(220,38,38,0.50);
+  background: var(--error-bg, #FEE2E2);
+  color: #991B1B;
+  border-color: rgba(220,38,38,0.45);
 }
 
-/* Tablet+ — anchor the FAB to the top-right and shrink padding so it
-   reads as a header chip rather than a giant button. */
+/* Tablet+ — anchor the chip to the top-right corner. */
 @media (min-width: 1024px) {
   .gb-fab--emergency {
     top: 16px;
     right: 20px;
     bottom: auto;
-    padding: 10px 14px;
-    font-size: 0.75rem;
-    box-shadow: 0 4px 14px rgba(220,38,38,0.35);
   }
-  .gb-fab--emergency svg { width: 16px; height: 16px; }
 }
 
 /* ── Persistent host-contact chip ─────────────────────────────── *

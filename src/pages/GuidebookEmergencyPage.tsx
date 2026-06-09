@@ -30,11 +30,9 @@ import {
   type Manual,
 } from '../lib/guidebookShared';
 
-// SA national emergency numbers — §10.10 binding decision, hardcoded
-// (no country_code lookup, no JSON dictionary).
-const SA_POLICE     = { label: 'South African Police (SAPS)', tel: '10111',           display: '10111' };
-const SA_AMBULANCE  = { label: 'Ambulance',                   tel: '10177',           display: '10177' };
-const SA_NATIONAL   = { label: 'National Emergency',          tel: '+27861212300',    display: '+27 86 12 12 300' };
+// Per Nicki (Southern Escapes) the national lines (10111/10177) are not
+// useful for guests — the page leads with SE's own contacts instead:
+// host → hospital → armed response → in-home shut-offs.
 
 const SHUT_OFF_TAGS = ['gas-shut-off', 'water-shut-off', 'electrical-shut-off'] as const;
 const SHUT_OFF_META: Record<string, { title: string; icon: string }> = {
@@ -125,33 +123,13 @@ export default function GuidebookEmergencyPage() {
         </Link>
         <h1 className="gb-emergency-title">Emergency</h1>
         <p className="gb-emergency-lede">
-          One tap reaches a real person. The national lines below always work; your host details follow.
+          One tap reaches a real person who can help, fast.
         </p>
       </header>
 
       <main className="gb-emergency-main">
-        {/* ── Life-threatening — national lines (always shown) ──── */}
+        {/* ── Call your host (lead) ──────────────────────────────── */}
         <section className="gb-emergency-block gb-emergency-block--critical">
-          <div className="gb-emergency-block-head">
-            <div className="gb-emergency-block-eyebrow">Life-threatening?</div>
-            <h2 className="gb-emergency-block-title">Call the South African emergency lines</h2>
-          </div>
-          <div className="gb-emergency-actions">
-            <a className="btn btn-emergency gb-emergency-btn-big" href={`tel:${SA_POLICE.tel}`} aria-label={`Call ${SA_POLICE.label}`}>
-              <Icon name="alert" /> <span>{SA_POLICE.display} · Police</span>
-            </a>
-            <a className="btn btn-emergency gb-emergency-btn-big" href={`tel:${SA_AMBULANCE.tel}`} aria-label={`Call ${SA_AMBULANCE.label}`}>
-              <Icon name="hospital" /> <span>{SA_AMBULANCE.display} · Ambulance</span>
-            </a>
-          </div>
-          <div className="gb-emergency-block-footnote">
-            From any phone in South Africa, you can also dial <strong>112</strong> (mobile) or
-            <a className="gb-emergency-inline-tel" href={`tel:${SA_NATIONAL.tel}`}> {SA_NATIONAL.display}</a> (national emergency).
-          </div>
-        </section>
-
-        {/* ── Call your host ─────────────────────────────────────── */}
-        <section className="gb-emergency-block">
           <div className="gb-emergency-block-head">
             <div className="gb-emergency-block-eyebrow">Call your host</div>
             <h2 className="gb-emergency-block-title">{hostFirstName ? `${hostFirstName} can help fast` : 'Your host'}</h2>
@@ -171,7 +149,7 @@ export default function GuidebookEmergencyPage() {
             </div>
           ) : (
             <p className="gb-emergency-block-empty">
-              Your host hasn't added a phone number yet — try the national emergency numbers above.
+              Your host hasn't added a phone number yet — please check your booking confirmation for a contact.
             </p>
           )}
         </section>
