@@ -22,6 +22,7 @@ export const CATEGORY_ORDER = [
   'Access',
   'House Rules',
   'Outdoors',
+  'Staff',
   'Local Context',
   'Emergencies',
 ] as const;
@@ -37,6 +38,7 @@ export const CATEGORY_META: Record<GuidebookCategory, { icon: string; descriptio
   'Access':        { icon: 'key',             description: 'Keys, gate remotes, alarm codes, lockboxes.' },
   'House Rules':   { icon: 'home',            description: 'Quiet hours, smoking, pets, occupancy.' },
   'Outdoors':      { icon: 'pool',            description: 'Pool, jacuzzi, braai, garden, outdoor lighting.' },
+  'Staff':         { icon: 'user',            description: 'Housekeeping, gardener and pool-service schedules.' },
   'Local Context': { icon: 'sun',             description: 'Load-shedding, water restrictions, trash days.' },
   'Emergencies':   { icon: 'alert',           description: 'Hospitals, doctors, shut-offs, evacuation.' },
 };
@@ -91,6 +93,7 @@ export const EMERGENCY_TAGS = [
  *  Used by the admin editor's icon select. Mirrors src/lib/guidebookShared.tsx. */
 export const ICON_OPTIONS = [
   { value: 'home', label: 'Home' },
+  { value: 'user', label: 'Person' },
   { value: 'key', label: 'Key' },
   { value: 'map', label: 'Map pin' },
   { value: 'car', label: 'Car' },
