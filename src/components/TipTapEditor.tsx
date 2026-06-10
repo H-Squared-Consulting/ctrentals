@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 import { useEditor, EditorContent, Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
 
 export type TipTapEditorProps = {
   value: string;
@@ -32,6 +33,11 @@ export default function TipTapEditor({ value, onChange, placeholder }: TipTapEdi
         autolink: true,
         HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
       }),
+      // Without this, StarterKit's schema DROPS <img> nodes from any
+      // loaded body_html — imported Hostfully cards (TV remote photos
+      // etc.) would render without their images here and lose them
+      // permanently on the next save.
+      Image,
     ],
     content: value || '',
     onUpdate({ editor }) {
