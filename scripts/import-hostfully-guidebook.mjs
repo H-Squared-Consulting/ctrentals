@@ -89,7 +89,8 @@ function canonicalCategory(title) {
   if (/kitchen|appliance|laundry|washing|dryer|oven|dishwasher|microwave|\btv\b|television|media|aircon|heater|remote/.test(t)) return 'Appliances';
   if (/pool|garden|braai|bbq|outdoor|patio|jacuzzi|irrigation/.test(t)) return 'Outdoors';
   if (/house rule|rules|smoking|\bpet|quiet|occupancy|suntan|self.?tan|linen|towel/.test(t)) return 'House Rules';
-  return 'Local Context'; // load-shedding, trash, grocery, transport, staff, etc.
+  if (/staff|housekeep|cleaner|char\b|domestic|gardener|maid/.test(t)) return 'Staff';
+  return 'Local Context'; // load-shedding, trash, grocery, transport, etc.
 }
 
 // Map Hostfully's Material-Symbols icon names to our inline-SVG icon set
@@ -102,7 +103,7 @@ const ICON_MAP = {
 };
 const CATEGORY_ICON = {
   Safety: 'shield', Connectivity: 'wifi', Appliances: 'washing-machine', Access: 'key',
-  'House Rules': 'home', Outdoors: 'pool', 'Local Context': 'sun', Emergencies: 'alert',
+  'House Rules': 'home', Outdoors: 'pool', Staff: 'user', 'Local Context': 'sun', Emergencies: 'alert',
 };
 function iconFor(hfIcon, category) {
   return ICON_MAP[hfIcon] || CATEGORY_ICON[category] || 'home';

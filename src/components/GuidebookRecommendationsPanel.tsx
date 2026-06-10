@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './ToastProvider';
 import TipTapEditor from './TipTapEditor';
+import ImageUrlField from './ImageUrlField';
 
 type Row = {
   assignmentId: string;
@@ -376,23 +377,13 @@ function RecEditor({
           />
         </div>
 
-        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label className="form-label" htmlFor="rec-image">Photo URL</label>
-          <input
-            id="rec-image"
-            className="form-input"
-            type="url"
-            value={form.image_url}
-            onChange={e => field('image_url', e.target.value)}
-            placeholder="https://…"
-          />
-          <div className="form-hint">A 16:9 landscape photo works best. Drag-and-drop upload arrives in a later polish step.</div>
-          {form.image_url && (
-            <div className="gb-editor-hero-preview" aria-hidden>
-              <img src={form.image_url} alt="" />
-            </div>
-          )}
-        </div>
+        <ImageUrlField
+          id="rec-image"
+          label="Photo"
+          value={form.image_url}
+          onChange={url => field('image_url', url)}
+          hint="A 16:9 landscape photo works best."
+        />
       </div>
 
       <div className="gb-mp-editor-actions">
