@@ -236,7 +236,13 @@ export async function searchProperties(
           if (baseline != null) guestPays = guestPaysPeak(baseline, channel);
         }
         if (guestPays == null) return false;
-        if (range.floor   != null && guestPays <= range.floor)   return false;
+        // Floor is INCLUSIVE: a property priced exactly on a tier
+        // boundary (quintile thresholds are derived from real
+        // inventory rates, so this happens) belongs to both
+        // adjacent bands — matching the "R35 714 – R45 714"
+        // labels on the budget buttons, which read as inclusive
+        // on both ends.
+        if (range.floor   != null && guestPays <  range.floor)   return false;
         if (range.ceiling != null && guestPays >  range.ceiling) return false;
         return true;
       });

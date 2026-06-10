@@ -283,8 +283,9 @@ export function tierCeiling(tier: TierKey, t: TierThresholds): number | null {
   }
 }
 
-/** Strict lower bound (exclusive) for a tier — i.e. the
- *  threshold below which the tier no longer applies. Returns
+/** Lower bound for a tier. The search filter treats this as
+ *  INCLUSIVE (a rate exactly on the boundary matches both
+ *  adjacent tiers, mirroring the budget-button labels). Returns
  *  null for 'very_low' (no floor below it). */
 export function tierFloor(tier: TierKey, t: TierThresholds): number | null {
   switch (tier) {
