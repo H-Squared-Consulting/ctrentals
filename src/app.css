@@ -6704,6 +6704,14 @@ button.ops-board-card-tag--clickable:active {
 .tiptap-content .ProseMirror:focus { outline: none; }
 .tiptap-content .ProseMirror p { margin: 0 0 8px; }
 .tiptap-content .ProseMirror p:last-child { margin-bottom: 0; }
+.tiptap-content .ProseMirror img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+.tiptap-content .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--color-primary, #1E40AF); }
 .tiptap-content .ProseMirror ul,
 .tiptap-content .ProseMirror ol { margin: 4px 0 8px 22px; padding-left: 4px; }
 .tiptap-content .ProseMirror li { margin-bottom: 2px; }

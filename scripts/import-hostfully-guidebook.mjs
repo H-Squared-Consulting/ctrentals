@@ -32,6 +32,7 @@
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const API_BASE = 'https://v2api.hostfully.com/api/v1/guidebooks/key/';
 const SUPABASE_URL = 'https://mnvxitexcdgohzgtvwzg.supabase.co';
@@ -275,12 +276,66 @@ console.log(`  coords: ${guidebook.lat}, ${guidebook.lng}`);
 console.log(`  emergency: hospital=${guidebook.nearest_hospital_name} armed=${guidebook.armed_response_company} ${guidebook.armed_response_phone || ''}`);
 console.log(`  manuals: ${manuals.length}  recommendations: ${recs.length}`);
 
+// ── Image mirroring ──────────────────────────────────────────────────────────
+// Hostfully serves guidebook images from its own storage
+// (storage.googleapis.com/hostfully-dev-filestack, gb-cdn.hostfully.com).
+// Those URLs die when the Hostfully account closes, so in --write mode we
+// download every referenced image and re-host it in the public
+// `guidebook-images` Supabase Storage bucket, rewriting all URLs (hero,
+// host photo, card image_url, inline <img> in body_html) before insert.
+// Failures keep the original URL — better a Hostfully link than a broken one.
+const MIRROR_BUCKET = 'guidebook-images';
+const URL_RE = /https?:\/\/[^"'\s)<>]+/g;
+const isHostfullyHosted = (u) => /hostfully|filestack/i.test(u);
+
+async function mirrorUrl(sb, folder, url, cache) {
+  if (cache.has(url)) return cache.get(url);
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const type = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+    if (!type.startsWith('image/')) throw new Error(`not an image (${type})`);
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg', 'image/avif': 'avif' }[type] || 'jpg';
+    const path = `${folder}/${createHash('sha1').update(url).digest('hex').slice(0, 12)}.${ext}`;
+    const { error } = await sb.storage.from(MIRROR_BUCKET).upload(path, buf, { contentType: type, upsert: true });
+    if (error) throw new Error(error.message);
+    const { data } = sb.storage.from(MIRROR_BUCKET).getPublicUrl(path);
+    cache.set(url, data.publicUrl);
+    return data.publicUrl;
+  } catch (err) {
+    console.warn(`  ⚠ image mirror failed (${err.message}): ${url}`);
+    cache.set(url, url);
+    return url;
+  }
+}
+
+/** Rewrite every Hostfully-hosted URL in every string field of the given
+ *  objects (covers plain URL columns AND URLs embedded in body_html). */
+async function mirrorAllImages(sb, folder, objects) {
+  const cache = new Map();
+  for (const obj of objects) {
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v !== 'string' || !v) continue;
+      const urls = [...new Set((v.match(URL_RE) || []).filter(isHostfullyHosted))];
+      let next = v;
+      for (const u of urls) next = next.split(u).join(await mirrorUrl(sb, folder, u, cache));
+      obj[k] = next;
+    }
+  }
+  return [...cache.entries()].filter(([from, to]) => from !== to).length;
+}
+
 // ── 3a. Direct write mode ────────────────────────────────────────────────────
 if (doWrite) {
   const serviceKey = process.env.SUPABASE_SERVICE_KEY;
   if (!serviceKey) { console.error('\n--write needs SUPABASE_SERVICE_KEY in the environment'); process.exit(1); }
   const { createClient } = await import('@supabase/supabase-js');
   const sb = createClient(SUPABASE_URL, serviceKey);
+
+  const mirrored = await mirrorAllImages(sb, slug, [guidebook, ...manuals, ...recs]);
+  console.log(`  images mirrored to ${MIRROR_BUCKET}: ${mirrored}`);
 
   // Upsert the guidebook row, get its id.
   const { data: gbRow, error: gbErr } = await sb.from('guidebooks')
