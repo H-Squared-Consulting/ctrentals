@@ -26,6 +26,7 @@ import {
   type GuidebookCategory,
 } from '../lib/guidebookTaxonomy';
 import TipTapEditor from './TipTapEditor';
+import ImageUrlField from './ImageUrlField';
 import { Emoji } from '../lib/guidebookShared';
 
 type Row = {
@@ -344,23 +345,13 @@ function ManualEditor({
           <div className="form-hint">Keep it short. Bold the important bits.</div>
         </div>
 
-        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label className="form-label" htmlFor="mp-image">Photo URL</label>
-          <input
-            id="mp-image"
-            className="form-input"
-            type="url"
-            value={form.image_url}
-            onChange={e => field('image_url', e.target.value)}
-            placeholder="https://…"
-          />
-          <div className="form-hint">A 16:9 JPEG works best. Drag-and-drop upload arrives in a later polish step.</div>
-          {form.image_url && (
-            <div className="gb-editor-hero-preview" aria-hidden>
-              <img src={form.image_url} alt="" />
-            </div>
-          )}
-        </div>
+        <ImageUrlField
+          id="mp-image"
+          label="Photo"
+          value={form.image_url}
+          onChange={url => field('image_url', url)}
+          hint="A 16:9 JPEG works best."
+        />
 
         <div className="form-group" style={{ gridColumn: '1 / -1' }}>
           <label className="form-label" htmlFor="mp-emerg">Emergency tag</label>

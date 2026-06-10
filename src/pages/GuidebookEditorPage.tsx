@@ -28,6 +28,7 @@ import GuidebookHouseManualPanel from '../components/GuidebookHouseManualPanel';
 import GuidebookArrivalPanel from '../components/GuidebookArrivalPanel';
 import GuidebookEmergencyPanel from '../components/GuidebookEmergencyPanel';
 import GuidebookRecommendationsPanel from '../components/GuidebookRecommendationsPanel';
+import ImageUrlField from '../components/ImageUrlField';
 
 type Guidebook = {
   id: string;
@@ -338,23 +339,13 @@ function BasicsPanel({
           />
           <div className="form-hint">Used by the Call host button and the Emergency page.</div>
         </div>
-        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label className="form-label" htmlFor="gb-hero">Hero image URL</label>
-          <input
-            id="gb-hero"
-            className="form-input"
-            type="url"
-            value={form.hero_image_url}
-            onChange={e => field('hero_image_url', e.target.value)}
-            placeholder="https://…"
-          />
-          <div className="form-hint">A 1600px-wide JPEG works well. Photo upload arrives in PR #5.</div>
-          {form.hero_image_url && (
-            <div className="gb-editor-hero-preview" aria-hidden>
-              <img src={form.hero_image_url} alt="" />
-            </div>
-          )}
-        </div>
+        <ImageUrlField
+          id="gb-hero"
+          label="Hero image"
+          value={form.hero_image_url}
+          onChange={url => field('hero_image_url', url)}
+          hint="A 1600px-wide JPEG works well."
+        />
       </div>
     </div>
   );
