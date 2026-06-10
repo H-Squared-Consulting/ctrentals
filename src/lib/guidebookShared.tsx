@@ -363,19 +363,19 @@ export function RecMap({
 }
 
 /* ─────────────────── Persistent guest-page chrome ─────────────── *
- * Two pieces, both fixed-position so they survive scroll + route
- * change inside the guidebook surface:
- *   - Emergency FAB (bottom-right on mobile, top-right corner chip on
- *     desktop). Always visible. Red. Single tap to /g/:slug/emergency.
+ * Fixed-position so it survives scroll + route change inside the
+ * guidebook surface:
  *   - Host-contact chip (bottom-left on mobile after user scrolls past
  *     hero; small top-right chip on desktop). Avatar + Call + WhatsApp.
+ * Emergency access lives in the quick-action chips at the top of the
+ * guidebook — the floating FAB was removed (host feedback: it covered
+ * content on mobile).
  */
 
 export function GuidebookChrome({
-  guidebook, hideEmergencyOnEmergencyPage = false, searchData,
+  guidebook, searchData,
 }: {
   guidebook: Pick<Guidebook, 'slug' | 'host_name' | 'host_phone' | 'host_photo_url'>;
-  hideEmergencyOnEmergencyPage?: boolean;
   /** When provided, mounts the ⌘K search modal at the page root and
    *  listens for the global `gb-search:open` event + keyboard shortcuts. */
   searchData?: import('../components/GuidebookSearchModal').GuidebookSearchData | null;
@@ -389,7 +389,6 @@ export function GuidebookChrome({
 
   return (
     <>
-      {!hideEmergencyOnEmergencyPage && <EmergencyFab slug={guidebook.slug} />}
       <HostContactChip guidebook={guidebook} />
       {SearchModal && <SearchModal data={searchData} />}
     </>
@@ -413,19 +412,6 @@ export function GuidebookSearchPill() {
       <span className="gb-search-pill-label">Search</span>
       <span className="gb-search-pill-kbd" aria-hidden>⌘K</span>
     </button>
-  );
-}
-
-function EmergencyFab({ slug }: { slug: string }) {
-  return (
-    <a
-      className="gb-fab gb-fab--emergency"
-      href={`/g/${slug}/emergency`}
-      aria-label="Emergency contacts and shut-offs"
-    >
-      <Icon name="alert" />
-      <span className="gb-fab-label">Emergency</span>
-    </a>
   );
 }
 
