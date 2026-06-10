@@ -290,9 +290,9 @@ export default function GuidebookPage() {
         </footer>
       </div>
 
-      {/* Persistent chrome — Emergency FAB + Host-contact chip +
-          ⌘K search modal. Mounted at the page root so they survive
-          scroll on every section. */}
+      {/* Persistent chrome — Host-contact chip + ⌘K search modal.
+          Mounted at the page root so they survive scroll on every
+          section. */}
       <GuidebookChrome
         guidebook={guidebook}
         searchData={{ guidebook, manuals, recommendations }}

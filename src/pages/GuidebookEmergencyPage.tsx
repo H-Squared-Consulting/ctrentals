@@ -232,13 +232,11 @@ export default function GuidebookEmergencyPage() {
         )}
       </main>
 
-      {/* Chrome: host chip + ⌘K search (Emergency FAB hidden on the
-          Emergency page itself — we're already here). The shut-off
-          manuals are fed to the search index so a guest looking for
-          "gas" on the emergency page can still find the right card. */}
+      {/* Chrome: host chip + ⌘K search. The shut-off manuals are fed
+          to the search index so a guest looking for "gas" on the
+          emergency page can still find the right card. */}
       <GuidebookChrome
         guidebook={guidebook}
-        hideEmergencyOnEmergencyPage
         searchData={{ guidebook, manuals: shutOffs, recommendations: [] }}
       />
     </div>

@@ -5279,6 +5279,18 @@ button.ops-board-card-tag--clickable:active {
 .gb-prose ul { margin: 8px 0 12px 20px; padding-left: 8px; }
 .gb-prose ul li { margin-bottom: 4px; }
 .gb-prose a { color: var(--gb-gold); text-decoration: none; border-bottom: 1px solid currentColor; }
+/* Imported HTML (Hostfully) carries fixed pixel sizes on images, e.g.
+   width="775" — wider than a phone screen. Cap everything to the
+   column and let height follow so the aspect ratio is preserved. */
+.gb-prose img,
+.gb-host-card-welcome img {
+  display: block;
+  max-width: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 12px auto;
+  border-radius: 6px;
+}
 
 /* ── Arrival ─────────────────────────────────────────────────────── */
 .gb-arrival-grid {
@@ -6262,56 +6274,6 @@ button.ops-board-card-tag--clickable:active {
 .gb-directions-details[open] summary::before { transform: rotate(90deg); }
 .gb-directions-details summary:hover { color: var(--gb-ink); }
 .gb-directions-details .gb-prose { margin-top: 10px; }
-
-/* ── Persistent Emergency FAB ─────────────────────────────────── *
- * Bottom-right on mobile, fixed. On wide viewports the same FAB sits
- * in the top-right header zone with a translucent backing so it
- * doesn't dominate. Always one tap away. */
-.gb-fab {
-  position: fixed;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  text-decoration: none;
-  font-family: inherit;
-  font-weight: 600;
-  font-size: 0.75rem;
-  letter-spacing: 0.02em;
-  border-radius: 999px;
-  padding: 9px 14px;
-  z-index: 90;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-}
-.gb-fab svg { width: 16px; height: 16px; }
-.gb-fab-label { line-height: 1; }
-.gb-fab:hover { transform: translateY(-2px); }
-.gb-fab:active { transform: translateY(0); }
-
-/* Quiet by request (Nicki): a light chip with a red accent rather than a
-   solid-red glowing button. Still one tap and clearly the emergency
-   action, but it no longer dominates the page. */
-.gb-fab--emergency {
-  background: var(--gb-paper, #fff);
-  color: var(--color-danger);
-  border: 1px solid rgba(220,38,38,0.30);
-  box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0,0,0,0.08));
-  bottom: 18px;
-  right: 18px;
-}
-.gb-fab--emergency:hover {
-  background: var(--error-bg, #FEE2E2);
-  color: #991B1B;
-  border-color: rgba(220,38,38,0.45);
-}
-
-/* Tablet+ — anchor the chip to the top-right corner. */
-@media (min-width: 1024px) {
-  .gb-fab--emergency {
-    top: 16px;
-    right: 20px;
-    bottom: auto;
-  }
-}
 
 /* ── Persistent host-contact chip ─────────────────────────────── *
  * Slides into view bottom-left on mobile after the user scrolls past
