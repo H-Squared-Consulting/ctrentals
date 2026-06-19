@@ -83,6 +83,14 @@ export interface PropertyResult {
   /** Peak-season property_fixed_rates.guest_rate for the current
    *  year — only populated for fixed-mode properties. */
   fixedPeakGuestRate: number | null;
+  /** Peak-season property_fixed_rates.owner_rate for the current
+   *  year — only populated for fixed-mode properties. Optional so
+   *  the handful of call sites that build their own PropertyResult
+   *  literals don't all have to set it; searchProperties always
+   *  does. Needed by the enquiry quote modal to split the fixed
+   *  guest rate into owner-net + company margin without changing
+   *  the guest price. */
+  fixedPeakOwnerRate?: number | null;
   /** External Airbnb listing URL extracted from listing_urls.airbnb.
    *  Surfaced so the global search "Copy Airbnb links" action can
    *  hand the team a paste-ready block when replying to an Airbnb
@@ -170,10 +178,10 @@ export async function searchProperties(
   const fixedRes = peakSeasonId
     ? await supabase
         .from('property_fixed_rates')
-        .select('property_id, guest_rate')
+        .select('property_id, guest_rate, owner_rate')
         .eq('year', year)
         .eq('season_id', peakSeasonId)
-    : { data: [] as Array<{ property_id: string; guest_rate: number }> };
+    : { data: [] as Array<{ property_id: string; guest_rate: number; owner_rate: number }> };
 
   if (propRes.error) throw propRes.error;
   const props = (propRes.data || []).filter((p: any) => !p.is_archived);
@@ -201,9 +209,12 @@ export async function searchProperties(
     if (Number.isFinite(rate) && rate > 0) baselineByProperty.set(b.property_id, rate);
   }
   const fixedPeakByProperty = new Map<string, number>();
-  for (const f of ((fixedRes as any).data || []) as Array<{ property_id: string; guest_rate: number | string }>) {
+  const fixedOwnerByProperty = new Map<string, number>();
+  for (const f of ((fixedRes as any).data || []) as Array<{ property_id: string; guest_rate: number | string; owner_rate: number | string | null }>) {
     const rate = Number(f.guest_rate);
     if (Number.isFinite(rate) && rate > 0) fixedPeakByProperty.set(f.property_id, rate);
+    const owner = Number(f.owner_rate);
+    if (Number.isFinite(owner) && owner > 0) fixedOwnerByProperty.set(f.property_id, owner);
   }
 
   // Tier-based price filter — single source of truth for "what
@@ -268,6 +279,7 @@ export async function searchProperties(
     dailyRate: baselineByProperty.get(p.id) ?? null,
     pricingMode: (p.pricing_mode === 'fixed' || p.pricing_mode === 'system') ? p.pricing_mode : null,
     fixedPeakGuestRate: fixedPeakByProperty.get(p.id) ?? null,
+    fixedPeakOwnerRate: fixedOwnerByProperty.get(p.id) ?? null,
     airbnbUrl: (p.listing_urls && typeof p.listing_urls === 'object' && typeof p.listing_urls.airbnb === 'string')
       ? (p.listing_urls.airbnb.trim() || null)
       : null,
