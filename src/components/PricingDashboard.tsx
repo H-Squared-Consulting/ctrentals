@@ -797,7 +797,13 @@ export default function PricingDashboard({
     return <p style={{ margin: 0, padding: '20px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading pricing…</p>;
   }
 
-  if (!baseline) {
+  // Fixed-mode properties (Villa Kilimani, 3 Bones, Ivy House) have NO
+  // baseline row by design — their guest/owner rates live in
+  // property_fixed_rates and are surfaced by the fixed-mode panel +
+  // season selector below. Only gate SYSTEM-mode properties on a
+  // missing baseline; gating fixed-mode here used to block the editor
+  // entirely (so the team couldn't quote them or pick a season).
+  if (pricingMode !== 'fixed' && !baseline) {
     return (
       <div className="detail-modal-section">
         <p style={{ margin: 0 }}>
