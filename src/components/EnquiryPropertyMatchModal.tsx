@@ -70,6 +70,13 @@ interface PropertyRow {
    *  second round-trip. Null when the property isn't on Airbnb. */
   airbnb_url: string | null;
   airbnb_title: string | null;
+  /** Pricing mode carried through so the snapshot phase can branch:
+   *  'system' uses the baselines table, 'fixed' uses the property's
+   *  pinned guest/owner rates (which never go through the margin
+   *  engine — the fixed guest rate IS the guest price). */
+  pricing_mode: 'system' | 'fixed' | null;
+  fixed_peak_guest_rate: number | null;
+  fixed_peak_owner_rate: number | null;
 }
 
 interface BaselineRow {
@@ -394,6 +401,106 @@ function buildDefaultAgentSnapshot(
   } as any;
 }
 
+/** Fixed-mode sibling of the snapshot builders above. Fixed-rate
+ *  properties (Villa Kilimani, 3 Bones, Ivy House) store their guest +
+ *  owner rates directly on property_fixed_rates and DELIBERATELY skip
+ *  the baseline × season × margin engine — the pinned guest rate IS the
+ *  guest price, full stop. Before this existed, the match modal only
+ *  knew how to price system-mode properties, so these three showed
+ *  "No pricing set" with a disabled checkbox + disabled Edit button:
+ *  impossible to quote from the enquiry flow at all.
+ *
+ *  This mirrors PricingDashboard's fixed-mode breakdown 1:1 so a
+ *  default quote here matches what you'd get by opening the pricing
+ *  dashboard on the property and saving without edits. Critically, the
+ *  guest rate is carried through UNCHANGED — only the internal
+ *  owner-net / company / agent split is derived. The team can still hit
+ *  "✎ Edit pricing" to fine-tune (e.g. a non-50/50 agent split).
+ *
+ *  Returns null when the guest or owner rate is missing — the caller
+ *  then leaves the row unpriced rather than guessing at a split. */
+function buildDefaultFixedSnapshot(
+  guestRate: number | null,
+  ownerRate: number | null,
+  peakSeasonName: string | null,
+  args: {
+    propertyId: string;
+    mode: 'direct' | 'agent' | 'platform';
+    agentId?: string | null;
+    /** Fixed-mode agent split as % of gross margin. Mirrors
+     *  PricingDashboard's default of 50/50. */
+    agentSplitPct?: number;
+    channelId?: string | null;
+    platformFeePct?: number;
+    platformFixedFee?: number;
+  },
+): PricingSnapshot | null {
+  const guest = Number(guestRate) || 0;
+  if (guest <= 0) return null;
+  const owner = ownerRate != null ? Number(ownerRate) : null;
+  if (owner == null || !Number.isFinite(owner)) return null;
+
+  const grossMargin = Math.max(0, guest - owner);
+  let ctrTake = 0;
+  let agentTake = 0;
+  let platformFees = 0;
+
+  if (args.mode === 'agent') {
+    const splitPct = Math.max(0, Math.min(100, args.agentSplitPct ?? 50));
+    agentTake = Math.round(grossMargin * (splitPct / 100));
+    ctrTake = grossMargin - agentTake;
+  } else if (args.mode === 'platform' && args.platformFeePct != null) {
+    // Back the channel fee out of the pinned guest rate, same markup
+    // model PricingDashboard uses for fixed + platform.
+    const pctFactor = 1 + (args.platformFeePct / 100);
+    const fixedFee = args.platformFixedFee || 0;
+    const hostNet = pctFactor > 0 ? (guest - fixedFee) / pctFactor : guest - fixedFee;
+    platformFees = Math.round(guest - hostNet);
+    ctrTake = Math.max(0, guest - platformFees - owner);
+  } else {
+    ctrTake = grossMargin;
+  }
+
+  const totalMarginPct = guest > 0 ? (grossMargin / guest) * 100 : 0;
+  const ctrPct = guest > 0 ? (ctrTake / guest) * 100 : 0;
+  const agentPct = guest > 0 ? (agentTake / guest) * 100 : 0;
+
+  return {
+    propertyId: args.propertyId,
+    scenarioType: args.mode,
+    agentId: args.mode === 'agent' ? (args.agentId ?? null) : null,
+    agents: args.mode === 'agent' && args.agentId ? [{ id: args.agentId, pct: agentPct }] : [],
+    channelId: args.mode === 'platform' ? (args.channelId ?? null) : null,
+    // Fixed-mode "baseline" is the owner net, matching PricingDashboard
+    // — the saved proposal's baseline_used then reflects owner net, not
+    // a phantom system baseline these properties don't have.
+    baseline: owner,
+    totalMarginPct,
+    ctrPct,
+    agentPct,
+    reducedBaseline: null,
+    reducedCtrPct: null,
+    reducedAgentPct: null,
+    // These rates are the peak-season fixed rates; multiplier is 1
+    // because fixed rates are absolute, not season-scaled.
+    seasonTag: peakSeasonName || 'peak',
+    seasonMultiplier: 1,
+    breakdown: {
+      ownerNet: owner,
+      ctrTake,
+      agentTake,
+      platformFees,
+      clientPriceExclVat: guest,
+      vatAmount: 0,
+      clientPriceInclVat: guest,
+      adjustedBaseline: owner,
+      totalMarginPct,
+      effectiveCtrMarginPct: guest > 0 ? (ctrTake / guest) * 100 : 0,
+      effectiveTotalMarkupPct: owner > 0 ? (grossMargin / owner) * 100 : 0,
+    },
+  } as any;
+}
+
 export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, onSaved, existingEnquiry, initiallySelected, restrictToIds }: Props) {
   const toast = useToast();
   const { user } = useAuth();
@@ -516,6 +623,9 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
         hero_image_url: p.heroImageUrl,
         airbnb_url: p.airbnbUrl,
         airbnb_title: p.airbnbTitle,
+        pricing_mode: p.pricingMode,
+        fixed_peak_guest_rate: p.fixedPeakGuestRate,
+        fixed_peak_owner_rate: p.fixedPeakOwnerRate ?? null,
       }));
       setProperties(free);
       // Pre-tick any caller-supplied selections that survived the
@@ -572,7 +682,29 @@ export default function EnquiryPropertyMatchModal({ supabase, enquiry, onClose, 
             : GENERIC_AGENT_PCT)
         : 0;
       const platformChannel = channelRes.data;
+      const peakSeasonName = seasons.find(s => s.key === 'peak')?.name ?? null;
       for (const p of free) {
+        // Fixed-rate properties don't have a baseline row — their guest
+        // + owner rates come straight off property_fixed_rates. Build
+        // their snapshot from those so the guest price is preserved
+        // exactly, regardless of enquiry mode.
+        if (p.pricing_mode === 'fixed') {
+          out[p.id] = buildDefaultFixedSnapshot(
+            p.fixed_peak_guest_rate,
+            p.fixed_peak_owner_rate,
+            peakSeasonName,
+            {
+              propertyId: p.id,
+              mode: isPlatformMode ? 'platform' : isAgentMode ? 'agent' : 'direct',
+              agentId: isAgentMode ? (enquiry.agent_id as string) : null,
+              agentSplitPct: 50,
+              channelId: isPlatformMode && platformChannel ? platformChannel.id : null,
+              platformFeePct: isPlatformMode && platformChannel ? (Number(platformChannel.fee_pct) || 0) : undefined,
+              platformFixedFee: isPlatformMode && platformChannel ? (Number(platformChannel.fixed_fee) || 0) : undefined,
+            },
+          );
+          continue;
+        }
         const baseline = baselineByProperty.get(p.id) ?? null;
         if (isPlatformMode && platformChannel) {
           out[p.id] = buildDefaultPlatformSnapshot(baseline, seasons, {
