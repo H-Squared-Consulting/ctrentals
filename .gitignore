@@ -5,3 +5,4 @@ dist
 .vite
 .vercel
 supabase/.temp/
+.conductor/settings.local.toml
