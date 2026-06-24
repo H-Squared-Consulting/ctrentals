@@ -1,0 +1,22 @@
+#:schema https://conductor.build/schemas/settings.repo.schema.json
+
+# Shared Conductor config for the CT Rentals admin portal.
+# Vite + React + TypeScript SPA, npm lockfile, deployed on Vercel.
+# Talks to a remote Supabase project (no local DB/Docker), so multiple
+# workspaces can run side by side on their own ports.
+
+# Copy the gitignored .env (VITE_SUPABASE_* / VITE_MAPBOX_TOKEN) into each
+# new workspace. Without it the app can't reach Supabase. This is the default
+# pattern too, but stated explicitly so the intent is obvious.
+file_include_globs = ".env*"
+
+[scripts]
+# Clean, reproducible install straight from package-lock.json.
+setup = "npm ci"
+
+# Vite dev server on the workspace's assigned port so workspaces don't collide.
+run = "npm run dev -- --port $CONDUCTOR_PORT"
+
+# Each workspace gets its own port and shares only the remote Supabase, so
+# running several at once is safe.
+run_mode = "concurrent"
