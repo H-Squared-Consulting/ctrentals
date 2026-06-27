@@ -360,7 +360,7 @@ export default function BookingManagementSection({
       const who = shortWho(row.sentBy);
       return `Sent${when ? ` ${when}` : ''}${who ? ` by ${who}` : ''}`;
     }
-    if (!row.dueDate) return 'No fixed due date';
+    if (!row.dueDate) return 'Send any time';
     return `Due ${fmtDueDate(row.dueDate)}`;
   }
 
