@@ -112,6 +112,7 @@ export default function BookingModal({
     currency: booking.currency || 'ZAR',
     house_contact: booking.house_contact || '',
     extras: booking.extras || '',
+    special_requests: booking.special_requests || '',
     notes: booking.notes || '',
     status: booking.status || 'confirmed',
     // 'booking' (real reservation) or 'block' (owner stay, maintenance,
@@ -244,6 +245,7 @@ export default function BookingModal({
         currency: form.currency || 'ZAR',
         house_contact: form.house_contact.trim() || null,
         extras: isBlock ? null : (form.extras.trim() || null),
+        special_requests: isBlock ? null : (form.special_requests.trim() || null),
         notes: form.notes.trim() || null,
         status: form.status,
         updated_at: new Date().toISOString(),
@@ -753,6 +755,16 @@ export default function BookingModal({
               value={form.extras}
               onChange={(e) => setForm({ ...form, extras: e.target.value })}
               placeholder="e.g. cot, bath, linen"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Special requests</label>
+            <textarea
+              className="form-input"
+              rows={2}
+              value={form.special_requests}
+              onChange={(e) => setForm({ ...form, special_requests: e.target.value })}
+              placeholder="Guest's special requests — shown in owner emails (left blank, the line is omitted)"
             />
           </div>
           <div className="form-group">

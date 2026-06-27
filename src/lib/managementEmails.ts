@@ -582,7 +582,7 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
     platform: platformLabel(booking?.platform),
 
     // Free-text (blank until structured; readable from extras if present)
-    special_requests: extrasText(booking, 'special_requests'),
+    special_requests: (booking?.special_requests ?? '').toString().trim(),
     housekeeper_days: extrasText(booking, 'housekeeper_days'),
     deposit_amount: extrasText(booking, 'deposit_amount'),
     payment_terms: extrasText(booking, 'payment_terms'),
@@ -674,7 +674,14 @@ export function renderTemplate(tpl: string, vars: Record<string, string>): strin
     }
     return match;
   });
-  return replaced
+  // A line that was "Label: {{var}}" and is now just "Label:" (its var blanked)
+  // is dropped entirely — an empty Special requests / Housekeeper days line
+  // shouldn't print a bare label. Lines with any real value survive.
+  const deLabelled = replaced
+    .split('\n')
+    .filter((line) => !/^[ \t]*[^:\n]{1,40}:[ \t]*$/.test(line))
+    .join('\n');
+  return deLabelled
     .replace(/[ \t]+\n/g, '\n') // drop trailing spaces left when a var blanked
     .replace(/\n{3,}/g, '\n\n'); // collapse 3+ newlines to one blank line
 }
