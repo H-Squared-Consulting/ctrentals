@@ -645,8 +645,7 @@ export const VARIABLE_CATALOG: VariableInfo[] = [
   { key: 'signature', label: 'Your signature', audiences: ['guest', 'owner', 'agent'] },
   { key: 'reply_email', label: 'Your reply email', audiences: ['guest', 'owner', 'agent'] },
   { key: 'reply_phone', label: 'Your reply phone', audiences: ['guest', 'owner', 'agent'] },
-  { key: 'bank_sa', label: 'Bank details (SA)', audiences: ['guest', 'owner', 'agent'] },
-  { key: 'bank_uk', label: 'Bank details (UK)', audiences: ['guest', 'owner', 'agent'] },
+  // Bank details now live inline in the deposit template (SA only) — no {{bank_*}} chips.
 
   // Brand + links
   { key: 'brand', label: 'Brand name', audiences: ['guest', 'owner', 'agent'] },
