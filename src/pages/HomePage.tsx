@@ -23,7 +23,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import SendBrochurePicker from '../components/SendBrochurePicker';
-import BookingModal from './BookingModal';
+// Lazy/code-split wrapper — keeps the heavy booking modal out of the bundle.
+import BookingModal from '../components/LazyBookingModal';
 import ActionsDueSection, { type ActionsBucket, type ActionsCounts } from '../components/ActionsDueSection';
 
 interface TodayBookingRow {

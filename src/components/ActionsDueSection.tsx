@@ -32,7 +32,8 @@ import {
 } from '../lib/managementEmails';
 import type { Audience, BookingActionRow, BookingChannel } from '../lib/managementEmails';
 import { loadParticipantsBulk } from '../lib/bookingParticipants';
-import BookingModal from '../pages/BookingModal';
+// Lazy/code-split wrapper — the modal only mounts when a row is clicked.
+import BookingModal from './LazyBookingModal';
 
 /** The three actionable urgency buckets, in priority order. */
 export type ActionsBucket = 'overdue' | 'today' | 'this_week';
@@ -140,14 +141,18 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
     setLoading(true);
     try {
       // SAST-comparable YYYY-MM-DD strings drive the whole engine; we never
-      // compare timestamps. Window: anything checking out in the last
-      // fortnight (post-stay feedback still lands) through anything checking
-      // in within ~2 months (pre-arrival lead time covered).
+      // compare timestamps. Window is deliberately WIDE: checking out in the
+      // last month through checking in up to a year out. Far-future bookings
+      // must appear too — an owner *confirmation* email is due the moment the
+      // booking is made, so a stay months away can already have an overdue
+      // action. The per-action urgency bucketing keeps only what's actually
+      // due (overdue/today/this-week) in view, so a wide window doesn't bloat
+      // the list — a booking with nothing due yet simply doesn't show.
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayISO = today.toISOString().slice(0, 10);
-      const past = new Date(today); past.setDate(past.getDate() - 14);
-      const future = new Date(today); future.setDate(future.getDate() + 60);
+      const past = new Date(today); past.setDate(past.getDate() - 30);
+      const future = new Date(today); future.setDate(future.getDate() + 365);
       const windowStartISO = past.toISOString().slice(0, 10);
       const windowEndISO = future.toISOString().slice(0, 10);
 
@@ -169,22 +174,14 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
       const bookingRows = (bookRes.data || []) as any[];
       const propRows = (propRes.data || []) as Property[];
 
-      // Enquiries only needed for agent_id (drives channel resolution). One
-      // IN() keeps it to a single round-trip.
-      const enquiryIds = Array.from(new Set(bookingRows.map(b => b.enquiry_id).filter(Boolean)));
-      const enquiryById = new Map<string, { agent_id: string | null }>();
-      if (enquiryIds.length) {
-        const enqRes = await supabase.from('enquiries').select('id, agent_id').in('id', enquiryIds);
-        for (const e of (enqRes.data || []) as any[]) {
-          enquiryById.set(e.id, { agent_id: e.agent_id ?? null });
-        }
-      }
-
-      // marksByBooking tells us which steps are already sent (pending =
-      // absence of a mark). That's the only participant data the dashboard
-      // needs — the actual drafting (owner/agent/template lookups) happens
-      // inside the booking's Communications tab.
+      // One batched, concurrent pass for everything the dashboard needs.
+      // marksByBooking says which steps are already sent (pending = absence of
+      // a mark); enquiryById gives each booking's agent_id for channel
+      // resolution without a separate enquiries round-trip. The owner/agent/
+      // template lookups for the actual drafting happen inside the booking's
+      // Communications tab, not here.
       const bulk = await loadParticipantsBulk(supabase, bookingRows);
+      const enquiryById = bulk.enquiryById;
       const propById = new Map<string, Property>(propRows.map(p => [p.id, p]));
 
       const items: QueueItem[] = [];

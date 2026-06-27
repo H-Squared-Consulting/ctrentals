@@ -18,7 +18,7 @@ import ProposalDetailModal from '../components/ProposalDetailModal';
 import SendProposalDialog from '../components/SendProposalDialog';
 import NewProposalLauncher from '../components/NewProposalLauncher';
 import PricingModal from './PricingModal';
-import BookingModal from './BookingModal';
+import BookingModal from '../components/LazyBookingModal';
 import { fmtRand } from '../lib/pricingEngine';
 import { notifyPipelineChanged } from '../lib/pipelineEvents';
 

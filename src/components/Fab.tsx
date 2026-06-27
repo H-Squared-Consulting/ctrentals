@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import SendBrochurePicker from './SendBrochurePicker';
 import NewProposalLauncher from './NewProposalLauncher';
-import BookingModal from '../pages/BookingModal';
+import BookingModal from './LazyBookingModal';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { openGlobalSearch } from '../lib/globalSearchEvents';
 import { useModalStack } from '../contexts/ModalStackContext';

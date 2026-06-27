@@ -18,7 +18,7 @@ import type { Booking } from '../types';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import MultiPicker from '../components/MultiPicker';
-import BookingModal from './BookingModal';
+import BookingModal from '../components/LazyBookingModal';
 import BlockModal from './BlockModal';
 import ActionModal from '../components/ActionModal';
 import { CT_RENTALS_PARTNER_ID, BOOKING_STATUS_OPTIONS } from './constants';

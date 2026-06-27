@@ -243,12 +243,17 @@ export interface BulkParticipants {
   agentByEnquiry: Map<string, ResolvedAgent>;
   guidebookByProperty: Map<string, ResolvedGuidebook>;
   marksByBooking: Map<string, Record<string, MarkRow>>;
+  /** enquiry id -> { agent_id }. Lets the dashboard resolve each booking's
+   *  channel without a separate enquiries round-trip (we already fetch the
+   *  enquiries here for agent resolution, so we hand the map back too). */
+  enquiryById: Map<string, { agent_id: string | null }>;
 }
 
 /**
  * Resolve participants + marks for many bookings in one pass. Batches each
  * lookup with `.in(...)` so the dashboard issues a handful of queries instead
- * of four per booking. Bookings are expected to carry id, property_id and
+ * of four per booking, AND fires the independent lookups concurrently rather
+ * than as a waterfall. Bookings are expected to carry id, property_id and
  * enquiry_id; anything missing is simply skipped.
  */
 export async function loadParticipantsBulk(
@@ -259,109 +264,116 @@ export async function loadParticipantsBulk(
   const agentByEnquiry = new Map<string, ResolvedAgent>();
   const guidebookByProperty = new Map<string, ResolvedGuidebook>();
   const marksByBooking = new Map<string, Record<string, MarkRow>>();
+  const enquiryById = new Map<string, { agent_id: string | null }>();
 
   const propertyIds = uniq((bookings || []).map(b => b?.property_id));
   const enquiryIds = uniq((bookings || []).map(b => b?.enquiry_id));
   const bookingIds = uniq((bookings || []).map(b => b?.id));
 
+  const empty = Promise.resolve({ data: [] as any[] });
+
+  // Batch 1 — the four independent lookups, concurrently. Owners, enquiries
+  // (channel + agents), guidebooks and marks don't depend on each other.
+  const [ownerLinksRes, enqRes, gbRes, marksRes] = await Promise.all([
+    propertyIds.length
+      ? supabase
+          .from('property_owners')
+          .select('property_id, owner_id, is_primary, created_at, home_owners(name, email, phone, payment_notes)')
+          .in('property_id', propertyIds)
+      : empty,
+    enquiryIds.length
+      ? supabase.from('enquiries').select('id, agent_id').in('id', enquiryIds)
+      : empty,
+    propertyIds.length
+      ? supabase.from('guidebooks').select('property_id, slug, is_published').in('property_id', propertyIds)
+      : empty,
+    bookingIds.length
+      ? supabase
+          .from('management_actions')
+          .select('booking_id, action_key, status, due_date, sent_at, sent_by')
+          .in('booking_id', bookingIds)
+      : empty,
+  ]);
+
   // ── Owners: property_owners join, primary first, per property ──
-  if (propertyIds.length) {
-    const { data: links } = await supabase
-      .from('property_owners')
-      .select('property_id, owner_id, is_primary, created_at, home_owners(name, email, phone, payment_notes)')
-      .in('property_id', propertyIds);
-    const grouped = new Map<string, any[]>();
-    for (const l of (links || []) as any[]) {
-      if (!grouped.has(l.property_id)) grouped.set(l.property_id, []);
-      grouped.get(l.property_id)!.push(l);
-    }
-    for (const [pid, list] of grouped) {
-      list.sort(
-        (a, b) =>
-          Number(b.is_primary) - Number(a.is_primary) ||
-          String(a.created_at).localeCompare(String(b.created_at)),
-      );
-      const chosen = list.find(l => unwrapOne(l.home_owners));
-      if (chosen) ownerByProperty.set(pid, mapOwner(unwrapOne(chosen.home_owners)));
-    }
-
-    // Legacy fallback for properties with no join row.
-    const missing = propertyIds.filter(pid => !ownerByProperty.has(pid));
-    if (missing.length) {
-      const { data: props } = await supabase
-        .from('partner_properties')
-        .select('id, owner_id')
-        .in('id', missing);
-      const ownerIds = uniq((props || []).map((p: any) => p.owner_id));
-      if (ownerIds.length) {
-        const { data: hos } = await supabase
-          .from('home_owners')
-          .select('id, name, email, phone, payment_notes')
-          .in('id', ownerIds);
-        const hoById = new Map<string, any>((hos || []).map((h: any) => [h.id, h]));
-        for (const p of (props || []) as any[]) {
-          const ho = p.owner_id ? hoById.get(p.owner_id) : null;
-          if (ho) ownerByProperty.set(p.id, mapOwner(ho));
-        }
-      }
-    }
+  const grouped = new Map<string, any[]>();
+  for (const l of (ownerLinksRes.data || []) as any[]) {
+    if (!grouped.has(l.property_id)) grouped.set(l.property_id, []);
+    grouped.get(l.property_id)!.push(l);
+  }
+  for (const [pid, list] of grouped) {
+    list.sort(
+      (a, b) =>
+        Number(b.is_primary) - Number(a.is_primary) ||
+        String(a.created_at).localeCompare(String(b.created_at)),
+    );
+    const chosen = list.find(l => unwrapOne(l.home_owners));
+    if (chosen) ownerByProperty.set(pid, mapOwner(unwrapOne(chosen.home_owners)));
   }
 
-  // ── Agents: enquiry.agent_id -> agents ──
-  if (enquiryIds.length) {
-    const { data: enqs } = await supabase
-      .from('enquiries')
-      .select('id, agent_id')
-      .in('id', enquiryIds);
-    const agentIds = uniq((enqs || []).map((e: any) => e.agent_id));
-    const agentById = new Map<string, ResolvedAgent>();
-    if (agentIds.length) {
-      const { data: agents } = await supabase
-        .from('agents')
-        .select('id, name, email, phone')
-        .in('id', agentIds);
-      for (const a of (agents || []) as any[]) {
-        agentById.set(a.id, { name: a.name || '', email: a.email ?? null, phone: a.phone ?? null });
-      }
-    }
-    for (const e of (enqs || []) as any[]) {
-      const agent = e.agent_id ? agentById.get(e.agent_id) : null;
-      if (agent) agentByEnquiry.set(e.id, agent);
-    }
-  }
+  // ── Enquiries: channel map (every enquiry) + agent ids to resolve ──
+  const enqs = (enqRes.data || []) as any[];
+  for (const e of enqs) enquiryById.set(e.id, { agent_id: e.agent_id ?? null });
+  const agentIds = uniq(enqs.map((e: any) => e.agent_id));
 
   // ── Guidebooks: per property, prefer published ──
-  if (propertyIds.length) {
-    const { data: gbs } = await supabase
-      .from('guidebooks')
-      .select('property_id, slug, is_published')
-      .in('property_id', propertyIds);
-    for (const g of (gbs || []) as any[]) {
-      if (!g.property_id) continue;
-      const existing = guidebookByProperty.get(g.property_id);
-      if (!existing || (!existing.is_published && g.is_published)) {
-        guidebookByProperty.set(g.property_id, { slug: g.slug, is_published: !!g.is_published });
-      }
+  for (const g of (gbRes.data || []) as any[]) {
+    if (!g.property_id) continue;
+    const existing = guidebookByProperty.get(g.property_id);
+    if (!existing || (!existing.is_published && g.is_published)) {
+      guidebookByProperty.set(g.property_id, { slug: g.slug, is_published: !!g.is_published });
     }
   }
 
   // ── Marks: management_actions per booking ──
-  if (bookingIds.length) {
-    const { data: marks } = await supabase
-      .from('management_actions')
-      .select('booking_id, action_key, status, due_date, sent_at, sent_by')
-      .in('booking_id', bookingIds);
-    for (const m of (marks || []) as any[]) {
-      if (!marksByBooking.has(m.booking_id)) marksByBooking.set(m.booking_id, {});
-      marksByBooking.get(m.booking_id)![m.action_key] = {
-        action_key: m.action_key,
-        status: m.status,
-        due_date: m.due_date ?? null,
-        sent_at: m.sent_at ?? null,
-        sent_by: m.sent_by ?? null,
-      };
+  for (const m of (marksRes.data || []) as any[]) {
+    if (!marksByBooking.has(m.booking_id)) marksByBooking.set(m.booking_id, {});
+    marksByBooking.get(m.booking_id)![m.action_key] = {
+      action_key: m.action_key,
+      status: m.status,
+      due_date: m.due_date ?? null,
+      sent_at: m.sent_at ?? null,
+      sent_by: m.sent_by ?? null,
+    };
+  }
+
+  // Batch 2 — the two dependent lookups, concurrently: legacy owner fallback
+  // (needs which properties still lack an owner) + agent records (need the
+  // agent ids from the enquiries above).
+  const missingOwnerProps = propertyIds.filter(pid => !ownerByProperty.has(pid));
+  const [legacyPropsRes, agentsRes] = await Promise.all([
+    missingOwnerProps.length
+      ? supabase.from('partner_properties').select('id, owner_id').in('id', missingOwnerProps)
+      : empty,
+    agentIds.length
+      ? supabase.from('agents').select('id, name, email, phone').in('id', agentIds)
+      : empty,
+  ]);
+
+  // Legacy owner fallback: partner_properties.owner_id -> home_owners.
+  const legacyProps = (legacyPropsRes.data || []) as any[];
+  const legacyOwnerIds = uniq(legacyProps.map((p: any) => p.owner_id));
+  if (legacyOwnerIds.length) {
+    const { data: hos } = await supabase
+      .from('home_owners')
+      .select('id, name, email, phone, payment_notes')
+      .in('id', legacyOwnerIds);
+    const hoById = new Map<string, any>((hos || []).map((h: any) => [h.id, h]));
+    for (const p of legacyProps) {
+      const ho = p.owner_id ? hoById.get(p.owner_id) : null;
+      if (ho) ownerByProperty.set(p.id, mapOwner(ho));
     }
   }
 
-  return { ownerByProperty, agentByEnquiry, guidebookByProperty, marksByBooking };
+  // Agents: enquiry.agent_id -> agents.
+  const agentById = new Map<string, ResolvedAgent>();
+  for (const a of (agentsRes.data || []) as any[]) {
+    agentById.set(a.id, { name: a.name || '', email: a.email ?? null, phone: a.phone ?? null });
+  }
+  for (const e of enqs) {
+    const agent = e.agent_id ? agentById.get(e.agent_id) : null;
+    if (agent) agentByEnquiry.set(e.id, agent);
+  }
+
+  return { ownerByProperty, agentByEnquiry, guidebookByProperty, marksByBooking, enquiryById };
 }
