@@ -1457,6 +1457,27 @@ export default function PipelinePage() {
   }
 
   async function applyProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
+    if (outcome === 'accepted') {
+      // A booking needs check-in AND check-out (both NOT NULL on bookings).
+      // Resolve them from the proposal, falling back to the enquiry; if either
+      // is missing, block the accept with a clear message instead of silently
+      // 400-ing the booking insert and leaving a "booked" deal with no booking.
+      let ci: string | null = (p as any).check_in ?? null;
+      let co: string | null = (p as any).check_out ?? null;
+      if (!ci || !co) {
+        const enqId = openDeal?.deal.enquiry?.id ?? (p as any).enquiry_id ?? null;
+        if (enqId) {
+          const { data: enq } = await supabase
+            .from('enquiries').select('check_in, check_out').eq('id', enqId).maybeSingle();
+          ci = ci ?? enq?.check_in ?? null;
+          co = co ?? enq?.check_out ?? null;
+        }
+      }
+      if (!ci || !co) {
+        toast.error('Add check-in and check-out dates before accepting — a booking needs both.');
+        return;
+      }
+    }
     const patch: any = { status: outcome, updated_at: new Date().toISOString() };
     if (outcome === 'accepted') {
       patch.accepted_at = new Date().toISOString();
@@ -1492,33 +1513,54 @@ export default function PipelinePage() {
     // and flash the card in its new column (Booked) so the user
     // sees where it moved. Same UX as the new-enquiry highlight.
     if (outcome === 'accepted') {
-      const enquiryId = openDeal?.deal.enquiry?.id;
-      setOpenDeal(null);
-      // Prompt the confirmation email immediately: open the freshly-created
-      // booking on its Communications tab. That tab defaults to the Due-only
-      // view, so the owner-confirmation + guest/agent first email (both
-      // anchored 'on confirm') are exactly what's shown; the channel is
-      // resolved automatically from the booking.
-      if (newBookingId) {
-        try {
-          const [bkRes, propRes] = await Promise.all([
-            supabase.from('bookings').select('*').eq('id', newBookingId).single(),
-            supabase
-              .from('partner_properties')
-              .select('id, slug, property_name, bedrooms, suburb, is_published')
-              .eq('partner_id', CT_RENTALS_PARTNER_ID)
-              .order('property_name'),
-          ]);
-          if (bkRes.data) {
-            setConfirmProperties(propRes.data || []);
-            setConfirmBooking(bkRes.data);
-            toast.success('Booking confirmed — send the confirmation email.');
-          }
-        } catch (err) {
-          console.error('Failed to open confirmation-email prompt', err);
-        }
+      // Resolve the enquiry id from whatever's available (the confirm-dialog
+      // accept path may have closed openDeal already).
+      let enquiryId: string | null =
+        openDeal?.deal.enquiry?.id ?? (p as any).enquiry_id ?? null;
+      if (!enquiryId) {
+        const { data: pr } = await supabase
+          .from('proposals').select('enquiry_id').eq('id', p.id).maybeSingle();
+        enquiryId = pr?.enquiry_id ?? null;
       }
-      if (enquiryId) {
+      setOpenDeal(null);
+      // Open the booking on its Communications tab (Due view → owner
+      // confirmation + guest/agent first email). We resolve the booking by
+      // enquiry_id rather than trusting createBookingFromAcceptedProposal's
+      // return value — that helper returns null if its own proposal lookup
+      // misses, but a booking always exists by this point.
+      let opened = false;
+      try {
+        const [bkById, propRes] = await Promise.all([
+          newBookingId
+            ? supabase.from('bookings').select('*').eq('id', newBookingId).maybeSingle()
+            : Promise.resolve({ data: null as any }),
+          supabase
+            .from('partner_properties')
+            .select('id, slug, property_name, bedrooms, suburb, is_published')
+            .eq('partner_id', CT_RENTALS_PARTNER_ID)
+            .order('property_name'),
+        ]);
+        let booking = bkById.data;
+        if (!booking && enquiryId) {
+          const { data } = await supabase
+            .from('bookings').select('*')
+            .eq('enquiry_id', enquiryId)
+            .order('created_at', { ascending: false })
+            .limit(1).maybeSingle();
+          booking = data;
+        }
+        if (booking) {
+          setConfirmProperties(propRes.data || []);
+          setConfirmBooking(booking);
+          toast.success('Booking confirmed — send the confirmation email.');
+          opened = true;
+        }
+      } catch (err) {
+        console.error('Failed to open confirmation-email prompt', err);
+      }
+      // Only flash the card via the deal deep-link if we did NOT open the
+      // confirmation modal — otherwise the re-opened deal modal covers it.
+      if (!opened && enquiryId) {
         navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
       }
       return;
