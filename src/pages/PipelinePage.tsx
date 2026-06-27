@@ -3405,6 +3405,7 @@ function ProposalRowInline({
   onEditPricing,
   onDelete,
   acceptDisabledReason,
+  datesMissing,
 }: {
   proposal: ProposalRow;
   onOpen: () => void;
@@ -3429,6 +3430,9 @@ function ProposalRowInline({
    *  un-attributable. Decline stays available because rejecting a
    *  quote needs no guest identity. */
   acceptDisabledReason?: string | null;
+  /** When true, BOTH Accept and Decline are hard-disabled — the deal has no
+   *  check-in/check-out, and a booking can't be created without them. */
+  datesMissing?: boolean;
 }) {
   const p = proposal;
   const isDraft = p.status === 'draft' || p.status === 'drafting' || p.status === 'ready';
@@ -3569,15 +3573,17 @@ function ProposalRowInline({
               className="btn btn-outline-success"
               style={{
                 fontSize: '0.75rem', padding: '4px 10px',
-                // Visually flag the blocked state without preventing
-                // the click — disabling the button silently swallowed
-                // the click and left the user wondering what to do
-                // next. Now the button STILL fires; the parent shows
-                // an explainer modal with a path to unblock it.
-                ...(acceptDisabledReason ? { opacity: 0.55 } : {}),
+                // Agent-guest case is a SOFT flag (still fires → explainer
+                // modal). Missing dates is a HARD disable (below).
+                ...(acceptDisabledReason && !datesMissing ? { opacity: 0.55 } : {}),
               }}
+              disabled={!!datesMissing}
               onClick={stop(() => onMarkOutcome('accepted'))}
-              title={acceptDisabledReason || 'Mark accepted (cascades — closes deal, auto-declines siblings)'}
+              title={
+                datesMissing
+                  ? 'Add check-in and check-out dates before accepting'
+                  : (acceptDisabledReason || 'Mark accepted (cascades — closes deal, auto-declines siblings)')
+              }
             >
               ✓ Accept
             </button>
@@ -3585,11 +3591,17 @@ function ProposalRowInline({
               type="button"
               className="btn btn-outline-danger"
               style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              disabled={!!datesMissing}
               onClick={stop(() => onMarkOutcome('declined'))}
-              title="Mark declined"
+              title={datesMissing ? 'Add check-in and check-out dates before declining' : 'Mark declined'}
             >
               ✕ Decline
             </button>
+            {datesMissing && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', fontWeight: 700, alignSelf: 'center', whiteSpace: 'nowrap' }}>
+                ⚠ Add check-in / check-out dates first
+              </span>
+            )}
           </>
         )}
         {isTerminal && null}
@@ -4641,7 +4653,14 @@ function DealDetailModal({
                 : null;
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {deal.proposals.map(p => (
+                  {deal.proposals.map(p => {
+                    // A booking needs check-in AND check-out (both NOT NULL on
+                    // bookings). Take them from the proposal, falling back to
+                    // the enquiry. Missing either → Accept/Decline hard-disabled.
+                    const ci = (p as any).check_in ?? (deal.enquiry as any)?.check_in ?? null;
+                    const co = (p as any).check_out ?? (deal.enquiry as any)?.check_out ?? null;
+                    const datesMissing = !ci || !co;
+                    return (
                     <ProposalRowInline
                       key={p.id}
                       proposal={p}
@@ -4655,8 +4674,10 @@ function DealDetailModal({
                       onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
                       onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}
                       acceptDisabledReason={acceptDisabledReason}
+                      datesMissing={datesMissing}
                     />
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })()}
