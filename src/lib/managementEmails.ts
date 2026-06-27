@@ -58,8 +58,9 @@ export interface ActionSpec {
   channels: BookingChannel[];
   /** Whether the composer opens an email draft or a WhatsApp message. */
   recipientChannel: 'email' | 'whatsapp';
-  /** When it's due, relative to an anchor date. `confirm` = on confirmation
-   *  (we use `created_at` as a proxy — there's no `confirmed_at` column yet). */
+  /** When it's due, relative to an anchor date. `confirm` = on confirmation,
+   *  which uses the booking's `confirmed_at` (set only for in-app confirms;
+   *  imported bookings have none, so confirm-anchored steps are skipped). */
   due: { anchor: 'check_in' | 'check_out' | 'confirm'; offsetDays: number };
 }
 
@@ -336,15 +337,18 @@ export function getApplicableActions(channel: BookingChannel): ActionSpec[] {
 }
 
 /** Compute a spec's due date for a booking, as `YYYY-MM-DD`. The `confirm`
- *  anchor uses `created_at` (no `confirmed_at` column yet — see plan flags). */
+ *  anchor uses `confirmed_at` — when the booking was genuinely confirmed
+ *  in-app. Imported bookings have no `confirmed_at`, so confirm-anchored steps
+ *  return null here (and are dropped by buildBookingActions), which stops every
+ *  import from showing an "overdue" confirmation on its import date. */
 export function computeDueDate(
   spec: ActionSpec,
-  booking: { check_in: string | null; check_out: string | null; created_at?: string | null },
+  booking: { check_in: string | null; check_out: string | null; confirmed_at?: string | null },
 ): string | null {
   const anchorValue =
     spec.due.anchor === 'check_in' ? booking?.check_in
     : spec.due.anchor === 'check_out' ? booking?.check_out
-    : booking?.created_at ?? null;
+    : booking?.confirmed_at ?? null;
   const base = toSastDate(anchorValue);
   if (!base) return null;
   return addDaysISO(base, spec.due.offsetDays);
@@ -373,7 +377,14 @@ export function buildBookingActions(
   todayISO: string,
 ): BookingActionRow[] {
   const channel = resolveBookingChannel(booking ?? { platform: null }, enquiry);
-  const rows: BookingActionRow[] = getApplicableActions(channel).map(spec => {
+  // Confirm-anchored steps (confirmation / welcome / agent details) only exist
+  // once a booking was genuinely confirmed in-app; bulk-imported bookings have
+  // no confirmed_at, so drop those steps entirely — no overdue, no dashboard
+  // count, not in the comms tab.
+  const hasConfirmedAt = !!booking?.confirmed_at;
+  const rows: BookingActionRow[] = getApplicableActions(channel)
+    .filter(spec => hasConfirmedAt || spec.due.anchor !== 'confirm')
+    .map(spec => {
     const dueDate = computeDueDate(spec, booking ?? { check_in: null, check_out: null });
     const mark = marks?.[spec.key];
     const status: MarkStatus = mark?.status ?? 'pending';

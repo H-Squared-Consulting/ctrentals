@@ -255,6 +255,9 @@ export async function createBookingFromAcceptedProposal(
       total_amount: perNight,
       currency: 'ZAR',
       status: 'confirmed',
+      // Genuine in-app confirmation (proposal accepted) — drives the
+      // confirmation/welcome management emails. Imports leave this null.
+      confirmed_at: new Date().toISOString(),
     }).select('id').single();
 
     if (prop.enquiry_id) {

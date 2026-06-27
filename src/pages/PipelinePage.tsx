@@ -1153,6 +1153,7 @@ export default function PipelinePage() {
       total_amount: featured.guest_price ?? null,
       currency: 'ZAR',
       status: 'confirmed',
+      confirmed_at: new Date().toISOString(),
     });
   }
 

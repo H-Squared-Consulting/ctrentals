@@ -226,6 +226,9 @@ export default function BookingModal({
 
       if (isNew) {
         payload.created_by = user?.id || null;
+        // Genuine in-app confirmation of a real booking (not a block) — enables
+        // the confirmation/welcome management emails. Imports leave this null.
+        if (!isBlock) payload.confirmed_at = new Date().toISOString();
         const { error } = await supabase.from('bookings').insert(payload);
         if (error) throw error;
         toast.success('Booking created');
