@@ -1150,6 +1150,7 @@ export default function PipelinePage() {
       guests_children: e?.guests_children ?? null,
       check_in: featured.check_in ?? e?.check_in,
       check_out: featured.check_out ?? e?.check_out,
+      notes: e?.notes ?? null,
       total_amount: featured.guest_price ?? null,
       currency: 'ZAR',
       status: 'confirmed',

@@ -213,7 +213,7 @@ export async function createBookingFromAcceptedProposal(
     if (prop.enquiry_id) {
       const { data } = await supabase
         .from('enquiries')
-        .select('id, client_name, client_email, client_phone, nationality, guests_total, guests_adults, guests_children, check_in, check_out')
+        .select('id, client_name, client_email, client_phone, nationality, guests_total, guests_adults, guests_children, check_in, check_out, notes')
         .eq('id', prop.enquiry_id)
         .single();
       enquiry = data;
@@ -252,6 +252,7 @@ export async function createBookingFromAcceptedProposal(
       guests_children: enquiry?.guests_children ?? null,
       check_in: prop.check_in ?? enquiry?.check_in,
       check_out: prop.check_out ?? enquiry?.check_out,
+      notes: enquiry?.notes ?? null,
       total_amount: perNight,
       currency: 'ZAR',
       status: 'confirmed',
