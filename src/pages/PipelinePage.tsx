@@ -1456,6 +1456,47 @@ export default function PipelinePage() {
     }
   }
 
+  /** Publish EVERY eligible (non-terminal) proposal on an agent deal to the
+   *  portal in one shot. The one-click recovery for proposals that were only
+   *  "sent" and never published, so they never reached the agent's portal. */
+  async function performPublishAll(deal: Deal) {
+    if (publishing) return;
+    const eligible = deal.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
+    if (eligible.length === 0) { toast.error('No proposals to publish'); return; }
+    setPublishing(true);
+    try {
+      const expires = deal.check_in ?? deal.enquiry?.check_in ?? null;
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase
+        .from('proposals')
+        .update({
+          published_to_agent_at: nowIso,
+          published_to_agent_expires: expires,
+          status: 'sent',
+          sent_at: nowIso,
+          updated_at: nowIso,
+        })
+        .in('id', eligible.map(p => p.id));
+      if (error) throw error;
+      if (deal.enquiry?.id) await syncEnquiryFromProposal(supabase, eligible[0].id, 'sent');
+      notifyPipelineChanged();
+      toast.success(`Published ${eligible.length} proposal${eligible.length === 1 ? '' : 's'} to ${titleCase(deal.client_name)}'s portal`);
+      const enquiryId = deal.enquiry?.id ?? null;
+      setPendingPublish(null);
+      setOpenProposal(null);
+      setOpenDeal(null);
+      await fetchDeals();
+      if (enquiryId) {
+        navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
+      }
+    } catch (err: any) {
+      console.error('performPublishAll failed:', err);
+      toast.error('Failed to publish all: ' + (err?.message || String(err)));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function applyProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
     if (outcome === 'accepted') {
       // A booking needs check-in AND check-out (both NOT NULL on bookings).
@@ -1780,6 +1821,7 @@ export default function PipelinePage() {
           onSendProposal={(p) => setSendingProposals([hydrateProposalContact(p)])}
           onSendDrafts={(drafts) => setSendingProposals(drafts.map(hydrateProposalContact))}
           onPublishProposal={(p) => setPendingPublish({ proposal: p, deal: openDeal.deal })}
+          onPublishAll={() => performPublishAll(openDeal.deal)}
           onMarkProposalOutcome={(p, outcome) => {
             if (outcome === 'interested') {
               // Interested is a status-flip with no cascade, so use the
@@ -3539,23 +3581,22 @@ function ProposalRowInline({
             🕓 History
           </button>
         )}
-        {isDraft && onPublish && (
-          // Agent-enquiry only — publishes the proposal to the
-          // agent's /q/:token portal until check_in passes. Also
-          // marks the proposal Sent (parent confirmation modal
-          // explains). Sits BEFORE Send in the row so the most
-          // common agent-flow action reads left-to-right.
+        {onPublish && !isTerminal && (
+          // Agent enquiries are PUBLISH-ONLY: the proposal goes to the agent's
+          // /q/:token portal (unbranded brochure + agent pricing), it is NOT
+          // emailed. Shown on draft AND already-sent proposals so a proposal
+          // that was only "sent" can still be pushed to the portal.
           <button
             type="button"
-            className="btn btn-outline"
+            className="btn btn-primary"
             style={{ fontSize: '0.75rem', padding: '4px 10px' }}
             onClick={stop(onPublish)}
-            title="Publish this proposal to the agent's portal — they'll see it on their My Enquiries tab"
+            title="Publish this proposal to the agent's portal — they'll see the brochure + pricing on their My Enquiries tab"
           >
             📢 Publish
           </button>
         )}
-        {isDraft && (
+        {isDraft && !onPublish && (
           <button
             type="button"
             className="btn btn-primary"
@@ -3637,7 +3678,7 @@ function ProposalRowInline({
 function DealDetailModal({
   deal, initialMode = 'view', focusField = null, onClose, onQuote,
   onUpdateStatus, onUpdateProposalOutcome, onSetStage, onReopenEnquiry,
-  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal,
+  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal, onPublishAll,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
@@ -3674,6 +3715,9 @@ function DealDetailModal({
    *  ProposalRowInline which renders the button only when this
    *  prop is set AND the proposal is in a draft state. */
   onPublishProposal: (p: ProposalRow) => void;
+  /** Publish EVERY eligible proposal on this (agent) deal to the portal at
+   *  once. Only wired for agent deals. */
+  onPublishAll?: () => void;
 }) {
   const { supabase } = useAuth();
   const toast = useToast();
@@ -4553,7 +4597,20 @@ function DealDetailModal({
             headingRight={deal.proposals.length ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <span>{deal.proposals.length}</span>
-                {drafts.length >= 2 && (
+                {deal.is_agent ? (
+                  // Agent deals publish to the portal (never email), so the
+                  // batch action is Publish all — also the one-click recovery
+                  // for proposals that were only "sent", never published.
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                    onClick={() => onPublishAll?.()}
+                    title={`Publish all of ${titleCase(deal.client_name)}'s proposals to their portal (brochure + pricing)`}
+                  >
+                    📢 Publish all to portal
+                  </button>
+                ) : drafts.length >= 2 ? (
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -4563,7 +4620,7 @@ function DealDetailModal({
                   >
                     ✉ Send all {drafts.length} drafts
                   </button>
-                )}
+                ) : null}
               </span>
             ) : null}
           >
