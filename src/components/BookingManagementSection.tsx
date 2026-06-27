@@ -385,7 +385,7 @@ export default function BookingManagementSection({
             onClick={() => setFilter('due')}
             title="Only the emails that need sending now"
           >
-            Due {dueRows.length}
+            To send {dueRows.length}
           </button>
           <button
             type="button"
@@ -401,7 +401,7 @@ export default function BookingManagementSection({
       {visibleRows.length === 0 ? (
         <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
           {filter === 'due'
-            ? 'Nothing due right now. Switch to All to see the full sequence.'
+            ? 'Nothing to send right now. Switch to All to see the full sequence.'
             : 'No management steps apply to this booking.'}
         </div>
       ) : (
@@ -419,7 +419,8 @@ export default function BookingManagementSection({
                   gap: 12,
                   padding: '10px 12px',
                   borderTop: i === 0 ? undefined : '1px solid var(--border)',
-                  background: 'var(--surface)',
+                  // A sent step tints green so it's obvious at a glance it's handled.
+                  background: isSent ? 'var(--success-bg)' : 'var(--surface)',
                 }}
               >
                 <span
