@@ -377,13 +377,14 @@ export function buildBookingActions(
   todayISO: string,
 ): BookingActionRow[] {
   const channel = resolveBookingChannel(booking ?? { platform: null }, enquiry);
-  // Confirm-anchored steps (confirmation / welcome / agent details) only exist
-  // once a booking was genuinely confirmed in-app; bulk-imported bookings have
-  // no confirmed_at, so drop those steps entirely — no overdue, no dashboard
-  // count, not in the comms tab.
-  const hasConfirmedAt = !!booking?.confirmed_at;
+  // Confirm-anchored steps (confirmation / welcome / agent details) are dated
+  // from confirmed_at (set only on a genuine in-app confirm). Imported bookings
+  // have none, so computeDueDate returns null → these render as "Upcoming · no
+  // fixed date": still draftable from the comms tab, but never overdue and never
+  // surfaced on the dashboard (which only shows dated, actually-due items). This
+  // is why an imported upcoming booking can still send a welcome without the
+  // whole import batch flooding the queue.
   const rows: BookingActionRow[] = getApplicableActions(channel)
-    .filter(spec => hasConfirmedAt || spec.due.anchor !== 'confirm')
     .map(spec => {
     const dueDate = computeDueDate(spec, booking ?? { check_in: null, check_out: null });
     const mark = marks?.[spec.key];
