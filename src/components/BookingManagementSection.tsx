@@ -135,11 +135,17 @@ export default function BookingManagementSection({
   property,
   supabase,
   user,
+  initialFilter = 'due',
 }: {
   booking: any;
   property: any;
   supabase: any;
   user: any;
+  /** Which subset to show first. 'due' (default) = only the emails that need
+   *  sending now (pending + overdue/today/this-week); 'all' = the full
+   *  sequence. The dashboard and the accept-confirmation flow rely on 'due'
+   *  so staff aren't faced with all 8 templates at once. */
+  initialFilter?: 'due' | 'all';
 }) {
   const toast = useToast();
 
@@ -153,6 +159,7 @@ export default function BookingManagementSection({
   const [templatesByKey, setTemplatesByKey] = useState<Record<string, EmailTemplateRow>>({});
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'due' | 'all'>(initialFilter === 'all' ? 'all' : 'due');
 
   // Today is fixed for the lifetime of the modal — recomputing per render
   // would churn the memoised action rows for no reason.
@@ -220,6 +227,17 @@ export default function BookingManagementSection({
     () => buildBookingActions(booking, enquiry, marks, todayISO),
     [booking, enquiry, marks, todayISO],
   );
+  // "Due" = the emails that actually need sending now: still pending, and
+  // overdue / due today / due this week. Upcoming (not yet due) and
+  // already-sent steps are hidden until you flip to All.
+  const dueRows = useMemo(
+    () => rows.filter(
+      r => r.status !== 'sent'
+        && (r.urgency === 'overdue' || r.urgency === 'today' || r.urgency === 'this_week'),
+    ),
+    [rows],
+  );
+  const visibleRows = filter === 'due' ? dueRows : rows;
 
   /** Recipient contact for a step, by audience. Emails lower-cased, names
  *  title-cased. Missing email/phone is fine — the composer degrades to
@@ -332,17 +350,39 @@ export default function BookingManagementSection({
 
   return (
     <>
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
-        {channelLabel(channel, booking.platform)} · {rows.length} step{rows.length === 1 ? '' : 's'}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+          {channelLabel(channel, booking.platform)} · {rows.length} step{rows.length === 1 ? '' : 's'}
+        </div>
+        <div className="view-toggle">
+          <button
+            type="button"
+            className={`view-toggle-btn${filter === 'due' ? ' active' : ''}`}
+            onClick={() => setFilter('due')}
+            title="Only the emails that need sending now"
+          >
+            Due {dueRows.length}
+          </button>
+          <button
+            type="button"
+            className={`view-toggle-btn${filter === 'all' ? ' active' : ''}`}
+            onClick={() => setFilter('all')}
+            title="The full sequence, including upcoming and already-sent"
+          >
+            All {rows.length}
+          </button>
+        </div>
       </div>
 
-      {rows.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-          No management steps apply to this booking.
+          {filter === 'due'
+            ? 'Nothing due right now. Switch to All to see the full sequence.'
+            : 'No management steps apply to this booking.'}
         </div>
       ) : (
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-          {rows.map((row, i) => {
+          {visibleRows.map((row, i) => {
             const pill = URGENCY_PILL[row.urgency];
             const isSent = row.status === 'sent';
             const busy = busyKey === row.spec.key;

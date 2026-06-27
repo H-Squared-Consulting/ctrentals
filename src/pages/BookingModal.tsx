@@ -62,7 +62,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange, defaultView,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange, defaultView, commsFilter,
 }: {
   booking: any;
   properties: any[];
@@ -82,6 +82,9 @@ export default function BookingModal({
    *  email queue). The dashboard actions list passes 'comms' so a click
    *  lands the user where they draft. */
   defaultView?: 'details' | 'comms';
+  /** Which comms subset to show first when on the Communications tab.
+   *  Passed straight to BookingManagementSection; defaults to 'due'. */
+  commsFilter?: 'due' | 'all';
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -707,6 +710,7 @@ export default function BookingModal({
           property={properties.find(p => p.id === form.property_id)}
           supabase={supabase}
           user={user}
+          initialFilter={commsFilter ?? 'due'}
         />
       )}
     </DetailModal>

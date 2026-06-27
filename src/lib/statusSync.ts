@@ -200,14 +200,14 @@ export async function createBookingFromAcceptedProposal(
   supabase: any,
   proposalId: string,
   partnerId: string,
-): Promise<void> {
+): Promise<string | null> {
   try {
     const { data: prop } = await supabase
       .from('proposals')
       .select('id, enquiry_id, property_id, guest_name, guest_email, guest_phone, guests_total, check_in, check_out, pricing_proposals(client_price_excl_vat)')
       .eq('id', proposalId)
       .single();
-    if (!prop) return;
+    if (!prop) return null;
 
     let enquiry: any = null;
     if (prop.enquiry_id) {
@@ -231,7 +231,7 @@ export async function createBookingFromAcceptedProposal(
           .from('enquiries')
           .update({ status: 'booked', updated_at: new Date().toISOString() })
           .eq('id', prop.enquiry_id);
-        return;
+        return existing.id;
       }
     }
 
@@ -239,7 +239,7 @@ export async function createBookingFromAcceptedProposal(
       ? prop.pricing_proposals[0]?.client_price_excl_vat ?? null
       : prop.pricing_proposals?.client_price_excl_vat ?? null;
 
-    await supabase.from('bookings').insert({
+    const { data: inserted } = await supabase.from('bookings').insert({
       partner_id: partnerId,
       property_id: prop.property_id,
       enquiry_id: prop.enquiry_id ?? null,
@@ -255,7 +255,7 @@ export async function createBookingFromAcceptedProposal(
       total_amount: perNight,
       currency: 'ZAR',
       status: 'confirmed',
-    });
+    }).select('id').single();
 
     if (prop.enquiry_id) {
       await supabase
@@ -263,8 +263,11 @@ export async function createBookingFromAcceptedProposal(
         .update({ status: 'booked', updated_at: new Date().toISOString() })
         .eq('id', prop.enquiry_id);
     }
+
+    return inserted?.id ?? null;
   } catch (err) {
     console.error('createBookingFromAcceptedProposal failed:', err);
+    return null;
   }
 }
 

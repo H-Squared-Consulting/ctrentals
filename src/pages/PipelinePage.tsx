@@ -55,6 +55,7 @@ import PriceBucketFilter from '../components/PriceBucketFilter';
 import type { TierKey } from '../lib/priceTiers';
 import { useModalStack } from '../contexts/ModalStackContext';
 import { initialsForEmail, TEAM_INITIALS, type TeamInitials } from '../lib/userInitials';
+import LazyBookingModal from '../components/LazyBookingModal';
 
 // ─── Data shapes ────────────────────────────────────────────────────────
 
@@ -498,6 +499,10 @@ export default function PipelinePage() {
   const toast = useToast();
 
   const [deals, setDeals] = useState<Deal[]>([]);
+  // After a proposal is accepted we auto-open the new booking on its
+  // Communications tab so the confirmation email gets sent right away.
+  const [confirmBooking, setConfirmBooking] = useState<any | null>(null);
+  const [confirmProperties, setConfirmProperties] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'board' | 'list'>('board');
   // Search can be pre-filled from URL — Home links land users here with
@@ -1438,12 +1443,13 @@ export default function PipelinePage() {
     }
     await supabase.from('proposals').update(patch).eq('id', p.id);
 
+    let newBookingId: string | null = null;
     if (outcome === 'accepted') {
       await closeEnquiryOnProposalAccept(supabase, p.id);
       // Auto-create the booking row so the team doesn't have to do a
       // separate Mark Booked click on the deal. Idempotent — no-ops
       // if a booking already exists.
-      await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
+      newBookingId = await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
     } else if (outcome === 'declined') {
       await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
     } else {
@@ -1463,6 +1469,30 @@ export default function PipelinePage() {
     if (outcome === 'accepted') {
       const enquiryId = openDeal?.deal.enquiry?.id;
       setOpenDeal(null);
+      // Prompt the confirmation email immediately: open the freshly-created
+      // booking on its Communications tab. That tab defaults to the Due-only
+      // view, so the owner-confirmation + guest/agent first email (both
+      // anchored 'on confirm') are exactly what's shown; the channel is
+      // resolved automatically from the booking.
+      if (newBookingId) {
+        try {
+          const [bkRes, propRes] = await Promise.all([
+            supabase.from('bookings').select('*').eq('id', newBookingId).single(),
+            supabase
+              .from('partner_properties')
+              .select('id, slug, property_name, bedrooms, suburb, is_published')
+              .eq('partner_id', CT_RENTALS_PARTNER_ID)
+              .order('property_name'),
+          ]);
+          if (bkRes.data) {
+            setConfirmProperties(propRes.data || []);
+            setConfirmBooking(bkRes.data);
+            toast.success('Booking confirmed — send the confirmation email.');
+          }
+        } catch (err) {
+          console.error('Failed to open confirmation-email prompt', err);
+        }
+      }
       if (enquiryId) {
         navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
       }
@@ -1801,6 +1831,19 @@ export default function PipelinePage() {
             const deal = deals.find(d => d.enquiry?.id === enquiryId);
             if (deal) setOpenDeal({ deal, mode: 'view' });
           }}
+        />
+      )}
+
+      {confirmBooking && (
+        <LazyBookingModal
+          booking={confirmBooking}
+          properties={confirmProperties}
+          supabase={supabase}
+          user={user}
+          partnerId={CT_RENTALS_PARTNER_ID}
+          defaultView="comms"
+          onClose={() => setConfirmBooking(null)}
+          onSave={() => setConfirmBooking(null)}
         />
       )}
 
