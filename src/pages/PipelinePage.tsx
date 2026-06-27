@@ -83,6 +83,10 @@ interface ProposalRow {
   sent_at: string | null;
   viewed_at: string | null;
   accepted_at: string | null;
+  /** Set when this proposal was published to the agent's portal (expires =
+   *  check-in date). Drives the "✓ Published" state on the proposal row. */
+  published_to_agent_at: string | null;
+  published_to_agent_expires: string | null;
   guest_price: number | null;
   scenario_type: string | null;
   season_tag: string | null;
@@ -480,6 +484,8 @@ function mapProposalRow(p: any, parentEnquiry?: { id: string; ref_code: string }
     sent_at: p.sent_at,
     viewed_at: p.viewed_at,
     accepted_at: p.accepted_at,
+    published_to_agent_at: p.published_to_agent_at ?? null,
+    published_to_agent_expires: p.published_to_agent_expires ?? null,
     guest_price: p.pricing_proposals?.client_price_excl_vat ?? null,
     scenario_type: p.pricing_proposals?.scenario_type ?? null,
     season_tag: p.pricing_proposals?.season_tag ?? null,
@@ -3480,6 +3486,7 @@ function ProposalRowInline({
   const isDraft = p.status === 'draft' || p.status === 'drafting' || p.status === 'ready';
   const isActiveSent = p.status === 'sent' || p.status === 'viewed' || p.status === 'interested';
   const isTerminal = INACTIVE_PROPOSAL_STATUSES.has(p.status);
+  const isPublished = !!p.published_to_agent_at;
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -3584,17 +3591,28 @@ function ProposalRowInline({
         {onPublish && !isTerminal && (
           // Agent enquiries are PUBLISH-ONLY: the proposal goes to the agent's
           // /q/:token portal (unbranded brochure + agent pricing), it is NOT
-          // emailed. Shown on draft AND already-sent proposals so a proposal
-          // that was only "sent" can still be pushed to the portal.
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-            onClick={stop(onPublish)}
-            title="Publish this proposal to the agent's portal — they'll see the brochure + pricing on their My Enquiries tab"
-          >
-            📢 Publish
-          </button>
+          // emailed. Once published, show a non-clickable "Published" pill so it
+          // can't be re-published; until then, the active Publish button.
+          isPublished ? (
+            <span
+              className="ops-status-pill ops-status-pill--accepted"
+              style={{ flexShrink: 0 }}
+              title="Already published to the agent's portal"
+            >
+              <span className="ops-status-pill-dot" />
+              Published
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              onClick={stop(onPublish)}
+              title="Publish this proposal to the agent's portal — they'll see the brochure + pricing on their My Enquiries tab"
+            >
+              📢 Publish
+            </button>
+          )
         )}
         {isDraft && !onPublish && (
           <button
@@ -4591,6 +4609,10 @@ function DealDetailModal({
         // flow lands here with N drafts ready to send to one recipient.
         // One click → SendProposalDialog with proposals[N].
         const drafts = deal.proposals.filter(p => p.status === 'draft' || p.status === 'drafting');
+        // Publishable = non-terminal proposals; if every one is already on the
+        // portal, the "Publish all" button reads "All published" and disables.
+        const publishable = deal.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
+        const allPublished = publishable.length > 0 && publishable.every(p => !!p.published_to_agent_at);
         const proposalsSection = (
           <DetailModalSection
             heading="Proposals"
@@ -4606,9 +4628,12 @@ function DealDetailModal({
                     className="btn btn-primary"
                     style={{ fontSize: '0.75rem', padding: '4px 10px' }}
                     onClick={() => onPublishAll?.()}
-                    title={`Publish all of ${titleCase(deal.client_name)}'s proposals to their portal (brochure + pricing)`}
+                    disabled={allPublished}
+                    title={allPublished
+                      ? `All of ${titleCase(deal.client_name)}'s proposals are already on their portal`
+                      : `Publish all of ${titleCase(deal.client_name)}'s proposals to their portal (brochure + pricing)`}
                   >
-                    📢 Publish all to portal
+                    {allPublished ? '✓ All published' : '📢 Publish all to portal'}
                   </button>
                 ) : drafts.length >= 2 ? (
                   <button

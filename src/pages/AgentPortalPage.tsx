@@ -828,21 +828,7 @@ function PublishedProposalRow({
             >
               View summary
             </button>
-          ) : (
-            <a
-              className="btn btn-primary"
-              style={{ fontSize: '0.8125rem' }}
-              href={proposalHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              title={selected && !selected.isCurrent
-                ? 'Opens the proposal page rendered with this historical pricing'
-                : undefined}
-            >
-              View proposal →
-            </a>
-          )}
+          ) : null}
         </div>
       </div>
       <ProposalEarningsCard
