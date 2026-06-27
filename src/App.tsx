@@ -24,7 +24,6 @@ import HomeOwnersPage from './pages/HomeOwnersPage';
 import SeasonTagsPage from './pages/SeasonTagsPage';
 import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
-import StaffSettingsPage from './pages/StaffSettingsPage';
 import FinancePricingPage from './pages/FinancePricingPage';
 import PriceTiersPage from './pages/PriceTiersPage';
 import PriceListPage from './pages/PriceListPage';
@@ -251,7 +250,6 @@ export function App() {
       <Route path="/settings/channels" element={<Navigate to="/settings/platforms" replace />} />
       <Route path="/settings/agents" element={<Page><SettingsPage tab="agents"><AgentsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/email-templates" element={<Page><SettingsPage tab="email-templates"><EmailTemplatesPage embedded /></SettingsPage></Page>} />
-      <Route path="/settings/signature" element={<Page><SettingsPage tab="signature"><StaffSettingsPage embedded /></SettingsPage></Page>} />
 
       {/* Standalone form */}
       <Route path="/enquiry/new" element={<Page><EnquiryForm /></Page>} />

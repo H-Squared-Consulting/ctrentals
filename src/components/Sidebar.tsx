@@ -86,7 +86,6 @@ const NAV: NavItem[] = [
       { to: '/settings/platforms', label: 'Platforms' },
       { to: '/settings/agents',    label: 'Agents' },
       { to: '/settings/email-templates', label: 'Email templates', restrictedTo: EMAIL_EDIT_EMAILS },
-      { to: '/settings/signature', label: 'My signature' },
     ],
   },
 ];

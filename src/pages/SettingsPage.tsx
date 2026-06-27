@@ -16,10 +16,9 @@ const TITLES: Record<string, string> = {
   platforms:      'Platforms',
   agents:         'Agents',
   'email-templates': 'Email templates',
-  'signature':       'My signature',
 };
 
-export default function SettingsPage({ tab, children }: { tab: 'pricing' | 'price-tiers' | 'seasons' | 'platforms' | 'agents' | 'email-templates' | 'signature'; children: ReactNode }) {
+export default function SettingsPage({ tab, children }: { tab: 'pricing' | 'price-tiers' | 'seasons' | 'platforms' | 'agents' | 'email-templates'; children: ReactNode }) {
   const { setPageTitle } = useLayout();
   useEffect(() => { setPageTitle(TITLES[tab] || 'Settings'); }, [setPageTitle, tab]);
   return <>{children}</>;

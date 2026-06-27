@@ -459,7 +459,11 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
       ? `As it is a ${pLabel} booking it will clear after check-in and I will then pay across.`
       : 'I will pay across the 50% as soon as it clears and the balance is due 6 weeks prior to check-in.';
 
-  const staffSignature = staff?.signature ?? '';
+  // Sign-off is derived per logged-in user, not stored or edited: it always
+  // reads "Warm regards, <their name>". Hayley's drafts sign off as Hayley,
+  // Nicki's as Nicki — driven purely by who's logged in (no settings page).
+  const staffName = staff?.display_name ?? '';
+  const staffSignature = staffName ? `Warm regards,\n${staffName}` : 'Warm regards,';
 
   const vars: Record<string, string> = {
     // Guest
