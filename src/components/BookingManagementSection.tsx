@@ -161,6 +161,10 @@ export default function BookingManagementSection({
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [filter, setFilter] = useState<'due' | 'all'>(initialFilter === 'all' ? 'all' : 'due');
+  // Per-row "mark as already sent" confirmation — holds the spec.key of the row
+  // awaiting a yes/no, so the inline Confirm/Cancel shows only on that row. Lets
+  // staff clear emails they sent outside the system (e.g. before this launched).
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
 
   // Today is fixed for the lifetime of the modal — recomputing per render
   // would churn the memoised action rows for no reason.
@@ -415,16 +419,46 @@ export default function BookingManagementSection({
                   >
                     {busy ? '…' : '↺ Undo'}
                   </button>
+                ) : confirmKey === row.spec.key ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      Mark as already sent?
+                    </span>
+                    <button
+                      className="btn btn-outline-success"
+                      onClick={async () => { await markSent(row, row.spec.recipientChannel); setConfirmKey(null); }}
+                      disabled={busy}
+                      title="Record this email as already sent — nothing is emailed"
+                    >
+                      {busy ? '…' : '✓ Yes'}
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => setConfirmKey(null)}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 ) : (
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => openDraft(row)}
-                    disabled={busy}
-                    style={{ flexShrink: 0 }}
-                    title="Compose this email"
-                  >
-                    ✉ Draft
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <button
+                      className="btn btn-outline"
+                      onClick={() => openDraft(row)}
+                      disabled={busy}
+                      title="Compose this email"
+                    >
+                      ✉ Draft
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => setConfirmKey(row.spec.key)}
+                      disabled={busy}
+                      title="Already sent this outside the system? Mark it as sent to clear it from the queue."
+                    >
+                      ✓ Mark sent
+                    </button>
+                  </div>
                 )}
               </div>
             );
