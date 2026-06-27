@@ -62,7 +62,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange, defaultView,
 }: {
   booking: any;
   properties: any[];
@@ -77,6 +77,11 @@ export default function BookingModal({
   /** Fired when the user changes the property dropdown so the
    *  Calendar view behind can re-anchor live. */
   onPropertyIdChange?: (propertyId: string) => void;
+  /** Which tab to open on. 'details' (default) shows the booking form;
+   *  'comms' opens straight on the Communications tab (the management
+   *  email queue). The dashboard actions list passes 'comms' so a click
+   *  lands the user where they draft. */
+  defaultView?: 'details' | 'comms';
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -112,6 +117,10 @@ export default function BookingModal({
 
   const [form, setForm] = useState(initialForm);
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode || (isNew ? 'edit' : 'view'));
+  // Details vs Communications tab. Only a saved real booking has comms;
+  // the toggle/guards below fall back to details whenever comms isn't
+  // available, so a stray defaultView='comms' can never strand the user.
+  const [view, setView] = useState<'details' | 'comms'>(defaultView === 'comms' ? 'comms' : 'details');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -363,6 +372,14 @@ export default function BookingModal({
 
   const fieldsDisabled = mode === 'view';
 
+  // Communications tab is offered only for a saved, real, live booking
+  // (same gate the management checklist always used). Blocks, new and
+  // tentative/cancelled bookings show details only, with no tab bar.
+  const commsAvailable = !isNew && form.kind === 'booking'
+    && form.status !== 'tentative' && form.status !== 'cancelled';
+  const detailsVisible = !commsAvailable || view === 'details';
+  const commsVisible = commsAvailable && view === 'comms';
+
   return (
     <DetailModal
       title={title}
@@ -382,6 +399,26 @@ export default function BookingModal({
       }
       onClose={onClose}
     >
+      {commsAvailable && (
+        <div className="view-toggle" style={{ marginBottom: 16 }}>
+          <button
+            type="button"
+            className={`view-toggle-btn${view === 'details' ? ' active' : ''}`}
+            onClick={() => setView('details')}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            className={`view-toggle-btn${view === 'comms' ? ' active' : ''}`}
+            onClick={() => setView('comms')}
+          >
+            ✉ Communications
+          </button>
+        </div>
+      )}
+
+      {detailsVisible && (<>
       {isFromEnquiry && (
         <div className="detail-modal-banner detail-modal-banner--success">
           Converting from enquiry. Guest details have been pre-filled. Select a property and confirm dates.
@@ -662,17 +699,15 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+      </>)}
 
-      {!isNew && form.kind === 'booking'
-        && form.status !== 'tentative' && form.status !== 'cancelled' && (
-        <DetailModalSection heading="Management">
-          <BookingManagementSection
-            booking={booking}
-            property={properties.find(p => p.id === form.property_id)}
-            supabase={supabase}
-            user={user}
-          />
-        </DetailModalSection>
+      {commsVisible && (
+        <BookingManagementSection
+          booking={booking}
+          property={properties.find(p => p.id === form.property_id)}
+          supabase={supabase}
+          user={user}
+        />
       )}
     </DetailModal>
   );

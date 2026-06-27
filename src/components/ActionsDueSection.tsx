@@ -1,52 +1,43 @@
 /**
- * ActionsDueSection — the management-email action queue, rendered as the
- * left ("work") column of the Home command-center dashboard.
+ * ActionsDueSection — the management-email work queue, rendered as the left
+ * ("work") column of the Home command-center dashboard.
  *
- * One global queue across every confirmed booking: the management-email
- * sequence (owner confirmations, guest welcome / pre-arrival / deposit /
- * feedback, agent track, the 24h WhatsApp nudge) surfaced wherever an item
- * is due now. The sequence + due dates are computed on the fly from booking
- * dates + the resolved channel (see lib/managementEmails); nothing is
- * pre-populated, so a "pending" item is simply one with no management_actions
- * mark yet. We load a window of bookings (check_out ≥ today−14d, check_in ≤
- * today+60d), build each booking's actions, keep the pending ones, and bucket
- * them by urgency into Overdue / Today / This week.
+ * Grouped PER BOOKING: each confirmed booking with at least one pending
+ * management email shows as a single row (guest · property · dates, how many
+ * emails are due, which audiences, the most-urgent due date). The actual
+ * drafting lives inside the booking — clicking a row opens the BookingModal
+ * straight on its Communications tab, where each individual email can be
+ * drafted and marked sent. This keeps the dashboard readable at 50+ bookings
+ * instead of exploding into hundreds of repeated template rows.
  *
- * UX: the active bucket is a tab (controlled by the parent so the dashboard
- * KPI chips can switch it); an audience dropdown narrows to Owners / Guests /
- * Agents; the list caps at CAP rows with a Show-more expander. Bucket counts
- * are reported up via onCounts so the KPI strip stays in sync.
+ * The sequence + due dates are computed on the fly from booking dates + the
+ * resolved channel (see lib/managementEmails); nothing is pre-populated, so a
+ * "pending" item is one with no management_actions mark yet. We load a window
+ * of bookings (check_out ≥ today−14d, check_in ≤ today+60d), build each
+ * booking's actions, keep the pending ones, and group them by booking.
  *
- * Draft opens the shared EmailComposerModal pre-filled from the DB template
- * rendered with live booking variables; Mark as Sent writes a mark and the
- * item drops off the queue. Open hands off to the full BookingModal.
+ * UX: the active bucket (Overdue / Today / This week) is a tab — controlled by
+ * the parent so the dashboard KPI chips can switch it; counts on the tabs and
+ * in the KPI strip are NUMBERS OF BOOKINGS, matching the rows. An audience
+ * dropdown narrows to bookings with a pending Owner / Guest / Agent email. The
+ * list caps at CAP rows with a Show-more expander.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
-import { nightsBetween } from '../lib/nights';
-import { initialsForEmail } from '../lib/userInitials';
 import {
   buildBookingActions,
   resolveBookingChannel,
-  buildBookingVars,
-  renderEmail,
 } from '../lib/managementEmails';
-import type {
-  Audience,
-  BookingActionRow,
-  BookingChannel,
-  StaffSettings,
-} from '../lib/managementEmails';
-import { loadParticipantsBulk, loadStaffSettings } from '../lib/bookingParticipants';
-import EmailComposerModal from './EmailComposerModal';
+import type { Audience, BookingActionRow, BookingChannel } from '../lib/managementEmails';
+import { loadParticipantsBulk } from '../lib/bookingParticipants';
 import BookingModal from '../pages/BookingModal';
 
 /** The three actionable urgency buckets, in priority order. */
 export type ActionsBucket = 'overdue' | 'today' | 'this_week';
 
-/** Live counts reported up to the dashboard KPI strip. */
+/** Live counts reported up to the dashboard KPI strip — numbers of BOOKINGS. */
 export interface ActionsCounts {
   overdue: number;
   today: number;
@@ -63,24 +54,23 @@ interface Property {
   is_published?: boolean;
 }
 
-/** One pending action against one booking — the unit of the queue. */
+/** One pending action against one booking. */
 interface QueueItem {
   booking: any;
   property: Property | null;
-  enquiry: { agent_id: string | null } | null;
   channel: BookingChannel;
   row: BookingActionRow;
 }
 
-/** What the composer is currently showing. Holds the source QueueItem so
- *  Mark as Sent knows which booking + action_key to stamp. */
-interface ComposerState {
-  item: QueueItem;
-  title: string;
-  subject: string;
-  body: string;
-  recipient: { name: string; email?: string | null; phone?: string | null };
-  whatsapp: boolean;
+/** All pending actions for one booking, rolled up for a single dashboard row. */
+interface BookingGroup {
+  booking: any;
+  property: Property | null;
+  items: QueueItem[];
+  counts: Record<ActionsBucket, number>;
+  audiences: Set<Audience>;
+  /** Earliest due date among the pending items in each bucket. */
+  earliestDue: Record<ActionsBucket, string | null>;
 }
 
 interface Props {
@@ -96,28 +86,22 @@ function titleCase(s: string | null | undefined): string {
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
 }
 
-/** Force emails lower-case at the source (design-system rule). */
-function lc(s: string | null | undefined): string | null {
-  return s ? s.toLowerCase() : null;
-}
-
-function fmtDate(d: string | null | undefined): string {
+/** Short SAST date, e.g. "5 Aug". Parses YYYY-MM-DD directly (no TZ drift). */
+function fmtShort(d: string | null | undefined): string {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+  const [y, m, day] = d.split('-').map(Number);
+  if (!y || !m || !day) return '—';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${day} ${MONTHS[m - 1]}`;
 }
 
-function fmtDue(d: string | null): string {
-  if (!d) return 'No date';
-  return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
-}
-
-/** Audience → status-pill variant + short label, so a glance tells the
- *  user who they're about to email. Variants are all defined in app.css. */
+/** Audience → status-pill variant + short label. Variants live in app.css. */
 const AUDIENCE_PILL: Record<Audience, { variant: string; label: string }> = {
   owner: { variant: 'accepted', label: 'Owner' },
   guest: { variant: 'interested', label: 'Guest' },
   agent: { variant: 'sent', label: 'Agent' },
 };
+const AUDIENCE_ORDER: Audience[] = ['owner', 'guest', 'agent'];
 
 const TAB_META: Array<{ key: ActionsBucket; label: string }> = [
   { key: 'overdue', label: 'Overdue' },
@@ -149,18 +133,6 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
   const [properties, setProperties] = useState<Property[]>([]);
   const [audience, setAudience] = useState<'all' | Audience>('all');
   const [expanded, setExpanded] = useState(false);
-
-  // Resolved-participant + config lookups, kept in state so Draft can build
-  // variables lazily (only the item the user clicks) rather than rendering an
-  // email for every queued row up front.
-  const [ownerByProperty, setOwnerByProperty] = useState<Map<string, any>>(new Map());
-  const [agentByEnquiry, setAgentByEnquiry] = useState<Map<string, any>>(new Map());
-  const [guidebookByProperty, setGuidebookByProperty] = useState<Map<string, any>>(new Map());
-  const [templatesByKey, setTemplatesByKey] = useState<Record<string, { subject: string; body: string }>>({});
-  const [staff, setStaff] = useState<StaffSettings | null>(null);
-  const [staffInitials, setStaffInitials] = useState<string | null>(null);
-
-  const [composer, setComposer] = useState<ComposerState | null>(null);
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
 
   async function loadData() {
@@ -179,9 +151,7 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
       const windowStartISO = past.toISOString().slice(0, 10);
       const windowEndISO = future.toISOString().slice(0, 10);
 
-      const initials = initialsForEmail(user?.email);
-
-      const [bookRes, propRes, tplRes, staffSettings] = await Promise.all([
+      const [bookRes, propRes] = await Promise.all([
         supabase
           .from('bookings')
           .select('*')
@@ -194,23 +164,13 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
           .from('partner_properties')
           .select('id, slug, property_name, bedrooms, suburb, is_published')
           .eq('partner_id', CT_RENTALS_PARTNER_ID),
-        supabase
-          .from('email_templates')
-          .select('key, subject, body')
-          .eq('partner_id', CT_RENTALS_PARTNER_ID),
-        loadStaffSettings(supabase, initials),
       ]);
 
       const bookingRows = (bookRes.data || []) as any[];
       const propRows = (propRes.data || []) as Property[];
 
-      const tplMap: Record<string, { subject: string; body: string }> = {};
-      for (const t of (tplRes.data || []) as any[]) {
-        tplMap[t.key] = { subject: t.subject || '', body: t.body || '' };
-      }
-
-      // Enquiries only needed for agent_id (drives channel resolution + the
-      // agent recipient). One IN() keeps it to a single round-trip.
+      // Enquiries only needed for agent_id (drives channel resolution). One
+      // IN() keeps it to a single round-trip.
       const enquiryIds = Array.from(new Set(bookingRows.map(b => b.enquiry_id).filter(Boolean)));
       const enquiryById = new Map<string, { agent_id: string | null }>();
       if (enquiryIds.length) {
@@ -220,6 +180,10 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
         }
       }
 
+      // marksByBooking tells us which steps are already sent (pending =
+      // absence of a mark). That's the only participant data the dashboard
+      // needs — the actual drafting (owner/agent/template lookups) happens
+      // inside the booking's Communications tab.
       const bulk = await loadParticipantsBulk(supabase, bookingRows);
       const propById = new Map<string, Property>(propRows.map(p => [p.id, p]));
 
@@ -234,17 +198,10 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
           // Upcoming items aren't actionable yet — the queue is strictly
           // overdue / today / this-week so it stays a real to-do list.
           if (row.urgency !== 'overdue' && row.urgency !== 'today' && row.urgency !== 'this_week') continue;
-          items.push({ booking, property: propById.get(booking.property_id) ?? null, enquiry, channel, row });
+          items.push({ booking, property: propById.get(booking.property_id) ?? null, channel, row });
         }
       }
-      items.sort((a, b) => (a.row.dueDate ?? '9999-12-31').localeCompare(b.row.dueDate ?? '9999-12-31'));
 
-      setOwnerByProperty(bulk.ownerByProperty);
-      setAgentByEnquiry(bulk.agentByEnquiry);
-      setGuidebookByProperty(bulk.guidebookByProperty);
-      setTemplatesByKey(tplMap);
-      setStaff(staffSettings);
-      setStaffInitials(initials);
       setProperties(propRows);
       setQueue(items);
     } catch (err) {
@@ -256,108 +213,76 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
 
   useEffect(() => { if (supabase) loadData(); /* eslint-disable-next-line */ }, [supabase]);
 
-  const grouped = useMemo(() => {
-    const g: Record<ActionsBucket, QueueItem[]> = { overdue: [], today: [], this_week: [] };
+  // Roll the flat pending items up into one group per booking.
+  const groups = useMemo(() => {
+    const byId = new Map<string, BookingGroup>();
     for (const it of queue) {
-      if (it.row.urgency === 'overdue' || it.row.urgency === 'today' || it.row.urgency === 'this_week') {
-        g[it.row.urgency].push(it);
+      const id = it.booking.id;
+      let g = byId.get(id);
+      if (!g) {
+        g = {
+          booking: it.booking,
+          property: it.property,
+          items: [],
+          counts: { overdue: 0, today: 0, this_week: 0 },
+          audiences: new Set<Audience>(),
+          earliestDue: { overdue: null, today: null, this_week: null },
+        };
+        byId.set(id, g);
+      }
+      g.items.push(it);
+      const u = it.row.urgency as ActionsBucket;
+      if (u === 'overdue' || u === 'today' || u === 'this_week') {
+        g.counts[u] += 1;
+        g.audiences.add(it.row.spec.audience);
+        const d = it.row.dueDate;
+        if (d && (!g.earliestDue[u] || d < (g.earliestDue[u] as string))) g.earliestDue[u] = d;
       }
     }
-    return g;
+    return Array.from(byId.values());
   }, [queue]);
 
-  // Report bucket counts up to the dashboard KPI strip.
+  const bucketCount = (b: ActionsBucket) => groups.reduce((n, g) => n + (g.counts[b] > 0 ? 1 : 0), 0);
+
+  // Report booking-level bucket counts up to the dashboard KPI strip so the
+  // chips match the rows.
   useEffect(() => {
     onCounts?.({
-      overdue: grouped.overdue.length,
-      today: grouped.today.length,
-      this_week: grouped.this_week.length,
-      total: grouped.overdue.length + grouped.today.length + grouped.this_week.length,
+      overdue: bucketCount('overdue'),
+      today: bucketCount('today'),
+      this_week: bucketCount('this_week'),
+      total: groups.length,
     });
-  }, [grouped, onCounts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, onCounts]);
 
   // Collapse the show-more expander whenever the view changes.
   useEffect(() => { setExpanded(false); }, [tab, audience]);
 
-  const tabItems = grouped[tab];
-  const filtered = useMemo(
-    () => (audience === 'all' ? tabItems : tabItems.filter(it => it.row.spec.audience === audience)),
-    [tabItems, audience],
-  );
+  const filtered = useMemo(() => {
+    const inBucket = groups.filter(g => g.counts[tab] > 0);
+    const byAudience = audience === 'all' ? inBucket : inBucket.filter(g => g.audiences.has(audience));
+    return byAudience.sort((a, b) =>
+      (a.earliestDue[tab] ?? '9999-12-31').localeCompare(b.earliestDue[tab] ?? '9999-12-31'),
+    );
+  }, [groups, tab, audience]);
+
   const visible = expanded ? filtered : filtered.slice(0, CAP);
   const hiddenCount = filtered.length - visible.length;
-  const totalPending = grouped.overdue.length + grouped.today.length + grouped.this_week.length;
-
-  function openDraft(item: QueueItem) {
-    if (!staff) return;
-    const { booking, property, channel, row } = item;
-    const spec = row.spec;
-    const owner = ownerByProperty.get(booking.property_id) || null;
-    const agent = booking.enquiry_id ? (agentByEnquiry.get(booking.enquiry_id) || null) : null;
-    const guidebook = guidebookByProperty.get(booking.property_id) || null;
-    const guest = {
-      name: booking.guest_name || '',
-      email: booking.guest_email || null,
-      phone: booking.guest_phone || null,
-    };
-
-    const vars = buildBookingVars({ booking, property, owner, guest, agent, guidebook, staff, channel });
-    const tpl = templatesByKey[spec.templateKey] || { subject: '', body: '' };
-    const rendered = renderEmail(tpl, vars);
-
-    let recipient: { name: string; email?: string | null; phone?: string | null };
-    if (spec.audience === 'owner') {
-      recipient = { name: titleCase(owner?.name || ''), email: lc(owner?.email), phone: owner?.phone || null };
-    } else if (spec.audience === 'agent') {
-      recipient = { name: titleCase(agent?.name || ''), email: lc(agent?.email), phone: agent?.phone || null };
-    } else {
-      recipient = { name: titleCase(booking.guest_name || ''), email: lc(booking.guest_email), phone: booking.guest_phone || null };
-    }
-
-    setComposer({
-      item,
-      title: spec.label,
-      subject: rendered.subject,
-      body: rendered.body,
-      recipient,
-      whatsapp: spec.recipientChannel === 'whatsapp',
-    });
-  }
-
-  async function handleMarkSent(channel: 'email' | 'whatsapp') {
-    if (!composer) return;
-    const { item } = composer;
-    const spec = item.row.spec;
-    // Upsert the mark (one row per booking+action). due_date is snapshotted
-    // so the historical record survives later date edits. The item then drops
-    // off the queue on reload because pending = absence of a mark.
-    await supabase.from('management_actions').upsert({
-      partner_id: CT_RENTALS_PARTNER_ID,
-      booking_id: item.booking.id,
-      action_key: spec.key,
-      status: 'sent',
-      channel,
-      due_date: item.row.dueDate,
-      sent_at: new Date().toISOString(),
-      sent_by: staffInitials,
-    }, { onConflict: 'booking_id,action_key' });
-    setComposer(null);
-    await loadData();
-  }
 
   return (
     <>
       <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {/* Heading + total badge */}
+        {/* Heading + booking-count badge */}
         <div className="detail-modal-section-heading" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>Actions due</span>
-          {!loading && totalPending > 0 && (
+          {!loading && groups.length > 0 && (
             <span style={{
               display: 'inline-block', padding: '2px 10px', borderRadius: 12,
               fontSize: '0.75rem', fontWeight: 700,
               background: 'var(--warning-bg)', color: 'var(--warning)',
             }}>
-              {totalPending}
+              {groups.length} booking{groups.length === 1 ? '' : 's'}
             </span>
           )}
         </div>
@@ -366,7 +291,7 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
             {TAB_META.map(t => {
-              const count = grouped[t.key].length;
+              const count = bucketCount(t.key);
               const active = t.key === tab;
               const isOverdue = t.key === 'overdue';
               const activeBg = isOverdue ? 'var(--error)' : 'var(--color-primary)';
@@ -404,80 +329,94 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
             className="list-filter-select"
             value={audience}
             onChange={(e) => setAudience(e.target.value as 'all' | Audience)}
-            aria-label="Filter actions by audience"
+            aria-label="Filter bookings by pending audience"
           >
             {AUDIENCE_FILTERS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
           </select>
         </div>
 
-        {/* List */}
+        {/* List — one row per booking */}
         {loading && queue.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', padding: '8px 0' }}>Loading…</div>
         ) : filtered.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', padding: '16px 0', textAlign: 'center' }}>
             {audience === 'all'
               ? EMPTY_COPY[tab]
-              : `No ${AUDIENCE_FILTERS.find(a => a.key === audience)?.label.toLowerCase()} actions in this view.`}
+              : `No bookings with a pending ${AUDIENCE_FILTERS.find(a => a.key === audience)?.label.toLowerCase().replace(/s$/, '')} email in this view.`}
           </div>
         ) : (
           <div>
-            {visible.map((item, i) => {
-              const spec = item.row.spec;
-              const aud = AUDIENCE_PILL[spec.audience];
-              const guestName = titleCase(item.booking.guest_name || '');
-              const propName = titleCase(item.property?.property_name || '');
-              const isOverdue = item.row.urgency === 'overdue';
+            {visible.map((g, i) => {
+              const count = g.counts[tab];
+              const guestName = titleCase(g.booking.guest_name || '');
+              const propName = titleCase(g.property?.property_name || '');
+              const isOverdue = tab === 'overdue';
+              const open = () => setEditingBooking(g.booking);
               return (
                 <div
-                  key={`${item.booking.id}-${spec.key}`}
+                  key={g.booking.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={open}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    padding: '11px 0',
+                    padding: '11px 8px',
+                    margin: '0 -8px',
+                    borderRadius: 'var(--radius-sm)',
                     borderTop: i === 0 ? 'none' : '1px solid var(--border-light)',
+                    cursor: 'pointer',
                   }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                 >
-                  <span className={`ops-status-pill ops-status-pill--${aud.variant}`} style={{ flexShrink: 0 }}>
-                    <span className="ops-status-pill-dot" />
-                    {aud.label}
+                  {/* Count of emails due in this bucket for this booking */}
+                  <span style={{
+                    flexShrink: 0,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    minWidth: 30, height: 30, borderRadius: 999,
+                    fontSize: '0.875rem', fontWeight: 700,
+                    background: isOverdue ? 'var(--error-bg)' : 'var(--color-primary-bg)',
+                    color: isOverdue ? 'var(--error)' : 'var(--color-primary)',
+                  }} title={`${count} email${count === 1 ? '' : 's'} due`}>
+                    {count}
                   </span>
+
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: 'var(--text)' }}>{spec.label}</div>
-                    <div style={{
-                      fontSize: '0.8125rem',
-                      color: 'var(--text-secondary)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {guestName || '—'} · {propName || '—'}
+                    <div style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {guestName || '—'}
+                      <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}> · {propName || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {fmtShort(g.booking.check_in)} → {fmtShort(g.booking.check_out)}
+                      </span>
+                      {AUDIENCE_ORDER.filter(a => g.audiences.has(a)).map(a => (
+                        <span
+                          key={a}
+                          className={`ops-status-pill ops-status-pill--${AUDIENCE_PILL[a].variant}`}
+                          style={{ fontSize: '0.625rem', padding: '1px 7px' }}
+                        >
+                          <span className="ops-status-pill-dot" />
+                          {AUDIENCE_PILL[a].label}
+                        </span>
+                      ))}
                     </div>
                   </div>
+
                   <div style={{
                     flexShrink: 0,
                     fontSize: '0.8125rem',
                     fontWeight: 700,
-                    minWidth: 54,
+                    minWidth: 50,
                     textAlign: 'right',
                     color: isOverdue ? 'var(--error)' : 'var(--text)',
                   }}>
-                    {fmtDue(item.row.dueDate)}
+                    {fmtShort(g.earliestDue[tab])}
                   </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ flexShrink: 0, fontSize: '0.75rem', padding: '5px 12px' }}
-                    onClick={() => openDraft(item)}
-                  >
-                    Draft
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    style={{ flexShrink: 0, fontSize: '0.75rem', padding: '5px 8px' }}
-                    onClick={() => setEditingBooking(item.booking)}
-                  >
-                    Open
-                  </button>
+                  <span style={{ flexShrink: 0, color: 'var(--text-light)', fontSize: '1.125rem', lineHeight: 1 }}>›</span>
                 </div>
               );
             })}
@@ -500,35 +439,12 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
         )}
       </div>
 
-      {composer && (
-        <EmailComposerModal
-          title={composer.title}
-          subtitle={<>To {composer.recipient.name || '—'}</>}
-          recipient={composer.recipient}
-          subject={composer.subject}
-          body={composer.body}
-          contextSummary={
-            <>
-              <strong>{titleCase(composer.item.property?.property_name || '')}</strong>
-              {' · '}
-              {fmtDate(composer.item.booking.check_in)} → {fmtDate(composer.item.booking.check_out)}
-              {(() => {
-                const n = nightsBetween(composer.item.booking.check_in, composer.item.booking.check_out);
-                return n ? ` · ${n} night${n === 1 ? '' : 's'}` : '';
-              })()}
-            </>
-          }
-          whatsapp={composer.whatsapp}
-          onMarkSent={handleMarkSent}
-          onClose={() => setComposer(null)}
-        />
-      )}
-
       {editingBooking && (
         <BookingModal
           booking={editingBooking}
           properties={properties}
-          onClose={() => setEditingBooking(null)}
+          defaultView="comms"
+          onClose={async () => { setEditingBooking(null); await loadData(); }}
           onSave={async () => { setEditingBooking(null); await loadData(); }}
           supabase={supabase}
           user={user}
