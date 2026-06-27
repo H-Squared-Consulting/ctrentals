@@ -81,6 +81,11 @@ export interface BookingActionRow {
   urgency: Urgency;
   sentAt: string | null;
   sentBy: string | null;
+  /** The step's moment has passed and it's no longer worth sending — a
+   *  check-in/confirm-anchored email (pre-arrival, welcome, balance reminder,
+   *  24h WhatsApp, confirmation) once the guest has already arrived. Excluded
+   *  from "To send" + the dashboard; still listed under "All". */
+  stale: boolean;
 }
 
 /** The signed-in staffer's personal sign-off + bank blocks the templates inject. */
@@ -389,6 +394,13 @@ export function buildBookingActions(
     const dueDate = computeDueDate(spec, booking ?? { check_in: null, check_out: null });
     const mark = marks?.[spec.key];
     const status: MarkStatus = mark?.status ?? 'pending';
+    // A check-in/confirm-anchored email (pre-arrival, welcome, balance reminder,
+    // 24h WhatsApp, confirmation) is "stale" once the guest has already arrived
+    // (today > check_in): sending it then is pointless, so it drops out of
+    // "To send" and the dashboard (still visible under "All").
+    const ci = booking?.check_in ?? null;
+    const stale = (spec.due.anchor === 'check_in' || spec.due.anchor === 'confirm')
+      && !!ci && todayISO > ci;
     return {
       spec,
       dueDate,
@@ -396,6 +408,7 @@ export function buildBookingActions(
       urgency: urgencyFor(dueDate, status, todayISO),
       sentAt: mark?.sent_at ?? null,
       sentBy: mark?.sent_by ?? null,
+      stale,
     };
   });
 
@@ -409,50 +422,32 @@ export function buildBookingActions(
 }
 
 /**
- * Reduce a booking's full checklist to just the CURRENT STEP — the email
- * (or same-day set) that actually needs sending right now.
+ * Reduce a booking's full checklist to just what needs sending RIGHT NOW.
  *
- * A booking's emails are a time sequence. If several are overdue (e.g. a stay
- * that has already happened) we deliberately do NOT surface the whole backlog
- * — nobody sends a "welcome" or "pre-arrival" to a guest who has already been
- * and gone. Earlier missed steps fall away; the full sequence is still
- * reachable via the Communications "All" view.
+ * A booking's emails are a time sequence. We surface the EARLIEST-due pending
+ * email first (oldest first — clear the longest-waiting one first), plus any
+ * sharing that exact date (e.g. owner_confirmation + guest_welcome, both on
+ * confirm). Stale steps — a pre-arrival / welcome / balance reminder for a
+ * guest who has already arrived (today > check_in) — are dropped entirely, so a
+ * past stay doesn't drag its whole pre-arrival backlog into the queue. The full
+ * sequence (including stale + upcoming) stays reachable via the "All" view.
  *
- * Rule:
- *   1. Only pending rows count (sent/skipped are done).
- *   2. "Arrived" = pending rows whose date has come (overdue or today). If any
- *      exist, return those sharing the LATEST due date — the most-advanced
- *      step — and drop the earlier overdue ones. Same-day ties (e.g.
- *      owner_confirmation + guest_welcome, both on confirm) stay together.
- *   3. Otherwise, if any pending rows are due this week, return those sharing
- *      the EARLIEST such due date — the soonest upcoming step.
- *   4. Otherwise nothing is due now (the next step is further out): return [].
+ * Rule: pending + not stale + currently due (overdue / today / this week) →
+ * return those sharing the earliest due date. Nothing due now → [].
  */
 export function currentStepActions(rows: BookingActionRow[]): BookingActionRow[] {
-  const pending = (rows || []).filter(r => r.status === 'pending');
-  if (pending.length === 0) return [];
-
-  const arrived = pending.filter(r => r.urgency === 'overdue' || r.urgency === 'today');
-  if (arrived.length > 0) {
-    const latest = arrived.reduce<string | null>((max, r) => {
-      if (r.dueDate == null) return max;
-      if (max == null) return r.dueDate;
-      return r.dueDate > max ? r.dueDate : max;
-    }, null);
-    return arrived.filter(r => r.dueDate === latest);
-  }
-
-  const thisWeek = pending.filter(r => r.urgency === 'this_week');
-  if (thisWeek.length > 0) {
-    const earliest = thisWeek.reduce<string | null>((min, r) => {
-      if (r.dueDate == null) return min;
-      if (min == null) return r.dueDate;
-      return r.dueDate < min ? r.dueDate : min;
-    }, null);
-    return thisWeek.filter(r => r.dueDate === earliest);
-  }
-
-  return [];
+  const due = (rows || []).filter(r =>
+    r.status === 'pending'
+    && !r.stale
+    && (r.urgency === 'overdue' || r.urgency === 'today' || r.urgency === 'this_week'),
+  );
+  if (due.length === 0) return [];
+  const earliest = due.reduce<string | null>((min, r) => {
+    if (r.dueDate == null) return min;
+    if (min == null) return r.dueDate;
+    return r.dueDate < min ? r.dueDate : min;
+  }, null);
+  return due.filter(r => r.dueDate === earliest);
 }
 
 // ─── Variable catalog ───────────────────────────────────────────────────
