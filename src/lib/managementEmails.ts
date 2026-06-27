@@ -446,10 +446,9 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
       ? `https://${BRAND_DOMAIN}/g/${guidebook.slug}`
       : '';
 
-  // Check-in contact: the property's stated contact, else fall back to the
-  // drafting staffer.
-  const staffContactLine = [staff?.display_name, staff?.reply_phone].filter(Boolean).join(' — ');
-  const checkInContact = (booking?.house_contact && String(booking.house_contact).trim()) || staffContactLine || '';
+  // Check-in contact is always the booking's Manager field (booking.manager),
+  // not the property's house_contact and not the drafting staffer.
+  const checkInContact = (booking?.manager && String(booking.manager).trim()) || '';
 
   // Owner payment paragraph varies by channel. Platform money clears after
   // check-in; direct/agent follow the 50%-now / balance-6-weeks-prior cadence.
