@@ -24,6 +24,12 @@ function fmtDate(d: string | null): string {
   } catch { return d; }
 }
 
+/** Title-case a name/property for display (matches the admin side). */
+function titleCase(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, (c) => c.toUpperCase());
+}
+
 export default function BookingFormPage() {
   const { token = '' } = useParams();
   const [loading, setLoading] = useState(true);
@@ -83,19 +89,23 @@ export default function BookingFormPage() {
   }
 
   const { booking, formType } = bundle;
-  const ctxLine = [
-    booking.propertyName,
-    booking.checkIn && booking.checkOut ? `${fmtDate(booking.checkIn)} → ${fmtDate(booking.checkOut)}` : '',
-  ].filter(Boolean).join('  ·  ');
+  const firstName = titleCase(((booking as any).guestName || '').split(/\s+/)[0]);
+  const propName = titleCase(booking.propertyName);
+  const datesLine = booking.checkIn && booking.checkOut
+    ? `${fmtDate(booking.checkIn)} → ${fmtDate(booking.checkOut)}`
+    : '';
+  const ctxLine = [propName, datesLine].filter(Boolean).join('  ·  ');
 
   if (done) {
     return (
       <Shell>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '2rem' }}>✓</div>
-          <h1 style={{ fontSize: '1.25rem', margin: '8px 0' }}>Thank you!</h1>
+          <h1 style={{ fontSize: '1.375rem', margin: '8px 0' }}>
+            Thanks{formType === 'guest' && firstName ? `, ${firstName}` : ''}! 🎉
+          </h1>
           <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-            Your details have been sent through. {ctxLine && <><br />{ctxLine}</>}
+            Your details are through — we'll take it from here. {ctxLine && <><br />{ctxLine}</>}
           </p>
           <button
             type="button"
@@ -112,12 +122,29 @@ export default function BookingFormPage() {
 
   return (
     <Shell>
-      <h1 style={{ fontSize: '1.25rem', margin: '0 0 4px' }}>
-        {formType === 'agent' ? 'Booking details' : 'A few details for your stay'}
-      </h1>
-      {ctxLine && <p style={{ color: 'var(--text-secondary)', margin: '0 0 18px', fontSize: '0.875rem' }}>{ctxLine}</p>}
+      {formType === 'guest' ? (
+        <>
+          <h1 style={{ fontSize: '1.375rem', margin: '0 0 8px', fontWeight: 700 }}>
+            Hi {firstName || 'there'} 👋
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', margin: '0 0 6px', fontSize: '0.9375rem', lineHeight: 1.55 }}>
+            Just a few quick details so we can get everything ready for your stay
+            {propName ? <> at <strong style={{ color: 'var(--text)' }}>{propName}</strong></> : null}.
+          </p>
+          {datesLine && (
+            <p style={{ color: 'var(--text-light)', margin: '0 0 22px', fontSize: '0.8125rem', fontWeight: 600, letterSpacing: '0.02em' }}>
+              {datesLine}
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <h1 style={{ fontSize: '1.375rem', margin: '0 0 8px', fontWeight: 700 }}>Booking details</h1>
+          {ctxLine && <p style={{ color: 'var(--text-secondary)', margin: '0 0 22px', fontSize: '0.875rem' }}>{ctxLine}</p>}
+        </>
+      )}
 
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {formType === 'guest'
           ? <GuestFields fields={fields} set={set} />
           : <AgentFields fields={fields} set={set} />}
