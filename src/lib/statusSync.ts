@@ -200,20 +200,20 @@ export async function createBookingFromAcceptedProposal(
   supabase: any,
   proposalId: string,
   partnerId: string,
-): Promise<void> {
+): Promise<string | null> {
   try {
     const { data: prop } = await supabase
       .from('proposals')
       .select('id, enquiry_id, property_id, guest_name, guest_email, guest_phone, guests_total, check_in, check_out, pricing_proposals(client_price_excl_vat)')
       .eq('id', proposalId)
       .single();
-    if (!prop) return;
+    if (!prop) return null;
 
     let enquiry: any = null;
     if (prop.enquiry_id) {
       const { data } = await supabase
         .from('enquiries')
-        .select('id, client_name, client_email, client_phone, nationality, guests_total, guests_adults, guests_children, check_in, check_out')
+        .select('id, client_name, client_email, client_phone, nationality, guests_total, guests_adults, guests_children, check_in, check_out, notes')
         .eq('id', prop.enquiry_id)
         .single();
       enquiry = data;
@@ -231,7 +231,7 @@ export async function createBookingFromAcceptedProposal(
           .from('enquiries')
           .update({ status: 'booked', updated_at: new Date().toISOString() })
           .eq('id', prop.enquiry_id);
-        return;
+        return existing.id;
       }
     }
 
@@ -239,7 +239,7 @@ export async function createBookingFromAcceptedProposal(
       ? prop.pricing_proposals[0]?.client_price_excl_vat ?? null
       : prop.pricing_proposals?.client_price_excl_vat ?? null;
 
-    await supabase.from('bookings').insert({
+    const { data: inserted } = await supabase.from('bookings').insert({
       partner_id: partnerId,
       property_id: prop.property_id,
       enquiry_id: prop.enquiry_id ?? null,
@@ -252,10 +252,14 @@ export async function createBookingFromAcceptedProposal(
       guests_children: enquiry?.guests_children ?? null,
       check_in: prop.check_in ?? enquiry?.check_in,
       check_out: prop.check_out ?? enquiry?.check_out,
+      notes: enquiry?.notes ?? null,
       total_amount: perNight,
       currency: 'ZAR',
       status: 'confirmed',
-    });
+      // Genuine in-app confirmation (proposal accepted) — drives the
+      // confirmation/welcome management emails. Imports leave this null.
+      confirmed_at: new Date().toISOString(),
+    }).select('id').single();
 
     if (prop.enquiry_id) {
       await supabase
@@ -263,8 +267,11 @@ export async function createBookingFromAcceptedProposal(
         .update({ status: 'booked', updated_at: new Date().toISOString() })
         .eq('id', prop.enquiry_id);
     }
+
+    return inserted?.id ?? null;
   } catch (err) {
     console.error('createBookingFromAcceptedProposal failed:', err);
+    return null;
   }
 }
 

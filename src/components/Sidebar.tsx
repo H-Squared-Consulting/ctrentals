@@ -37,6 +37,14 @@ const GUIDEBOOK_EMAILS = [
   'hayley@capetrentals.com',
   'nicki@capetrentals.com',
 ];
+
+/** Emails allowed to edit the management-phase email templates — the
+ *  admins plus Nicki and Hayley who own the wording. */
+const EMAIL_EDIT_EMAILS = [
+  ...ADMIN_ONLY_EMAILS,
+  'hayley@capetrentals.com',
+  'nicki@capetrentals.com',
+];
 type NavItem = {
   to: string;
   label: string;
@@ -77,6 +85,7 @@ const NAV: NavItem[] = [
       { to: '/settings/seasons',     label: 'Seasons' },
       { to: '/settings/platforms', label: 'Platforms' },
       { to: '/settings/agents',    label: 'Agents' },
+      { to: '/settings/email-templates', label: 'Email templates', restrictedTo: EMAIL_EDIT_EMAILS },
     ],
   },
 ];

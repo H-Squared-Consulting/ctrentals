@@ -23,12 +23,14 @@ import GuestsPage from './pages/GuestsPage';
 import HomeOwnersPage from './pages/HomeOwnersPage';
 import SeasonTagsPage from './pages/SeasonTagsPage';
 import ChannelDefaultsPage from './pages/ChannelDefaultsPage';
+import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import FinancePricingPage from './pages/FinancePricingPage';
 import PriceTiersPage from './pages/PriceTiersPage';
 import PriceListPage from './pages/PriceListPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import AgentPortalPage from './pages/AgentPortalPage';
+import BookingFormPage from './pages/BookingFormPage';
 import GuidebookPage from './pages/GuidebookPage';
 import GuidebookEmergencyPage from './pages/GuidebookEmergencyPage';
 import GuidebookListPage from './pages/GuidebookListPage';
@@ -166,7 +168,10 @@ export function App() {
   // of which domain hosts the app.
   const isGuidebookRoute = typeof window !== 'undefined'
     && window.location.pathname.startsWith('/g/');
-  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute) {
+  // Public self-serve booking detail forms (/f/:token) render on any host too.
+  const isBookingFormRoute = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/f/');
+  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute && !isBookingFormRoute) {
     return <ComingSoon />;
   }
 
@@ -179,6 +184,10 @@ export function App() {
       {/* Public agent self-service portal. Token-gated, no admin
           chrome, renders on any host (e.g. southernescapes.co.za/q/...). */}
       <Route path="/q/:token" element={<AgentPortalPage />} />
+
+      {/* Public self-serve booking detail form. Token-gated, no admin
+          chrome, renders on any host. Writes back into booking_details. */}
+      <Route path="/f/:token" element={<BookingFormPage />} />
 
       {/* Public per-property guidebook. Slug-addressed (e.g. /g/montrose-terrace),
           no auth, no admin chrome. RLS limits anon reads to is_published rows.
@@ -215,6 +224,9 @@ export function App() {
       <Route path="/operations/proposals" element={<ProposalsRedirect />} />
       <Route path="/operations/pipeline" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/bookings" element={<Page><BookingCalendarPage /></Page>} />
+      {/* Actions-due queue now lives on the dashboard; redirect the old
+          standalone route so stale bookmarks land on Home. */}
+      <Route path="/operations/actions" element={<Navigate to="/dashboard" replace />} />
 
       {/* CRM */}
       <Route path="/crm" element={<Navigate to="/crm/guests" replace />} />
@@ -245,6 +257,7 @@ export function App() {
       <Route path="/settings/platforms" element={<Page><SettingsPage tab="platforms"><ChannelDefaultsPage embedded /></SettingsPage></Page>} />
       <Route path="/settings/channels" element={<Navigate to="/settings/platforms" replace />} />
       <Route path="/settings/agents" element={<Page><SettingsPage tab="agents"><AgentsPage embedded /></SettingsPage></Page>} />
+      <Route path="/settings/email-templates" element={<Page><SettingsPage tab="email-templates"><EmailTemplatesPage embedded /></SettingsPage></Page>} />
 
       {/* Standalone form */}
       <Route path="/enquiry/new" element={<Page><EnquiryForm /></Page>} />

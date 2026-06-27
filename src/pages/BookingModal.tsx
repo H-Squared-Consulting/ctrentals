@@ -20,6 +20,12 @@ import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
+import { resolveOwnerForProperty } from '../lib/bookingParticipants';
+import BookingManagementSection from '../components/BookingManagementSection';
+import BookingFormShareModal from '../components/BookingFormShareModal';
+import { nightsBetween } from '../lib/nights';
+import { fmtRand } from '../lib/pricingEngine';
+import { useNavigate } from 'react-router-dom';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -61,7 +67,7 @@ function statusAccent(status: string): string {
 }
 
 export default function BookingModal({
-  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange,
+  booking, properties, onClose, onSave, supabase, user, partnerId, initialMode, isBlocked, onToggleBlocked, onPropertyIdChange, defaultView, commsFilter,
 }: {
   booking: any;
   properties: any[];
@@ -76,6 +82,14 @@ export default function BookingModal({
   /** Fired when the user changes the property dropdown so the
    *  Calendar view behind can re-anchor live. */
   onPropertyIdChange?: (propertyId: string) => void;
+  /** Which tab to open on. 'details' (default) shows the booking form;
+   *  'comms' opens straight on the Communications tab (the management
+   *  email queue). The dashboard actions list passes 'comms' so a click
+   *  lands the user where they draft. */
+  defaultView?: 'details' | 'comms';
+  /** Which comms subset to show first when on the Communications tab.
+   *  Passed straight to BookingManagementSection; defaults to 'due'. */
+  commsFilter?: 'due' | 'all';
 }) {
   const toast = useToast();
   const isNew = !booking.id;
@@ -100,6 +114,7 @@ export default function BookingModal({
     currency: booking.currency || 'ZAR',
     house_contact: booking.house_contact || '',
     extras: booking.extras || '',
+    special_requests: booking.special_requests || '',
     notes: booking.notes || '',
     status: booking.status || 'confirmed',
     // 'booking' (real reservation) or 'block' (owner stay, maintenance,
@@ -111,6 +126,13 @@ export default function BookingModal({
 
   const [form, setForm] = useState(initialForm);
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode || (isNew ? 'edit' : 'view'));
+  // Details vs Communications tab. Only a saved real booking has comms;
+  // the toggle/guards below fall back to details whenever comms isn't
+  // available, so a stray defaultView='comms' can never strand the user.
+  const [view, setView] = useState<'details' | 'comms' | 'requests'>(defaultView === 'comms' ? 'comms' : 'details');
+  // Self-serve form answers (booking_details) + which share modal is open.
+  const [bookingDetails, setBookingDetails] = useState<any | null>(null);
+  const [shareForm, setShareForm] = useState<'guest' | 'agent' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -128,6 +150,63 @@ export default function BookingModal({
     })();
     return () => { cancelled = true; };
   }, [supabase, partnerId]);
+
+  // Source proposal — for bookings that came through the platform (an accepted
+  // proposal created the booking), surface where the pricing came from so it's
+  // traceable. Read-only; skipped for new bookings and imports (no enquiry_id).
+  const navigate = useNavigate();
+  const [sourceProposal, setSourceProposal] = useState<any | null>(null);
+  useEffect(() => {
+    if (isNew || !booking.enquiry_id) { setSourceProposal(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('proposals')
+        .select('id, ref_code, status, accepted_at, pricing_proposal_id, pricing_proposals(client_price_excl_vat)')
+        .eq('enquiry_id', booking.enquiry_id)
+        .in('status', ['accepted', 'booked'])
+        .order('accepted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!cancelled) setSourceProposal(data || null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, isNew, booking.enquiry_id]);
+
+  // Self-serve form answers — surfaced read-only in "Self-serve forms".
+  useEffect(() => {
+    if (isNew || !booking.id) { setBookingDetails(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('booking_details').select('*').eq('booking_id', booking.id).maybeSingle();
+      if (!cancelled) setBookingDetails(data ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, isNew, booking.id, shareForm]);
+
+  // Resolve the property's primary owner so the modal SHOWS who owner emails
+  // go to — the same source the email engine uses (resolveOwnerForProperty).
+  // Re-runs when the property changes. Read-only here; owners are managed on
+  // the property itself (Properties → owners).
+  const [bookingOwner, setBookingOwner] = useState<any | null>(null);
+  const [ownerLoading, setOwnerLoading] = useState(false);
+  useEffect(() => {
+    if (form.kind === 'block' || !form.property_id) { setBookingOwner(null); return; }
+    let cancelled = false;
+    setOwnerLoading(true);
+    (async () => {
+      try {
+        const o = await resolveOwnerForProperty(supabase, form.property_id);
+        if (!cancelled) setBookingOwner(o);
+      } catch {
+        if (!cancelled) setBookingOwner(null);
+      } finally {
+        if (!cancelled) setOwnerLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, form.property_id, form.kind]);
 
   // New bookings opened from a gap click come pre-filled with property +
   // dates, so form === initialForm at mount and Save would stay disabled
@@ -206,6 +285,7 @@ export default function BookingModal({
         currency: form.currency || 'ZAR',
         house_contact: form.house_contact.trim() || null,
         extras: isBlock ? null : (form.extras.trim() || null),
+        special_requests: isBlock ? null : (form.special_requests.trim() || null),
         notes: form.notes.trim() || null,
         status: form.status,
         updated_at: new Date().toISOString(),
@@ -213,6 +293,9 @@ export default function BookingModal({
 
       if (isNew) {
         payload.created_by = user?.id || null;
+        // Genuine in-app confirmation of a real booking (not a block) — enables
+        // the confirmation/welcome management emails. Imports leave this null.
+        if (!isBlock) payload.confirmed_at = new Date().toISOString();
         const { error } = await supabase.from('bookings').insert(payload);
         if (error) throw error;
         toast.success('Booking created');
@@ -362,6 +445,19 @@ export default function BookingModal({
 
   const fieldsDisabled = mode === 'view';
 
+  // Communications tab is offered only for a saved, real, live booking
+  // (same gate the management checklist always used). Blocks, new and
+  // tentative/cancelled bookings show details only, with no tab bar.
+  const commsAvailable = !isNew && form.kind === 'booking'
+    && form.status !== 'tentative' && form.status !== 'cancelled';
+  // Requests (special requests + extras + self-serve forms) apply to any real
+  // booking — including a brand-new one being created.
+  const requestsAvailable = form.kind === 'booking';
+  const tabBarShown = commsAvailable || requestsAvailable;
+  const detailsVisible = !tabBarShown || view === 'details';
+  const requestsVisible = requestsAvailable && view === 'requests';
+  const commsVisible = commsAvailable && view === 'comms';
+
   return (
     <DetailModal
       title={title}
@@ -381,6 +477,37 @@ export default function BookingModal({
       }
       onClose={onClose}
     >
+      {tabBarShown && (
+        <div className="view-toggle" style={{ marginBottom: 16 }}>
+          <button
+            type="button"
+            className={`view-toggle-btn${view === 'details' ? ' active' : ''}`}
+            onClick={() => setView('details')}
+          >
+            Details
+          </button>
+          {requestsAvailable && (
+            <button
+              type="button"
+              className={`view-toggle-btn${view === 'requests' ? ' active' : ''}`}
+              onClick={() => setView('requests')}
+            >
+              ✦ Requests
+            </button>
+          )}
+          {commsAvailable && (
+            <button
+              type="button"
+              className={`view-toggle-btn${view === 'comms' ? ' active' : ''}`}
+              onClick={() => setView('comms')}
+            >
+              ✉ Communications
+            </button>
+          )}
+        </div>
+      )}
+
+      {detailsVisible && (<>
       {isFromEnquiry && (
         <div className="detail-modal-banner detail-modal-banner--success">
           Converting from enquiry. Guest details have been pre-filled. Select a property and confirm dates.
@@ -407,6 +534,32 @@ export default function BookingModal({
               ))}
             </select>
           </div>
+          {form.kind === 'booking' && form.property_id && (
+            <div className="form-group">
+              <label className="form-label">Owner · receives owner emails</label>
+              <div style={{
+                padding: '8px 10px', background: 'var(--bg)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+              }}>
+                {ownerLoading ? (
+                  <span style={{ color: 'var(--text-secondary)' }}>Resolving owner…</span>
+                ) : bookingOwner ? (
+                  <>
+                    <span style={{ fontWeight: 600 }}>{titleCase(bookingOwner.name) || '—'}</span>
+                    {bookingOwner.email && (
+                      <span style={{ color: 'var(--text-secondary)' }}> · {bookingOwner.email.toLowerCase()}</span>
+                    )}
+                    <span style={{ color: 'var(--text-light)' }}> · primary owner of this property</span>
+                  </>
+                ) : (
+                  <span style={{ color: 'var(--warning)', fontWeight: 600 }}>
+                    No owner linked to this property — owner emails will have no recipient. Add one in Properties → owners.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Check in *</label>
@@ -576,7 +729,7 @@ export default function BookingModal({
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Total amount</label>
+              <label className="form-label">Daily rate</label>
               <input
                 type="number"
                 className="form-input"
@@ -587,15 +740,15 @@ export default function BookingModal({
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Balance due</label>
-              <input
-                type="number"
-                className="form-input"
-                value={form.balance_due}
-                onChange={(e) => setForm({ ...form, balance_due: e.target.value })}
-                min={0}
-                step="0.01"
-              />
+              <label className="form-label">Total</label>
+              <div className="form-input" style={{ background: 'var(--bg)', display: 'flex', alignItems: 'center', fontWeight: 600 }}>
+                {(() => {
+                  const n = nightsBetween(form.check_in, form.check_out);
+                  const r = form.total_amount !== '' ? Number(form.total_amount) : null;
+                  if (r == null || !Number.isFinite(r) || !n || n <= 0) return '—';
+                  return `${fmtRand(r * n)} · ${n} night${n === 1 ? '' : 's'} × ${fmtRand(r)}`;
+                })()}
+              </div>
             </div>
             <div className="form-group">
               <label className="form-label">Currency</label>
@@ -612,6 +765,43 @@ export default function BookingModal({
             </div>
           </div>
         </fieldset>
+        {/* Pricing source — for platform bookings (created from an accepted
+            proposal) show where the rate came from, with a link to the deal.
+            Outside the fieldset so the link works in view mode too. */}
+        {!isNew && (
+          booking.enquiry_id ? (
+            sourceProposal ? (
+              <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>
+                  Pricing from proposal{' '}
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{sourceProposal.ref_code}</span>
+                  {(() => {
+                    const pp = Array.isArray(sourceProposal.pricing_proposals) ? sourceProposal.pricing_proposals[0] : sourceProposal.pricing_proposals;
+                    const cp = pp?.client_price_excl_vat;
+                    return cp != null ? <> · {fmtRand(Number(cp))}/night</> : null;
+                  })()}
+                  {sourceProposal.accepted_at && <> · accepted {new Date(sourceProposal.accepted_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}</>}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => navigate('/operations/enquiries?deal=' + encodeURIComponent(booking.enquiry_id))}
+                >
+                  View proposal →
+                </button>
+              </div>
+            ) : (
+              <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Linked to an enquiry — accepted proposal not found.
+              </div>
+            )
+          ) : (
+            <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Manually entered — no linked proposal.
+            </div>
+          )
+        )}
       </DetailModalSection>
       )}
 
@@ -640,16 +830,6 @@ export default function BookingModal({
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Extras</label>
-            <input
-              type="text"
-              className="form-input"
-              value={form.extras}
-              onChange={(e) => setForm({ ...form, extras: e.target.value })}
-              placeholder="e.g. cot, bath, linen"
-            />
-          </div>
-          <div className="form-group">
             <label className="form-label">Notes</label>
             <textarea
               className="form-input"
@@ -661,6 +841,134 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+      </>)}
+
+      {requestsVisible && (<>
+      <DetailModalSection heading="Special requests">
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
+          <div className="form-group">
+            <label className="form-label">Special requests</label>
+            <textarea
+              className="form-input"
+              rows={2}
+              value={form.special_requests}
+              onChange={(e) => setForm({ ...form, special_requests: e.target.value })}
+              placeholder="Guest's special requests — shown in owner emails (left blank, the line is omitted)"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Extras</label>
+            <input
+              type="text"
+              className="form-input"
+              value={form.extras}
+              onChange={(e) => setForm({ ...form, extras: e.target.value })}
+              placeholder="e.g. cot, bath, linen"
+            />
+          </div>
+        </fieldset>
+      </DetailModalSection>
+
+      {form.kind === 'booking' && (
+      <DetailModalSection heading="Self-serve forms">
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+          Send the guest or agent a link to fill in their own details — flight times, check-in/out, deposit, etc. It writes straight back here.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <button type="button" className="btn btn-outline" disabled={isNew}
+            onClick={() => setShareForm('guest')} title={isNew ? 'Save the booking first' : 'Share a guest details link'}>
+            🔗 Send guest details form
+          </button>
+          <button type="button" className="btn btn-outline" disabled={isNew}
+            onClick={() => setShareForm('agent')} title={isNew ? 'Save the booking first' : 'Share an agent details link'}>
+            🔗 Send agent details form
+          </button>
+        </div>
+        {renderSubmittedDetails(bookingDetails)}
+      </DetailModalSection>
+      )}
+      </>)}
+
+      {commsVisible && (
+        <BookingManagementSection
+          booking={booking}
+          property={properties.find(p => p.id === form.property_id)}
+          supabase={supabase}
+          user={user}
+          initialFilter={commsFilter ?? 'due'}
+        />
+      )}
+
+      {shareForm && !isNew && (
+        <BookingFormShareModal
+          bookingId={booking.id}
+          formType={shareForm}
+          recipientFirstName={shareForm === 'guest' && form.guest_name ? form.guest_name.split(' ')[0] : null}
+          recipientEmail={shareForm === 'guest' ? (form.guest_email || null) : null}
+          recipientPhone={shareForm === 'guest' ? (form.guest_phone || null) : null}
+          supabase={supabase}
+          onClose={() => setShareForm(null)}
+        />
+      )}
     </DetailModal>
+  );
+}
+
+/** Render the read-only "Submitted details" block from a booking_details row.
+ *  Hidden rows for blank/null values keep it tight. */
+function SubmittedRow({ label, value }: { label: string; value: any }) {
+  if (value === null || value === undefined || value === '') return null;
+  const display = typeof value === 'boolean' ? (value ? 'Yes' : '—') : String(value);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0', fontSize: '0.8125rem' }}>
+      <span className="form-label" style={{ margin: 0 }}>{label}</span>
+      <span style={{ fontWeight: 500, textAlign: 'right' }}>{display}</span>
+    </div>
+  );
+}
+
+function fmtSubmittedAt(d: string | null): string {
+  if (!d) return '';
+  try { return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; }
+}
+
+function renderSubmittedDetails(d: any) {
+  if (!d || (!d.guest_submitted_at && !d.agent_submitted_at)) {
+    return <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>No form responses yet.</div>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {d.guest_submitted_at && (
+        <div>
+          <div className="detail-modal-section-heading">From guest · {fmtSubmittedAt(d.guest_submitted_at)}</div>
+          <SubmittedRow label="Flight details" value={d.guest_flight_details} />
+          <SubmittedRow label="Check-in time" value={d.guest_check_in_time} />
+          <SubmittedRow label="Check-out time" value={d.guest_check_out_time} />
+          <SubmittedRow label="Weekend housekeeping" value={d.guest_weekend_housekeeping} />
+          <SubmittedRow label="Staff requirements" value={d.guest_staff_requirements} />
+          <SubmittedRow label="Cot" value={d.guest_baby_cot} />
+          <SubmittedRow label="High-chair" value={d.guest_baby_high_chair} />
+        </div>
+      )}
+      {d.agent_submitted_at && (
+        <div>
+          <div className="detail-modal-section-heading">From agent · {fmtSubmittedAt(d.agent_submitted_at)}</div>
+          <SubmittedRow label="Guest name" value={d.agent_guest_name} />
+          <SubmittedRow label="No. of guests" value={d.agent_guests_count} />
+          <SubmittedRow label="Dates" value={d.agent_check_in && d.agent_check_out ? `${d.agent_check_in} → ${d.agent_check_out}` : null} />
+          <SubmittedRow label="House" value={d.agent_house} />
+          <SubmittedRow label="Contact number" value={d.agent_contact_number} />
+          <SubmittedRow label="Flight details" value={d.agent_flight_details} />
+          <SubmittedRow label="Check-in time" value={d.agent_check_in_time} />
+          <SubmittedRow label="Check-out time" value={d.agent_check_out_time} />
+          <SubmittedRow label="Staff requirements" value={d.agent_staff_requirements} />
+          <SubmittedRow label="Rates" value={d.agent_rates} />
+          <SubmittedRow label="Payment terms" value={d.agent_payment_terms} />
+          <SubmittedRow label="Other requests" value={d.agent_other_requests} />
+          <SubmittedRow label="Indemnity signed" value={d.agent_indemnity_signed} />
+          <SubmittedRow label="Breakages deposit" value={d.agent_breakages_deposit != null ? fmtRand(Number(d.agent_breakages_deposit)) : null} />
+        </div>
+      )}
+    </div>
   );
 }

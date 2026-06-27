@@ -6,3 +6,5 @@ dist
 .vercel
 supabase/.temp/
 .conductor/settings.local.toml
+.DS_Store
+.claude/

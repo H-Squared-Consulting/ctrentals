@@ -11,14 +11,14 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import type { Booking } from '../types';
 import DataTable from '../components/DataTable';
 import type { DataRow } from '../components/DataTable';
 import MultiPicker from '../components/MultiPicker';
-import BookingModal from './BookingModal';
+import BookingModal from '../components/LazyBookingModal';
 import BlockModal from './BlockModal';
 import ActionModal from '../components/ActionModal';
 import { CT_RENTALS_PARTNER_ID, BOOKING_STATUS_OPTIONS } from './constants';
@@ -80,6 +80,7 @@ export default function BookingCalendarPage() {
   const { supabase, user } = useAuth();
   const { setPageTitle } = useLayout();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Deep-link from the property card "📅 Bookings" button:
   // /operations/bookings?view=calendar&propertyId=<id>. The view query
@@ -214,6 +215,19 @@ export default function BookingCalendarPage() {
     setLoading(false);
   }
   useEffect(() => { if (supabase) loadData(); /* eslint-disable-next-line */ }, [supabase]);
+
+  // Deep-link from a Booked Kanban card: /operations/bookings?enquiry=<id>
+  // opens that enquiry's booking modal once bookings have loaded. Fires once
+  // (ref-guarded); the param is then cleared so a refresh/back doesn't re-open.
+  const enquiryParam = searchParams.get('enquiry');
+  const enquiryOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!enquiryParam || enquiryOpenedRef.current || loading || !bookings.length) return;
+    enquiryOpenedRef.current = true;
+    const match = bookings.find((b) => (b as any).enquiry_id === enquiryParam);
+    if (match) setEditingBooking(match);
+    navigate('/operations/bookings', { replace: true });
+  }, [enquiryParam, bookings, loading, navigate]);
 
   const suburbs = useMemo(() => {
     const s = new Set<string>();
@@ -1203,7 +1217,8 @@ function BookingsList({
       check_in: b.check_in,
       check_out: b.check_out,
       nights: nightsBetween(b.check_in, b.check_out) ?? 0,
-      total: Number(b.total_amount) || 0,
+      // total_amount is the per-night rate; the booking total is rate × nights.
+      total: (Number(b.total_amount) || 0) * (nightsBetween(b.check_in, b.check_out) ?? 0),
       status: b.status,
       isBlock,
       ref: (b.id || '').slice(0, 8),

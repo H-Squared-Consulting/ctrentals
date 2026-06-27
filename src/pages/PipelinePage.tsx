@@ -55,6 +55,7 @@ import PriceBucketFilter from '../components/PriceBucketFilter';
 import type { TierKey } from '../lib/priceTiers';
 import { useModalStack } from '../contexts/ModalStackContext';
 import { initialsForEmail, TEAM_INITIALS, type TeamInitials } from '../lib/userInitials';
+import LazyBookingModal from '../components/LazyBookingModal';
 
 // ─── Data shapes ────────────────────────────────────────────────────────
 
@@ -82,6 +83,10 @@ interface ProposalRow {
   sent_at: string | null;
   viewed_at: string | null;
   accepted_at: string | null;
+  /** Set when this proposal was published to the agent's portal (expires =
+   *  check-in date). Drives the "✓ Published" state on the proposal row. */
+  published_to_agent_at: string | null;
+  published_to_agent_expires: string | null;
   guest_price: number | null;
   scenario_type: string | null;
   season_tag: string | null;
@@ -479,6 +484,8 @@ function mapProposalRow(p: any, parentEnquiry?: { id: string; ref_code: string }
     sent_at: p.sent_at,
     viewed_at: p.viewed_at,
     accepted_at: p.accepted_at,
+    published_to_agent_at: p.published_to_agent_at ?? null,
+    published_to_agent_expires: p.published_to_agent_expires ?? null,
     guest_price: p.pricing_proposals?.client_price_excl_vat ?? null,
     scenario_type: p.pricing_proposals?.scenario_type ?? null,
     season_tag: p.pricing_proposals?.season_tag ?? null,
@@ -498,6 +505,10 @@ export default function PipelinePage() {
   const toast = useToast();
 
   const [deals, setDeals] = useState<Deal[]>([]);
+  // After a proposal is accepted we auto-open the new booking on its
+  // Communications tab so the confirmation email gets sent right away.
+  const [confirmBooking, setConfirmBooking] = useState<any | null>(null);
+  const [confirmProperties, setConfirmProperties] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'board' | 'list'>('board');
   // Search can be pre-filled from URL — Home links land users here with
@@ -1120,7 +1131,7 @@ export default function PipelinePage() {
         .select('id')
         .eq('enquiry_id', deal.enquiry.id)
         .maybeSingle();
-      if (existing.data) return;
+      if (existing.data) return existing.data.id as string;
     }
     // Pick the most-recently-active proposal as the booking source. Falls
     // back to whatever's first so we always have a property + price.
@@ -1129,10 +1140,10 @@ export default function PipelinePage() {
         ['interested', 'sent', 'viewed', 'accepted', 'booked'].includes(p.status),
       ) ||
       deal.proposals[0];
-    if (!featured) return;
+    if (!featured) return null;
 
     const e = deal.enquiry;
-    await supabase.from('bookings').insert({
+    const { data: inserted } = await supabase.from('bookings').insert({
       partner_id: CT_RENTALS_PARTNER_ID,
       property_id: featured.property_id,
       enquiry_id: e?.id ?? null,
@@ -1145,10 +1156,13 @@ export default function PipelinePage() {
       guests_children: e?.guests_children ?? null,
       check_in: featured.check_in ?? e?.check_in,
       check_out: featured.check_out ?? e?.check_out,
+      notes: e?.notes ?? null,
       total_amount: featured.guest_price ?? null,
       currency: 'ZAR',
       status: 'confirmed',
-    });
+      confirmed_at: new Date().toISOString(),
+    }).select('id').single();
+    return inserted?.id ?? null;
   }
 
   async function updateEnquiryStatus(enquiryId: string, status: string) {
@@ -1163,7 +1177,29 @@ export default function PipelinePage() {
       .eq('id', enquiryId);
     if (status === 'booked') {
       const deal = deals.find(d => d.enquiry?.id === enquiryId);
-      if (deal) await createBookingFromDeal(deal);
+      const bookingId = deal ? await createBookingFromDeal(deal) : null;
+      // Same confirmation-email prompt as the proposal-modal Accept path:
+      // open the booking on its Communications (Due) tab so staff send the
+      // owner confirmation + guest/agent first email straight away.
+      if (bookingId) {
+        try {
+          const [bkRes, propRes] = await Promise.all([
+            supabase.from('bookings').select('*').eq('id', bookingId).single(),
+            supabase
+              .from('partner_properties')
+              .select('id, slug, property_name, bedrooms, suburb, is_published')
+              .eq('partner_id', CT_RENTALS_PARTNER_ID)
+              .order('property_name'),
+          ]);
+          if (bkRes.data) {
+            setConfirmProperties(propRes.data || []);
+            setConfirmBooking(bkRes.data);
+            toast.success('Booking confirmed — send the confirmation email.');
+          }
+        } catch (err) {
+          console.error('Failed to open confirmation-email prompt', err);
+        }
+      }
     }
     // Mirror to the enquiry's sole proposal (1:1 case) so Mark Booked /
     // Cancelled flips the proposal's status the same direction.
@@ -1426,7 +1462,69 @@ export default function PipelinePage() {
     }
   }
 
+  /** Publish EVERY eligible (non-terminal) proposal on an agent deal to the
+   *  portal in one shot. The one-click recovery for proposals that were only
+   *  "sent" and never published, so they never reached the agent's portal. */
+  async function performPublishAll(deal: Deal) {
+    if (publishing) return;
+    const eligible = deal.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
+    if (eligible.length === 0) { toast.error('No proposals to publish'); return; }
+    setPublishing(true);
+    try {
+      const expires = deal.check_in ?? deal.enquiry?.check_in ?? null;
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase
+        .from('proposals')
+        .update({
+          published_to_agent_at: nowIso,
+          published_to_agent_expires: expires,
+          status: 'sent',
+          sent_at: nowIso,
+          updated_at: nowIso,
+        })
+        .in('id', eligible.map(p => p.id));
+      if (error) throw error;
+      if (deal.enquiry?.id) await syncEnquiryFromProposal(supabase, eligible[0].id, 'sent');
+      notifyPipelineChanged();
+      toast.success(`Published ${eligible.length} proposal${eligible.length === 1 ? '' : 's'} to ${titleCase(deal.client_name)}'s portal`);
+      const enquiryId = deal.enquiry?.id ?? null;
+      setPendingPublish(null);
+      setOpenProposal(null);
+      setOpenDeal(null);
+      await fetchDeals();
+      if (enquiryId) {
+        navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
+      }
+    } catch (err: any) {
+      console.error('performPublishAll failed:', err);
+      toast.error('Failed to publish all: ' + (err?.message || String(err)));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function applyProposalOutcome(p: ProposalRow, outcome: ProposalStatus) {
+    if (outcome === 'accepted') {
+      // A booking needs check-in AND check-out (both NOT NULL on bookings).
+      // Resolve them from the proposal, falling back to the enquiry; if either
+      // is missing, block the accept with a clear message instead of silently
+      // 400-ing the booking insert and leaving a "booked" deal with no booking.
+      let ci: string | null = (p as any).check_in ?? null;
+      let co: string | null = (p as any).check_out ?? null;
+      if (!ci || !co) {
+        const enqId = openDeal?.deal.enquiry?.id ?? (p as any).enquiry_id ?? null;
+        if (enqId) {
+          const { data: enq } = await supabase
+            .from('enquiries').select('check_in, check_out').eq('id', enqId).maybeSingle();
+          ci = ci ?? enq?.check_in ?? null;
+          co = co ?? enq?.check_out ?? null;
+        }
+      }
+      if (!ci || !co) {
+        toast.error('Add check-in and check-out dates before accepting — a booking needs both.');
+        return;
+      }
+    }
     const patch: any = { status: outcome, updated_at: new Date().toISOString() };
     if (outcome === 'accepted') {
       patch.accepted_at = new Date().toISOString();
@@ -1438,12 +1536,13 @@ export default function PipelinePage() {
     }
     await supabase.from('proposals').update(patch).eq('id', p.id);
 
+    let newBookingId: string | null = null;
     if (outcome === 'accepted') {
       await closeEnquiryOnProposalAccept(supabase, p.id);
       // Auto-create the booking row so the team doesn't have to do a
       // separate Mark Booked click on the deal. Idempotent — no-ops
       // if a booking already exists.
-      await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
+      newBookingId = await createBookingFromAcceptedProposal(supabase, p.id, CT_RENTALS_PARTNER_ID);
     } else if (outcome === 'declined') {
       await maybeCloseEnquiryOnProposalDecline(supabase, p.id);
     } else {
@@ -1461,9 +1560,54 @@ export default function PipelinePage() {
     // and flash the card in its new column (Booked) so the user
     // sees where it moved. Same UX as the new-enquiry highlight.
     if (outcome === 'accepted') {
-      const enquiryId = openDeal?.deal.enquiry?.id;
+      // Resolve the enquiry id from whatever's available (the confirm-dialog
+      // accept path may have closed openDeal already).
+      let enquiryId: string | null =
+        openDeal?.deal.enquiry?.id ?? (p as any).enquiry_id ?? null;
+      if (!enquiryId) {
+        const { data: pr } = await supabase
+          .from('proposals').select('enquiry_id').eq('id', p.id).maybeSingle();
+        enquiryId = pr?.enquiry_id ?? null;
+      }
       setOpenDeal(null);
-      if (enquiryId) {
+      // Open the booking on its Communications tab (Due view → owner
+      // confirmation + guest/agent first email). We resolve the booking by
+      // enquiry_id rather than trusting createBookingFromAcceptedProposal's
+      // return value — that helper returns null if its own proposal lookup
+      // misses, but a booking always exists by this point.
+      let opened = false;
+      try {
+        const [bkById, propRes] = await Promise.all([
+          newBookingId
+            ? supabase.from('bookings').select('*').eq('id', newBookingId).maybeSingle()
+            : Promise.resolve({ data: null as any }),
+          supabase
+            .from('partner_properties')
+            .select('id, slug, property_name, bedrooms, suburb, is_published')
+            .eq('partner_id', CT_RENTALS_PARTNER_ID)
+            .order('property_name'),
+        ]);
+        let booking = bkById.data;
+        if (!booking && enquiryId) {
+          const { data } = await supabase
+            .from('bookings').select('*')
+            .eq('enquiry_id', enquiryId)
+            .order('created_at', { ascending: false })
+            .limit(1).maybeSingle();
+          booking = data;
+        }
+        if (booking) {
+          setConfirmProperties(propRes.data || []);
+          setConfirmBooking(booking);
+          toast.success('Booking confirmed — send the confirmation email.');
+          opened = true;
+        }
+      } catch (err) {
+        console.error('Failed to open confirmation-email prompt', err);
+      }
+      // Only flash the card via the deal deep-link if we did NOT open the
+      // confirmation modal — otherwise the re-opened deal modal covers it.
+      if (!opened && enquiryId) {
         navigate(`/operations/enquiries?deal=${encodeURIComponent(enquiryId)}&highlight=1`, { replace: true });
       }
       return;
@@ -1683,6 +1827,7 @@ export default function PipelinePage() {
           onSendProposal={(p) => setSendingProposals([hydrateProposalContact(p)])}
           onSendDrafts={(drafts) => setSendingProposals(drafts.map(hydrateProposalContact))}
           onPublishProposal={(p) => setPendingPublish({ proposal: p, deal: openDeal.deal })}
+          onPublishAll={() => performPublishAll(openDeal.deal)}
           onMarkProposalOutcome={(p, outcome) => {
             if (outcome === 'interested') {
               // Interested is a status-flip with no cascade, so use the
@@ -1801,6 +1946,19 @@ export default function PipelinePage() {
             const deal = deals.find(d => d.enquiry?.id === enquiryId);
             if (deal) setOpenDeal({ deal, mode: 'view' });
           }}
+        />
+      )}
+
+      {confirmBooking && (
+        <LazyBookingModal
+          booking={confirmBooking}
+          properties={confirmProperties}
+          supabase={supabase}
+          user={user}
+          partnerId={CT_RENTALS_PARTNER_ID}
+          defaultView="comms"
+          onClose={() => setConfirmBooking(null)}
+          onSave={() => setConfirmBooking(null)}
         />
       )}
 
@@ -2703,6 +2861,7 @@ function DealCardImpl({
   compact?: boolean;
   highlighted?: boolean;
 }) {
+  const navigate = useNavigate();
   const isClosed = closed || stage === 'won' || stage === 'lost';
   const isStale = stage === 'new' && daysSince(deal.created_at) >= STALE_DAYS;
   const isStalled = stage === 'stalled';
@@ -3073,6 +3232,20 @@ function DealCardImpl({
       </div>
       )}
 
+      {/* Booked cards: jump straight to this enquiry's booking on the
+          Bookings page (opens its booking modal via ?enquiry=<id>). */}
+      {isBooked && deal.enquiry?.id && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ marginTop: 8, width: '100%', justifyContent: 'center', fontSize: '0.6875rem', padding: '3px 8px' }}
+          onClick={stop(() => navigate('/operations/bookings?enquiry=' + encodeURIComponent(deal.enquiry?.id ?? '')))}
+          title="Open this booking on the Bookings page"
+        >
+          🏠 Open booking →
+        </button>
+      )}
+
       {/* Manual close reason — captured via the Set stage prompt and
           surfaced on the closed card so the "why" is obvious at a
           glance. Only renders in the Closed column and only when a
@@ -3280,6 +3453,7 @@ function ProposalRowInline({
   onEditPricing,
   onDelete,
   acceptDisabledReason,
+  datesMissing,
 }: {
   proposal: ProposalRow;
   onOpen: () => void;
@@ -3304,11 +3478,15 @@ function ProposalRowInline({
    *  un-attributable. Decline stays available because rejecting a
    *  quote needs no guest identity. */
   acceptDisabledReason?: string | null;
+  /** When true, BOTH Accept and Decline are hard-disabled — the deal has no
+   *  check-in/check-out, and a booking can't be created without them. */
+  datesMissing?: boolean;
 }) {
   const p = proposal;
   const isDraft = p.status === 'draft' || p.status === 'drafting' || p.status === 'ready';
   const isActiveSent = p.status === 'sent' || p.status === 'viewed' || p.status === 'interested';
   const isTerminal = INACTIVE_PROPOSAL_STATUSES.has(p.status);
+  const isPublished = !!p.published_to_agent_at;
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -3410,23 +3588,33 @@ function ProposalRowInline({
             🕓 History
           </button>
         )}
-        {isDraft && onPublish && (
-          // Agent-enquiry only — publishes the proposal to the
-          // agent's /q/:token portal until check_in passes. Also
-          // marks the proposal Sent (parent confirmation modal
-          // explains). Sits BEFORE Send in the row so the most
-          // common agent-flow action reads left-to-right.
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-            onClick={stop(onPublish)}
-            title="Publish this proposal to the agent's portal — they'll see it on their My Enquiries tab"
-          >
-            📢 Publish
-          </button>
+        {onPublish && !isTerminal && (
+          // Agent enquiries are PUBLISH-ONLY: the proposal goes to the agent's
+          // /q/:token portal (unbranded brochure + agent pricing), it is NOT
+          // emailed. Once published, show a non-clickable "Published" pill so it
+          // can't be re-published; until then, the active Publish button.
+          isPublished ? (
+            <span
+              className="ops-status-pill ops-status-pill--accepted"
+              style={{ flexShrink: 0 }}
+              title="Already published to the agent's portal"
+            >
+              <span className="ops-status-pill-dot" />
+              Published
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              onClick={stop(onPublish)}
+              title="Publish this proposal to the agent's portal — they'll see the brochure + pricing on their My Enquiries tab"
+            >
+              📢 Publish
+            </button>
+          )
         )}
-        {isDraft && (
+        {isDraft && !onPublish && (
           <button
             type="button"
             className="btn btn-primary"
@@ -3444,15 +3632,17 @@ function ProposalRowInline({
               className="btn btn-outline-success"
               style={{
                 fontSize: '0.75rem', padding: '4px 10px',
-                // Visually flag the blocked state without preventing
-                // the click — disabling the button silently swallowed
-                // the click and left the user wondering what to do
-                // next. Now the button STILL fires; the parent shows
-                // an explainer modal with a path to unblock it.
-                ...(acceptDisabledReason ? { opacity: 0.55 } : {}),
+                // Agent-guest case is a SOFT flag (still fires → explainer
+                // modal). Missing dates is a HARD disable (below).
+                ...(acceptDisabledReason && !datesMissing ? { opacity: 0.55 } : {}),
               }}
+              disabled={!!datesMissing}
               onClick={stop(() => onMarkOutcome('accepted'))}
-              title={acceptDisabledReason || 'Mark accepted (cascades — closes deal, auto-declines siblings)'}
+              title={
+                datesMissing
+                  ? 'Add check-in and check-out dates before accepting'
+                  : (acceptDisabledReason || 'Mark accepted (cascades — closes deal, auto-declines siblings)')
+              }
             >
               ✓ Accept
             </button>
@@ -3460,11 +3650,17 @@ function ProposalRowInline({
               type="button"
               className="btn btn-outline-danger"
               style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              disabled={!!datesMissing}
               onClick={stop(() => onMarkOutcome('declined'))}
-              title="Mark declined"
+              title={datesMissing ? 'Add check-in and check-out dates before declining' : 'Mark declined'}
             >
               ✕ Decline
             </button>
+            {datesMissing && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', fontWeight: 700, alignSelf: 'center', whiteSpace: 'nowrap' }}>
+                ⚠ Add check-in / check-out dates first
+              </span>
+            )}
           </>
         )}
         {isTerminal && null}
@@ -3500,7 +3696,7 @@ function ProposalRowInline({
 function DealDetailModal({
   deal, initialMode = 'view', focusField = null, onClose, onQuote,
   onUpdateStatus, onUpdateProposalOutcome, onSetStage, onReopenEnquiry,
-  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal,
+  onOpenProposal, onSendProposal, onSendDrafts, onMarkProposalOutcome, onEditProposalPricing, onPublishProposal, onPublishAll,
 }: {
   deal: Deal;
   initialMode?: 'view' | 'edit';
@@ -3537,6 +3733,9 @@ function DealDetailModal({
    *  ProposalRowInline which renders the button only when this
    *  prop is set AND the proposal is in a draft state. */
   onPublishProposal: (p: ProposalRow) => void;
+  /** Publish EVERY eligible proposal on this (agent) deal to the portal at
+   *  once. Only wired for agent deals. */
+  onPublishAll?: () => void;
 }) {
   const { supabase } = useAuth();
   const toast = useToast();
@@ -3639,6 +3838,8 @@ function DealDetailModal({
     check_in: e?.check_in ?? standaloneProp?.check_in ?? '',
     check_out: e?.check_out ?? standaloneProp?.check_out ?? '',
     guests_total: e?.guests_total ?? standaloneProp?.guests_total ?? null,
+    guests_adults: e?.guests_adults ?? null,
+    guests_children: e?.guests_children ?? null,
     bedrooms_needed: e?.bedrooms_needed ?? null,
     /** Multi-select option arrays. Seed from the row when present;
      *  otherwise wrap the legacy single value so the edit UX is
@@ -3748,6 +3949,8 @@ function DealDetailModal({
         // view) still get a usable single value, while the arrays
         // power the tighter property match .in() filter.
         guests_total:     form.guests_total ?? 1,
+        guests_adults:    form.guests_adults ?? null,
+        guests_children:  form.guests_children ?? null,
         // bedrooms_needed mirrors the smallest of the multi-select so legacy
         // single-value readers keep working; null when no bedroom filter
         // was set so the match modal treats it as "any" rather than
@@ -4338,6 +4541,32 @@ function DealDetailModal({
                 </div>
                 {e && (
                   <div className="form-group">
+                    <label className="form-label">Adults</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={0}
+                      value={form.guests_adults ?? ''}
+                      onChange={ev => update('guests_adults', ev.target.value === '' ? null : Number(ev.target.value))}
+                      placeholder="—"
+                    />
+                  </div>
+                )}
+                {e && (
+                  <div className="form-group">
+                    <label className="form-label">Children</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={0}
+                      value={form.guests_children ?? ''}
+                      onChange={ev => update('guests_children', ev.target.value === '' ? null : Number(ev.target.value))}
+                      placeholder="—"
+                    />
+                  </div>
+                )}
+                {e && (
+                  <div className="form-group">
                     <label className="form-label">Bedrooms needed</label>
                     <NumericMultiSelect
                       max={10}
@@ -4380,13 +4609,33 @@ function DealDetailModal({
         // flow lands here with N drafts ready to send to one recipient.
         // One click → SendProposalDialog with proposals[N].
         const drafts = deal.proposals.filter(p => p.status === 'draft' || p.status === 'drafting');
+        // Publishable = non-terminal proposals; if every one is already on the
+        // portal, the "Publish all" button reads "All published" and disables.
+        const publishable = deal.proposals.filter(p => !INACTIVE_PROPOSAL_STATUSES.has(p.status));
+        const allPublished = publishable.length > 0 && publishable.every(p => !!p.published_to_agent_at);
         const proposalsSection = (
           <DetailModalSection
             heading="Proposals"
             headingRight={deal.proposals.length ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <span>{deal.proposals.length}</span>
-                {drafts.length >= 2 && (
+                {deal.is_agent ? (
+                  // Agent deals publish to the portal (never email), so the
+                  // batch action is Publish all — also the one-click recovery
+                  // for proposals that were only "sent", never published.
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                    onClick={() => onPublishAll?.()}
+                    disabled={allPublished}
+                    title={allPublished
+                      ? `All of ${titleCase(deal.client_name)}'s proposals are already on their portal`
+                      : `Publish all of ${titleCase(deal.client_name)}'s proposals to their portal (brochure + pricing)`}
+                  >
+                    {allPublished ? '✓ All published' : '📢 Publish all to portal'}
+                  </button>
+                ) : drafts.length >= 2 ? (
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -4396,7 +4645,7 @@ function DealDetailModal({
                   >
                     ✉ Send all {drafts.length} drafts
                   </button>
-                )}
+                ) : null}
               </span>
             ) : null}
           >
@@ -4486,7 +4735,14 @@ function DealDetailModal({
                 : null;
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {deal.proposals.map(p => (
+                  {deal.proposals.map(p => {
+                    // A booking needs check-in AND check-out (both NOT NULL on
+                    // bookings). Take them from the proposal, falling back to
+                    // the enquiry. Missing either → Accept/Decline hard-disabled.
+                    const ci = (p as any).check_in ?? (deal.enquiry as any)?.check_in ?? null;
+                    const co = (p as any).check_out ?? (deal.enquiry as any)?.check_out ?? null;
+                    const datesMissing = !ci || !co;
+                    return (
                     <ProposalRowInline
                       key={p.id}
                       proposal={p}
@@ -4500,8 +4756,10 @@ function DealDetailModal({
                       onEditPricing={p.pricing_proposal_id ? () => onEditProposalPricing(p) : undefined}
                       onDelete={mode === 'edit' ? () => setConfirmDeleteProposal(p) : undefined}
                       acceptDisabledReason={acceptDisabledReason}
+                      datesMissing={datesMissing}
                     />
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })()}
