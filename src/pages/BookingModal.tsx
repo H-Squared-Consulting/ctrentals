@@ -20,6 +20,7 @@ import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
+import BookingManagementSection from '../components/BookingManagementSection';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -661,6 +662,18 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+
+      {!isNew && form.kind === 'booking'
+        && form.status !== 'tentative' && form.status !== 'cancelled' && (
+        <DetailModalSection heading="Management">
+          <BookingManagementSection
+            booking={booking}
+            property={properties.find(p => p.id === form.property_id)}
+            supabase={supabase}
+            user={user}
+          />
+        </DetailModalSection>
+      )}
     </DetailModal>
   );
 }
