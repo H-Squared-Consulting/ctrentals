@@ -1,30 +1,27 @@
 /**
- * ActionsDuePage — Operations → Actions
+ * ActionsDueSection — the management-email action queue, rendered as a
+ * single dashboard card on the Home page (it used to be a standalone
+ * Operations → Actions page; folded in here so the daily to-do list lives
+ * on the landing page rather than behind another click).
  *
  * One global queue across every confirmed booking: the management-email
  * sequence (owner confirmations, guest welcome / pre-arrival / deposit /
- * feedback, agent track, the 24h WhatsApp nudge) surfaced wherever an
- * item is due now. Nicki and Hayley work this list top-to-bottom instead
- * of opening each booking to remember what's outstanding.
+ * feedback, agent track, the 24h WhatsApp nudge) surfaced wherever an item
+ * is due now. The sequence + due dates are computed on the fly from booking
+ * dates + the resolved channel (see lib/managementEmails); nothing is
+ * pre-populated, so a "pending" item is simply one with no management_actions
+ * mark yet. We load a window of bookings (check_out ≥ today−14d, check_in ≤
+ * today+60d), build each booking's actions, keep the pending ones, and bucket
+ * them by urgency into Overdue / Today / This week.
  *
- * The sequence + due dates are computed on the fly from booking dates +
- * the resolved channel (see lib/managementEmails). Nothing is
- * pre-populated; a "mark" row in management_actions only appears once a
- * staffer sends something, so "pending" = absence of a mark. We load a
- * window of bookings (check_out ≥ today−14d, check_in ≤ today+60d), build
- * each booking's actions, keep the pending ones, and bucket them by
- * urgency into Overdue / Today / This week.
- *
- * Draft opens the shared EmailComposerModal pre-filled from the DB
- * template rendered with live booking variables; Mark as Sent writes a
- * management_actions mark and the item drops off the queue. Open hands
- * off to the full BookingModal.
+ * Draft opens the shared EmailComposerModal pre-filled from the DB template
+ * rendered with live booking variables; Mark as Sent writes a mark and the
+ * item drops off the queue. Open hands off to the full BookingModal.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useLayout } from '../contexts/LayoutContext';
-import { CT_RENTALS_PARTNER_ID } from './constants';
+import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import { nightsBetween } from '../lib/nights';
 import { initialsForEmail } from '../lib/userInitials';
 import {
@@ -40,8 +37,8 @@ import type {
   StaffSettings,
 } from '../lib/managementEmails';
 import { loadParticipantsBulk, loadStaffSettings } from '../lib/bookingParticipants';
-import EmailComposerModal from '../components/EmailComposerModal';
-import BookingModal from './BookingModal';
+import EmailComposerModal from './EmailComposerModal';
+import BookingModal from '../pages/BookingModal';
 
 interface Property {
   id: string;
@@ -106,17 +103,16 @@ const BUCKETS: Array<{ key: 'overdue' | 'today' | 'this_week'; label: string }> 
   { key: 'this_week', label: 'This week' },
 ];
 
-export default function ActionsDuePage() {
+export default function ActionsDueSection() {
   const { supabase, user } = useAuth();
-  const { setPageTitle } = useLayout();
 
   const [loading, setLoading] = useState(true);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
 
-  // Resolved-participant + config lookups, kept in state so Draft can
-  // build variables lazily (only the item the user clicks) rather than
-  // rendering an email for every queued row up front.
+  // Resolved-participant + config lookups, kept in state so Draft can build
+  // variables lazily (only the item the user clicks) rather than rendering an
+  // email for every queued row up front.
   const [ownerByProperty, setOwnerByProperty] = useState<Map<string, any>>(new Map());
   const [agentByEnquiry, setAgentByEnquiry] = useState<Map<string, any>>(new Map());
   const [guidebookByProperty, setGuidebookByProperty] = useState<Map<string, any>>(new Map());
@@ -127,16 +123,14 @@ export default function ActionsDuePage() {
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [editingBooking, setEditingBooking] = useState<any | null>(null);
 
-  useEffect(() => { setPageTitle('Actions due'); }, [setPageTitle]);
-
   async function loadData() {
     if (!supabase) return;
     setLoading(true);
     try {
-      // SAST-comparable YYYY-MM-DD strings drive the whole engine; we
-      // never compare timestamps. Window: anything checking out in the
-      // last fortnight (post-stay feedback still lands) through anything
-      // checking in within ~2 months (pre-arrival lead time covered).
+      // SAST-comparable YYYY-MM-DD strings drive the whole engine; we never
+      // compare timestamps. Window: anything checking out in the last
+      // fortnight (post-stay feedback still lands) through anything checking
+      // in within ~2 months (pre-arrival lead time covered).
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayISO = today.toISOString().slice(0, 10);
@@ -175,8 +169,8 @@ export default function ActionsDuePage() {
         tplMap[t.key] = { subject: t.subject || '', body: t.body || '' };
       }
 
-      // Enquiries only needed for agent_id (drives channel resolution +
-      // the agent recipient). One IN() keeps it to a single round-trip.
+      // Enquiries only needed for agent_id (drives channel resolution + the
+      // agent recipient). One IN() keeps it to a single round-trip.
       const enquiryIds = Array.from(new Set(bookingRows.map(b => b.enquiry_id).filter(Boolean)));
       const enquiryById = new Map<string, { agent_id: string | null }>();
       if (enquiryIds.length) {
@@ -272,8 +266,8 @@ export default function ActionsDuePage() {
     const { item } = composer;
     const spec = item.row.spec;
     // Upsert the mark (one row per booking+action). due_date is snapshotted
-    // so the historical record survives later date edits. The item then
-    // drops off the queue on reload because pending = absence of a mark.
+    // so the historical record survives later date edits. The item then drops
+    // off the queue on reload because pending = absence of a mark.
     await supabase.from('management_actions').upsert({
       partner_id: CT_RENTALS_PARTNER_ID,
       booking_id: item.booking.id,
@@ -288,92 +282,108 @@ export default function ActionsDuePage() {
     await loadData();
   }
 
-  if (loading && queue.length === 0) {
-    return <div className="page-loader"><div className="spinner" /></div>;
-  }
-
   return (
-    <div>
-      {queue.length === 0 ? (
-        <div className="card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
-          You're all caught up. No actions are due in the next week.
+    <>
+      <div className="card" style={{ padding: 20 }}>
+        <div
+          className="detail-modal-section-heading"
+          style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <span>Actions due</span>
+          {!loading && queue.length > 0 && (
+            <span style={{
+              display: 'inline-block', padding: '2px 10px', borderRadius: 12,
+              fontSize: '0.75rem', fontWeight: 700,
+              background: '#FEF3C7', color: '#92400E',
+            }}>
+              {queue.length}
+            </span>
+          )}
         </div>
-      ) : (
-        BUCKETS.map(bucket => {
-          const items = grouped[bucket.key];
-          if (!items.length) return null;
-          const isOverdue = bucket.key === 'overdue';
-          return (
-            <div className="card" key={bucket.key} style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-                <h2 style={{
-                  margin: 0,
-                  fontSize: '0.8125rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  fontWeight: 700,
-                  color: isOverdue ? 'var(--error)' : 'var(--text)',
-                }}>
-                  {bucket.label}
-                </h2>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{items.length}</span>
-              </div>
 
-              {items.map((item, i) => {
-                const spec = item.row.spec;
-                const aud = AUDIENCE_PILL[spec.audience];
-                const guestName = titleCase(item.booking.guest_name || '');
-                const propName = titleCase(item.property?.property_name || '');
-                const last = i === items.length - 1;
-                return (
-                  <div
-                    key={`${item.booking.id}-${spec.key}`}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '10px 0',
-                      borderTop: i === 0 ? '1px solid var(--border-light)' : 'none',
-                      borderBottom: last ? 'none' : '1px solid var(--border-light)',
-                    }}
-                  >
-                    <span className={`ops-status-pill ops-status-pill--${aud.variant}`} style={{ flexShrink: 0 }}>
-                      <span className="ops-status-pill-dot" />
-                      {aud.label}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, color: 'var(--text)' }}>{spec.label}</div>
-                      <div style={{
-                        fontSize: '0.8125rem',
-                        color: 'var(--text-secondary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {guestName || '—'} · {propName || '—'}
+        {loading && queue.length === 0 ? (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Loading…</div>
+        ) : queue.length === 0 ? (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+            You're all caught up — no actions due this week.
+          </div>
+        ) : (
+          BUCKETS.map(bucket => {
+            const items = grouped[bucket.key];
+            if (!items.length) return null;
+            const isOverdue = bucket.key === 'overdue';
+            return (
+              <div key={bucket.key} style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
+                  <h3 style={{
+                    margin: 0,
+                    fontSize: '0.6875rem',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    fontWeight: 700,
+                    color: isOverdue ? 'var(--error)' : 'var(--text)',
+                  }}>
+                    {bucket.label}
+                  </h3>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{items.length}</span>
+                </div>
+
+                {items.map((item, i) => {
+                  const spec = item.row.spec;
+                  const aud = AUDIENCE_PILL[spec.audience];
+                  const guestName = titleCase(item.booking.guest_name || '');
+                  const propName = titleCase(item.property?.property_name || '');
+                  const last = i === items.length - 1;
+                  return (
+                    <div
+                      key={`${item.booking.id}-${spec.key}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        padding: '10px 0',
+                        borderTop: i === 0 ? '1px solid var(--border-light)' : 'none',
+                        borderBottom: last ? 'none' : '1px solid var(--border-light)',
+                      }}
+                    >
+                      <span className={`ops-status-pill ops-status-pill--${aud.variant}`} style={{ flexShrink: 0 }}>
+                        <span className="ops-status-pill-dot" />
+                        {aud.label}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: 'var(--text)' }}>{spec.label}</div>
+                        <div style={{
+                          fontSize: '0.8125rem',
+                          color: 'var(--text-secondary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {guestName || '—'} · {propName || '—'}
+                        </div>
                       </div>
+                      <div style={{
+                        flexShrink: 0,
+                        fontSize: '0.8125rem',
+                        fontWeight: 700,
+                        color: isOverdue ? 'var(--error)' : 'var(--text)',
+                      }}>
+                        {fmtDue(item.row.dueDate)}
+                      </div>
+                      <button className="btn btn-outline" style={{ flexShrink: 0 }} onClick={() => openDraft(item)}>
+                        Draft
+                      </button>
+                      <button className="btn btn-ghost" style={{ flexShrink: 0 }} onClick={() => setEditingBooking(item.booking)}>
+                        Open
+                      </button>
                     </div>
-                    <div style={{
-                      flexShrink: 0,
-                      fontSize: '0.8125rem',
-                      fontWeight: 700,
-                      color: isOverdue ? 'var(--error)' : 'var(--text)',
-                    }}>
-                      {fmtDue(item.row.dueDate)}
-                    </div>
-                    <button className="btn btn-outline" style={{ flexShrink: 0 }} onClick={() => openDraft(item)}>
-                      Draft
-                    </button>
-                    <button className="btn btn-ghost" style={{ flexShrink: 0 }} onClick={() => setEditingBooking(item.booking)}>
-                      Open
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })
-      )}
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
+      </div>
 
       {composer && (
         <EmailComposerModal
@@ -410,6 +420,6 @@ export default function ActionsDuePage() {
           partnerId={CT_RENTALS_PARTNER_ID}
         />
       )}
-    </div>
+    </>
   );
 }

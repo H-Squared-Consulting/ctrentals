@@ -21,6 +21,7 @@ import { useLayout } from '../contexts/LayoutContext';
 import { CT_RENTALS_PARTNER_ID } from './constants';
 import SendBrochurePicker from '../components/SendBrochurePicker';
 import BookingModal from './BookingModal';
+import ActionsDueSection from '../components/ActionsDueSection';
 
 interface TodayBookingRow {
   id: string;
@@ -316,6 +317,11 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* Actions due — the management-email queue across every confirmed
+          booking (owner/guest/agent emails due now). Lives here on the
+          dashboard rather than behind a separate nav item. */}
+      <ActionsDueSection />
 
       {/* Proposals to close — open chase queue. Mirrors the Responded
           column on the enquiries board: deals with at least one

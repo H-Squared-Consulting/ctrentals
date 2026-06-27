@@ -69,7 +69,6 @@ const NAV: NavItem[] = [
   // drafts). The /operations/proposals route still exists as a
   // redirect so stale bookmarks don't 404.
   { to: '/operations/bookings',    label: 'Bookings',   icon: '📅' },
-  { to: '/operations/actions',     label: 'Actions',    icon: '⏰' },
   { to: '/properties',             label: 'Properties', icon: '🏘', aliases: ['/brochures'] },
   { to: '/guidebooks',             label: 'Guidebooks', icon: '📖', restrictedTo: GUIDEBOOK_EMAILS },
   { to: '/crm/people',             label: 'People',     icon: '👥', aliases: ['/crm/home-owners'] },

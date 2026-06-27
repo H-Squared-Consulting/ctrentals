@@ -7,7 +7,6 @@ import PropertiesPage from './pages/PropertiesPage';
 import { EnquiryForm } from './pages/EnquiryForm';
 import EnquiryMatchPage from './pages/EnquiryMatchPage';
 import BookingCalendarPage from './pages/BookingCalendarPage';
-import ActionsDuePage from './pages/ActionsDuePage';
 import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 import Fab from './components/Fab';
@@ -218,7 +217,9 @@ export function App() {
       <Route path="/operations/proposals" element={<ProposalsRedirect />} />
       <Route path="/operations/pipeline" element={<Navigate to="/operations/enquiries" replace />} />
       <Route path="/operations/bookings" element={<Page><BookingCalendarPage /></Page>} />
-      <Route path="/operations/actions" element={<Page><ActionsDuePage /></Page>} />
+      {/* Actions-due queue now lives on the dashboard; redirect the old
+          standalone route so stale bookmarks land on Home. */}
+      <Route path="/operations/actions" element={<Navigate to="/dashboard" replace />} />
 
       {/* CRM */}
       <Route path="/crm" element={<Navigate to="/crm/guests" replace />} />
