@@ -21,6 +21,9 @@ import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
 import BookingManagementSection from '../components/BookingManagementSection';
+import { nightsBetween } from '../lib/nights';
+import { fmtRand } from '../lib/pricingEngine';
+import { useNavigate } from 'react-router-dom';
 
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
@@ -141,6 +144,28 @@ export default function BookingModal({
     })();
     return () => { cancelled = true; };
   }, [supabase, partnerId]);
+
+  // Source proposal — for bookings that came through the platform (an accepted
+  // proposal created the booking), surface where the pricing came from so it's
+  // traceable. Read-only; skipped for new bookings and imports (no enquiry_id).
+  const navigate = useNavigate();
+  const [sourceProposal, setSourceProposal] = useState<any | null>(null);
+  useEffect(() => {
+    if (isNew || !booking.enquiry_id) { setSourceProposal(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('proposals')
+        .select('id, ref_code, status, accepted_at, pricing_proposal_id, pricing_proposals(client_price_excl_vat)')
+        .eq('enquiry_id', booking.enquiry_id)
+        .in('status', ['accepted', 'booked'])
+        .order('accepted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!cancelled) setSourceProposal(data || null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, isNew, booking.enquiry_id]);
 
   // New bookings opened from a gap click come pre-filled with property +
   // dates, so form === initialForm at mount and Save would stay disabled
@@ -620,7 +645,7 @@ export default function BookingModal({
         <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px 14px' }}>
             <div className="form-group">
-              <label className="form-label">Total amount</label>
+              <label className="form-label">Daily rate</label>
               <input
                 type="number"
                 className="form-input"
@@ -631,15 +656,15 @@ export default function BookingModal({
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Balance due</label>
-              <input
-                type="number"
-                className="form-input"
-                value={form.balance_due}
-                onChange={(e) => setForm({ ...form, balance_due: e.target.value })}
-                min={0}
-                step="0.01"
-              />
+              <label className="form-label">Total</label>
+              <div className="form-input" style={{ background: 'var(--bg)', display: 'flex', alignItems: 'center', fontWeight: 600 }}>
+                {(() => {
+                  const n = nightsBetween(form.check_in, form.check_out);
+                  const r = form.total_amount !== '' ? Number(form.total_amount) : null;
+                  if (r == null || !Number.isFinite(r) || !n || n <= 0) return '—';
+                  return `${fmtRand(r * n)} · ${n} night${n === 1 ? '' : 's'} × ${fmtRand(r)}`;
+                })()}
+              </div>
             </div>
             <div className="form-group">
               <label className="form-label">Currency</label>
@@ -656,6 +681,43 @@ export default function BookingModal({
             </div>
           </div>
         </fieldset>
+        {/* Pricing source — for platform bookings (created from an accepted
+            proposal) show where the rate came from, with a link to the deal.
+            Outside the fieldset so the link works in view mode too. */}
+        {!isNew && (
+          booking.enquiry_id ? (
+            sourceProposal ? (
+              <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>
+                  Pricing from proposal{' '}
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--color-primary)' }}>{sourceProposal.ref_code}</span>
+                  {(() => {
+                    const pp = Array.isArray(sourceProposal.pricing_proposals) ? sourceProposal.pricing_proposals[0] : sourceProposal.pricing_proposals;
+                    const cp = pp?.client_price_excl_vat;
+                    return cp != null ? <> · {fmtRand(Number(cp))}/night</> : null;
+                  })()}
+                  {sourceProposal.accepted_at && <> · accepted {new Date(sourceProposal.accepted_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}</>}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => navigate('/operations/enquiries?deal=' + encodeURIComponent(booking.enquiry_id))}
+                >
+                  View proposal →
+                </button>
+              </div>
+            ) : (
+              <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Linked to an enquiry — accepted proposal not found.
+              </div>
+            )
+          ) : (
+            <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Manually entered — no linked proposal.
+            </div>
+          )
+        )}
       </DetailModalSection>
       )}
 

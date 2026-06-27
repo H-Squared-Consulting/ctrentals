@@ -487,9 +487,13 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
 
   // Stay figures.
   const nights = nightsBetween(booking?.check_in, booking?.check_out);
-  const total = toNumber(booking?.total_amount);
+  // total_amount stores the PER-NIGHT rate (not a full total) — both the accept
+  // flow (client_price_excl_vat) and the legacy imports hold per-night. The
+  // real total is rate × nights.
+  const perNight = toNumber(booking?.total_amount);
   const balance = toNumber(booking?.balance_due);
-  const nightlyRate = nights && nights > 0 && total != null ? fmtRand(total / nights) : '';
+  const nightlyRate = perNight != null ? fmtRand(perNight) : '';
+  const totalPrice = perNight != null && nights && nights > 0 ? fmtRand(perNight * nights) : '';
 
   // Guest counts.
   const adults = toNumber(booking?.guests_adults);
@@ -537,7 +541,7 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
     check_out: formatLongDate(booking?.check_out),
     nights: nights != null ? String(nights) : '',
     nightly_rate: nightlyRate,
-    total_amount: total != null ? fmtRand(total) : '',
+    total_amount: totalPrice,
     balance_due: balance != null ? fmtRand(balance) : '',
 
     // Property
@@ -603,8 +607,8 @@ export const VARIABLE_CATALOG: VariableInfo[] = [
   { key: 'check_in', label: 'Check-in date', audiences: ['guest', 'owner', 'agent'] },
   { key: 'check_out', label: 'Check-out date', audiences: ['guest', 'owner', 'agent'] },
   { key: 'nights', label: 'Nights', audiences: ['guest', 'owner', 'agent'] },
-  { key: 'nightly_rate', label: 'Nightly rate', audiences: ['guest', 'owner', 'agent'] },
-  { key: 'total_amount', label: 'Total amount', audiences: ['guest', 'owner', 'agent'] },
+  { key: 'nightly_rate', label: 'Rate per night', audiences: ['guest', 'owner', 'agent'] },
+  { key: 'total_amount', label: 'Total (rate × nights)', audiences: ['guest', 'owner', 'agent'] },
   { key: 'balance_due', label: 'Balance due', audiences: ['guest', 'owner', 'agent'] },
 
   // Property

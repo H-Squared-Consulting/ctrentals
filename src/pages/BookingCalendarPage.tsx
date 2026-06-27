@@ -1203,7 +1203,8 @@ function BookingsList({
       check_in: b.check_in,
       check_out: b.check_out,
       nights: nightsBetween(b.check_in, b.check_out) ?? 0,
-      total: Number(b.total_amount) || 0,
+      // total_amount is the per-night rate; the booking total is rate × nights.
+      total: (Number(b.total_amount) || 0) * (nightsBetween(b.check_in, b.check_out) ?? 0),
       status: b.status,
       isBlock,
       ref: (b.id || '').slice(0, 8),
