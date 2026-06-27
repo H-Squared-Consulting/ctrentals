@@ -1,8 +1,6 @@
 /**
- * ActionsDueSection — the management-email action queue, rendered as a
- * single dashboard card on the Home page (it used to be a standalone
- * Operations → Actions page; folded in here so the daily to-do list lives
- * on the landing page rather than behind another click).
+ * ActionsDueSection — the management-email action queue, rendered as the
+ * left ("work") column of the Home command-center dashboard.
  *
  * One global queue across every confirmed booking: the management-email
  * sequence (owner confirmations, guest welcome / pre-arrival / deposit /
@@ -13,6 +11,11 @@
  * mark yet. We load a window of bookings (check_out ≥ today−14d, check_in ≤
  * today+60d), build each booking's actions, keep the pending ones, and bucket
  * them by urgency into Overdue / Today / This week.
+ *
+ * UX: the active bucket is a tab (controlled by the parent so the dashboard
+ * KPI chips can switch it); an audience dropdown narrows to Owners / Guests /
+ * Agents; the list caps at CAP rows with a Show-more expander. Bucket counts
+ * are reported up via onCounts so the KPI strip stays in sync.
  *
  * Draft opens the shared EmailComposerModal pre-filled from the DB template
  * rendered with live booking variables; Mark as Sent writes a mark and the
@@ -39,6 +42,17 @@ import type {
 import { loadParticipantsBulk, loadStaffSettings } from '../lib/bookingParticipants';
 import EmailComposerModal from './EmailComposerModal';
 import BookingModal from '../pages/BookingModal';
+
+/** The three actionable urgency buckets, in priority order. */
+export type ActionsBucket = 'overdue' | 'today' | 'this_week';
+
+/** Live counts reported up to the dashboard KPI strip. */
+export interface ActionsCounts {
+  overdue: number;
+  today: number;
+  this_week: number;
+  total: number;
+}
 
 interface Property {
   id: string;
@@ -69,6 +83,14 @@ interface ComposerState {
   whatsapp: boolean;
 }
 
+interface Props {
+  /** Active bucket — controlled by the parent so KPI chips can switch it. */
+  tab: ActionsBucket;
+  onTabChange: (t: ActionsBucket) => void;
+  /** Fires whenever the bucket counts change, to feed the KPI strip. */
+  onCounts?: (c: ActionsCounts) => void;
+}
+
 function titleCase(s: string | null | undefined): string {
   if (!s) return '';
   return s.toLowerCase().replace(/(?:^|[\s\-'])\S/g, c => c.toUpperCase());
@@ -97,18 +119,36 @@ const AUDIENCE_PILL: Record<Audience, { variant: string; label: string }> = {
   agent: { variant: 'sent', label: 'Agent' },
 };
 
-const BUCKETS: Array<{ key: 'overdue' | 'today' | 'this_week'; label: string }> = [
+const TAB_META: Array<{ key: ActionsBucket; label: string }> = [
   { key: 'overdue', label: 'Overdue' },
   { key: 'today', label: 'Today' },
   { key: 'this_week', label: 'This week' },
 ];
 
-export default function ActionsDueSection() {
+const AUDIENCE_FILTERS: Array<{ key: 'all' | Audience; label: string }> = [
+  { key: 'all', label: 'Everyone' },
+  { key: 'owner', label: 'Owners' },
+  { key: 'guest', label: 'Guests' },
+  { key: 'agent', label: 'Agents' },
+];
+
+const EMPTY_COPY: Record<ActionsBucket, string> = {
+  overdue: 'Nothing overdue. You’re on top of it.',
+  today: 'Nothing due today.',
+  this_week: 'Nothing due in the next week.',
+};
+
+/** Cap the list so the dashboard stays scannable; the rest is one click away. */
+const CAP = 12;
+
+export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props) {
   const { supabase, user } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [audience, setAudience] = useState<'all' | Audience>('all');
+  const [expanded, setExpanded] = useState(false);
 
   // Resolved-participant + config lookups, kept in state so Draft can build
   // variables lazily (only the item the user clicks) rather than rendering an
@@ -208,15 +248,16 @@ export default function ActionsDueSection() {
       setProperties(propRows);
       setQueue(items);
     } catch (err) {
-      console.error(err);
+      console.error('ActionsDueSection load failed:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { if (supabase) loadData(); /* eslint-disable-next-line */ }, [supabase]);
 
   const grouped = useMemo(() => {
-    const g: Record<'overdue' | 'today' | 'this_week', QueueItem[]> = { overdue: [], today: [], this_week: [] };
+    const g: Record<ActionsBucket, QueueItem[]> = { overdue: [], today: [], this_week: [] };
     for (const it of queue) {
       if (it.row.urgency === 'overdue' || it.row.urgency === 'today' || it.row.urgency === 'this_week') {
         g[it.row.urgency].push(it);
@@ -224,6 +265,28 @@ export default function ActionsDueSection() {
     }
     return g;
   }, [queue]);
+
+  // Report bucket counts up to the dashboard KPI strip.
+  useEffect(() => {
+    onCounts?.({
+      overdue: grouped.overdue.length,
+      today: grouped.today.length,
+      this_week: grouped.this_week.length,
+      total: grouped.overdue.length + grouped.today.length + grouped.this_week.length,
+    });
+  }, [grouped, onCounts]);
+
+  // Collapse the show-more expander whenever the view changes.
+  useEffect(() => { setExpanded(false); }, [tab, audience]);
+
+  const tabItems = grouped[tab];
+  const filtered = useMemo(
+    () => (audience === 'all' ? tabItems : tabItems.filter(it => it.row.spec.audience === audience)),
+    [tabItems, audience],
+  );
+  const visible = expanded ? filtered : filtered.slice(0, CAP);
+  const hiddenCount = filtered.length - visible.length;
+  const totalPending = grouped.overdue.length + grouped.today.length + grouped.this_week.length;
 
   function openDraft(item: QueueItem) {
     if (!staff) return;
@@ -284,104 +347,156 @@ export default function ActionsDueSection() {
 
   return (
     <>
-      <div className="card" style={{ padding: 20 }}>
-        <div
-          className="detail-modal-section-heading"
-          style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}
-        >
+      <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Heading + total badge */}
+        <div className="detail-modal-section-heading" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>Actions due</span>
-          {!loading && queue.length > 0 && (
+          {!loading && totalPending > 0 && (
             <span style={{
               display: 'inline-block', padding: '2px 10px', borderRadius: 12,
               fontSize: '0.75rem', fontWeight: 700,
-              background: '#FEF3C7', color: '#92400E',
+              background: 'var(--warning-bg)', color: 'var(--warning)',
             }}>
-              {queue.length}
+              {totalPending}
             </span>
           )}
         </div>
 
+        {/* Tabs (bucket) + audience filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+            {TAB_META.map(t => {
+              const count = grouped[t.key].length;
+              const active = t.key === tab;
+              const isOverdue = t.key === 'overdue';
+              const activeBg = isOverdue ? 'var(--error)' : 'var(--color-primary)';
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => onTabChange(t.key)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7,
+                    padding: '6px 12px', borderRadius: 999,
+                    fontSize: '0.8125rem', fontWeight: 700, cursor: 'pointer',
+                    border: active ? '1px solid transparent' : '1px solid var(--border)',
+                    background: active ? activeBg : 'var(--surface)',
+                    color: active ? '#fff' : 'var(--text)',
+                    transition: 'var(--transition)',
+                  }}
+                >
+                  {t.label}
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999,
+                    fontSize: '0.6875rem', fontWeight: 700,
+                    background: active ? 'rgba(255,255,255,0.24)' : (isOverdue && count > 0 ? 'var(--error-bg)' : 'var(--bg)'),
+                    color: active ? '#fff' : (isOverdue && count > 0 ? 'var(--error)' : 'var(--text-secondary)'),
+                  }}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ flex: 1 }} />
+          <select
+            className="list-filter-select"
+            value={audience}
+            onChange={(e) => setAudience(e.target.value as 'all' | Audience)}
+            aria-label="Filter actions by audience"
+          >
+            {AUDIENCE_FILTERS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
+          </select>
+        </div>
+
+        {/* List */}
         {loading && queue.length === 0 ? (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Loading…</div>
-        ) : queue.length === 0 ? (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-            You're all caught up — no actions due this week.
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', padding: '8px 0' }}>Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', padding: '16px 0', textAlign: 'center' }}>
+            {audience === 'all'
+              ? EMPTY_COPY[tab]
+              : `No ${AUDIENCE_FILTERS.find(a => a.key === audience)?.label.toLowerCase()} actions in this view.`}
           </div>
         ) : (
-          BUCKETS.map(bucket => {
-            const items = grouped[bucket.key];
-            if (!items.length) return null;
-            const isOverdue = bucket.key === 'overdue';
-            return (
-              <div key={bucket.key} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
-                  <h3 style={{
-                    margin: 0,
-                    fontSize: '0.6875rem',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
+          <div>
+            {visible.map((item, i) => {
+              const spec = item.row.spec;
+              const aud = AUDIENCE_PILL[spec.audience];
+              const guestName = titleCase(item.booking.guest_name || '');
+              const propName = titleCase(item.property?.property_name || '');
+              const isOverdue = item.row.urgency === 'overdue';
+              return (
+                <div
+                  key={`${item.booking.id}-${spec.key}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '11px 0',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border-light)',
+                  }}
+                >
+                  <span className={`ops-status-pill ops-status-pill--${aud.variant}`} style={{ flexShrink: 0 }}>
+                    <span className="ops-status-pill-dot" />
+                    {aud.label}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: 'var(--text)' }}>{spec.label}</div>
+                    <div style={{
+                      fontSize: '0.8125rem',
+                      color: 'var(--text-secondary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {guestName || '—'} · {propName || '—'}
+                    </div>
+                  </div>
+                  <div style={{
+                    flexShrink: 0,
+                    fontSize: '0.8125rem',
                     fontWeight: 700,
+                    minWidth: 54,
+                    textAlign: 'right',
                     color: isOverdue ? 'var(--error)' : 'var(--text)',
                   }}>
-                    {bucket.label}
-                  </h3>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{items.length}</span>
+                    {fmtDue(item.row.dueDate)}
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flexShrink: 0, fontSize: '0.75rem', padding: '5px 12px' }}
+                    onClick={() => openDraft(item)}
+                  >
+                    Draft
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ flexShrink: 0, fontSize: '0.75rem', padding: '5px 8px' }}
+                    onClick={() => setEditingBooking(item.booking)}
+                  >
+                    Open
+                  </button>
                 </div>
+              );
+            })}
 
-                {items.map((item, i) => {
-                  const spec = item.row.spec;
-                  const aud = AUDIENCE_PILL[spec.audience];
-                  const guestName = titleCase(item.booking.guest_name || '');
-                  const propName = titleCase(item.property?.property_name || '');
-                  const last = i === items.length - 1;
-                  return (
-                    <div
-                      key={`${item.booking.id}-${spec.key}`}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        padding: '10px 0',
-                        borderTop: i === 0 ? '1px solid var(--border-light)' : 'none',
-                        borderBottom: last ? 'none' : '1px solid var(--border-light)',
-                      }}
-                    >
-                      <span className={`ops-status-pill ops-status-pill--${aud.variant}`} style={{ flexShrink: 0 }}>
-                        <span className="ops-status-pill-dot" />
-                        {aud.label}
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, color: 'var(--text)' }}>{spec.label}</div>
-                        <div style={{
-                          fontSize: '0.8125rem',
-                          color: 'var(--text-secondary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}>
-                          {guestName || '—'} · {propName || '—'}
-                        </div>
-                      </div>
-                      <div style={{
-                        flexShrink: 0,
-                        fontSize: '0.8125rem',
-                        fontWeight: 700,
-                        color: isOverdue ? 'var(--error)' : 'var(--text)',
-                      }}>
-                        {fmtDue(item.row.dueDate)}
-                      </div>
-                      <button className="btn btn-outline" style={{ flexShrink: 0 }} onClick={() => openDraft(item)}>
-                        Draft
-                      </button>
-                      <button className="btn btn-ghost" style={{ flexShrink: 0 }} onClick={() => setEditingBooking(item.booking)}>
-                        Open
-                      </button>
-                    </div>
-                  );
-                })}
+            {hiddenCount > 0 && (
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 8, marginTop: 4 }}>
+                <button className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} onClick={() => setExpanded(true)}>
+                  Show {hiddenCount} more
+                </button>
               </div>
-            );
-          })
+            )}
+            {expanded && filtered.length > CAP && (
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 8, marginTop: 4 }}>
+                <button className="btn btn-ghost" style={{ fontSize: '0.8125rem' }} onClick={() => setExpanded(false)}>
+                  Show less
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
