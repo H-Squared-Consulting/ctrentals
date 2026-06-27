@@ -129,7 +129,7 @@ export default function BookingModal({
   // Details vs Communications tab. Only a saved real booking has comms;
   // the toggle/guards below fall back to details whenever comms isn't
   // available, so a stray defaultView='comms' can never strand the user.
-  const [view, setView] = useState<'details' | 'comms'>(defaultView === 'comms' ? 'comms' : 'details');
+  const [view, setView] = useState<'details' | 'comms' | 'requests'>(defaultView === 'comms' ? 'comms' : 'details');
   // Self-serve form answers (booking_details) + which share modal is open.
   const [bookingDetails, setBookingDetails] = useState<any | null>(null);
   const [shareForm, setShareForm] = useState<'guest' | 'agent' | null>(null);
@@ -450,7 +450,12 @@ export default function BookingModal({
   // tentative/cancelled bookings show details only, with no tab bar.
   const commsAvailable = !isNew && form.kind === 'booking'
     && form.status !== 'tentative' && form.status !== 'cancelled';
-  const detailsVisible = !commsAvailable || view === 'details';
+  // Requests (special requests + extras + self-serve forms) apply to any real
+  // booking — including a brand-new one being created.
+  const requestsAvailable = form.kind === 'booking';
+  const tabBarShown = commsAvailable || requestsAvailable;
+  const detailsVisible = !tabBarShown || view === 'details';
+  const requestsVisible = requestsAvailable && view === 'requests';
   const commsVisible = commsAvailable && view === 'comms';
 
   return (
@@ -472,7 +477,7 @@ export default function BookingModal({
       }
       onClose={onClose}
     >
-      {commsAvailable && (
+      {tabBarShown && (
         <div className="view-toggle" style={{ marginBottom: 16 }}>
           <button
             type="button"
@@ -481,13 +486,24 @@ export default function BookingModal({
           >
             Details
           </button>
-          <button
-            type="button"
-            className={`view-toggle-btn${view === 'comms' ? ' active' : ''}`}
-            onClick={() => setView('comms')}
-          >
-            ✉ Communications
-          </button>
+          {requestsAvailable && (
+            <button
+              type="button"
+              className={`view-toggle-btn${view === 'requests' ? ' active' : ''}`}
+              onClick={() => setView('requests')}
+            >
+              ✦ Requests
+            </button>
+          )}
+          {commsAvailable && (
+            <button
+              type="button"
+              className={`view-toggle-btn${view === 'comms' ? ' active' : ''}`}
+              onClick={() => setView('comms')}
+            >
+              ✉ Communications
+            </button>
+          )}
         </div>
       )}
 
@@ -814,15 +830,22 @@ export default function BookingModal({
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Extras</label>
-            <input
-              type="text"
+            <label className="form-label">Notes</label>
+            <textarea
               className="form-input"
-              value={form.extras}
-              onChange={(e) => setForm({ ...form, extras: e.target.value })}
-              placeholder="e.g. cot, bath, linen"
+              rows={3}
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Internal notes…"
             />
           </div>
+        </fieldset>
+      </DetailModalSection>
+      </>)}
+
+      {requestsVisible && (<>
+      <DetailModalSection heading="Special requests">
+        <fieldset disabled={fieldsDisabled} className="form-fieldset-reset">
           <div className="form-group">
             <label className="form-label">Special requests</label>
             <textarea
@@ -834,13 +857,13 @@ export default function BookingModal({
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Notes</label>
-            <textarea
+            <label className="form-label">Extras</label>
+            <input
+              type="text"
               className="form-input"
-              rows={3}
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              placeholder="Internal notes…"
+              value={form.extras}
+              onChange={(e) => setForm({ ...form, extras: e.target.value })}
+              placeholder="e.g. cot, bath, linen"
             />
           </div>
         </fieldset>
