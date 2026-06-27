@@ -2748,6 +2748,7 @@ function DealCardImpl({
   compact?: boolean;
   highlighted?: boolean;
 }) {
+  const navigate = useNavigate();
   const isClosed = closed || stage === 'won' || stage === 'lost';
   const isStale = stage === 'new' && daysSince(deal.created_at) >= STALE_DAYS;
   const isStalled = stage === 'stalled';
@@ -3116,6 +3117,20 @@ function DealCardImpl({
               return <span className={`ops-board-card-days ${cls}`}>{days}d</span>;
             })()}
       </div>
+      )}
+
+      {/* Booked cards: jump straight to this enquiry's booking on the
+          Bookings page (opens its booking modal via ?enquiry=<id>). */}
+      {isBooked && deal.enquiry?.id && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ marginTop: 8, width: '100%', justifyContent: 'center', fontSize: '0.6875rem', padding: '3px 8px' }}
+          onClick={stop(() => navigate('/operations/bookings?enquiry=' + encodeURIComponent(deal.enquiry?.id ?? '')))}
+          title="Open this booking on the Bookings page"
+        >
+          🏠 Open booking →
+        </button>
       )}
 
       {/* Manual close reason — captured via the Set stage prompt and
@@ -3684,6 +3699,8 @@ function DealDetailModal({
     check_in: e?.check_in ?? standaloneProp?.check_in ?? '',
     check_out: e?.check_out ?? standaloneProp?.check_out ?? '',
     guests_total: e?.guests_total ?? standaloneProp?.guests_total ?? null,
+    guests_adults: e?.guests_adults ?? null,
+    guests_children: e?.guests_children ?? null,
     bedrooms_needed: e?.bedrooms_needed ?? null,
     /** Multi-select option arrays. Seed from the row when present;
      *  otherwise wrap the legacy single value so the edit UX is
@@ -3793,6 +3810,8 @@ function DealDetailModal({
         // view) still get a usable single value, while the arrays
         // power the tighter property match .in() filter.
         guests_total:     form.guests_total ?? 1,
+        guests_adults:    form.guests_adults ?? null,
+        guests_children:  form.guests_children ?? null,
         // bedrooms_needed mirrors the smallest of the multi-select so legacy
         // single-value readers keep working; null when no bedroom filter
         // was set so the match modal treats it as "any" rather than
@@ -4381,6 +4400,32 @@ function DealDetailModal({
                     ))}
                   </select>
                 </div>
+                {e && (
+                  <div className="form-group">
+                    <label className="form-label">Adults</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={0}
+                      value={form.guests_adults ?? ''}
+                      onChange={ev => update('guests_adults', ev.target.value === '' ? null : Number(ev.target.value))}
+                      placeholder="—"
+                    />
+                  </div>
+                )}
+                {e && (
+                  <div className="form-group">
+                    <label className="form-label">Children</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={0}
+                      value={form.guests_children ?? ''}
+                      onChange={ev => update('guests_children', ev.target.value === '' ? null : Number(ev.target.value))}
+                      placeholder="—"
+                    />
+                  </div>
+                )}
                 {e && (
                   <div className="form-group">
                     <label className="form-label">Bedrooms needed</label>

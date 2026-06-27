@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLayout } from '../contexts/LayoutContext';
 import type { Booking } from '../types';
@@ -80,6 +80,7 @@ export default function BookingCalendarPage() {
   const { supabase, user } = useAuth();
   const { setPageTitle } = useLayout();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Deep-link from the property card "📅 Bookings" button:
   // /operations/bookings?view=calendar&propertyId=<id>. The view query
@@ -214,6 +215,19 @@ export default function BookingCalendarPage() {
     setLoading(false);
   }
   useEffect(() => { if (supabase) loadData(); /* eslint-disable-next-line */ }, [supabase]);
+
+  // Deep-link from a Booked Kanban card: /operations/bookings?enquiry=<id>
+  // opens that enquiry's booking modal once bookings have loaded. Fires once
+  // (ref-guarded); the param is then cleared so a refresh/back doesn't re-open.
+  const enquiryParam = searchParams.get('enquiry');
+  const enquiryOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!enquiryParam || enquiryOpenedRef.current || loading || !bookings.length) return;
+    enquiryOpenedRef.current = true;
+    const match = bookings.find((b) => (b as any).enquiry_id === enquiryParam);
+    if (match) setEditingBooking(match);
+    navigate('/operations/bookings', { replace: true });
+  }, [enquiryParam, bookings, loading, navigate]);
 
   const suburbs = useMemo(() => {
     const s = new Set<string>();
