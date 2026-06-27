@@ -25,6 +25,7 @@ import { initialsForEmail, INITIALS_TO_NAME } from '../lib/userInitials';
 import {
   resolveBookingChannel,
   buildBookingActions,
+  currentStepActions,
   buildBookingVars,
   renderEmail,
   type Audience,
@@ -227,16 +228,11 @@ export default function BookingManagementSection({
     () => buildBookingActions(booking, enquiry, marks, todayISO),
     [booking, enquiry, marks, todayISO],
   );
-  // "Due" = the emails that actually need sending now: still pending, and
-  // overdue / due today / due this week. Upcoming (not yet due) and
-  // already-sent steps are hidden until you flip to All.
-  const dueRows = useMemo(
-    () => rows.filter(
-      r => r.status !== 'sent'
-        && (r.urgency === 'overdue' || r.urgency === 'today' || r.urgency === 'this_week'),
-    ),
-    [rows],
-  );
+  // "Due" = the CURRENT STEP only — the one email (or same-day set) the
+  // booking is at right now. If several steps are overdue (e.g. a finished
+  // stay) we surface only the most-advanced one; the earlier missed steps
+  // fall away and remain available under All. See currentStepActions.
+  const dueRows = useMemo(() => currentStepActions(rows), [rows]);
   const visibleRows = filter === 'due' ? dueRows : rows;
 
   /** Recipient contact for a step, by audience. Emails lower-cased, names

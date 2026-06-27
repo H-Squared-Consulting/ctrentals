@@ -396,6 +396,53 @@ export function buildBookingActions(
   return rows;
 }
 
+/**
+ * Reduce a booking's full checklist to just the CURRENT STEP — the email
+ * (or same-day set) that actually needs sending right now.
+ *
+ * A booking's emails are a time sequence. If several are overdue (e.g. a stay
+ * that has already happened) we deliberately do NOT surface the whole backlog
+ * — nobody sends a "welcome" or "pre-arrival" to a guest who has already been
+ * and gone. Earlier missed steps fall away; the full sequence is still
+ * reachable via the Communications "All" view.
+ *
+ * Rule:
+ *   1. Only pending rows count (sent/skipped are done).
+ *   2. "Arrived" = pending rows whose date has come (overdue or today). If any
+ *      exist, return those sharing the LATEST due date — the most-advanced
+ *      step — and drop the earlier overdue ones. Same-day ties (e.g.
+ *      owner_confirmation + guest_welcome, both on confirm) stay together.
+ *   3. Otherwise, if any pending rows are due this week, return those sharing
+ *      the EARLIEST such due date — the soonest upcoming step.
+ *   4. Otherwise nothing is due now (the next step is further out): return [].
+ */
+export function currentStepActions(rows: BookingActionRow[]): BookingActionRow[] {
+  const pending = (rows || []).filter(r => r.status === 'pending');
+  if (pending.length === 0) return [];
+
+  const arrived = pending.filter(r => r.urgency === 'overdue' || r.urgency === 'today');
+  if (arrived.length > 0) {
+    const latest = arrived.reduce<string | null>((max, r) => {
+      if (r.dueDate == null) return max;
+      if (max == null) return r.dueDate;
+      return r.dueDate > max ? r.dueDate : max;
+    }, null);
+    return arrived.filter(r => r.dueDate === latest);
+  }
+
+  const thisWeek = pending.filter(r => r.urgency === 'this_week');
+  if (thisWeek.length > 0) {
+    const earliest = thisWeek.reduce<string | null>((min, r) => {
+      if (r.dueDate == null) return min;
+      if (min == null) return r.dueDate;
+      return r.dueDate < min ? r.dueDate : min;
+    }, null);
+    return thisWeek.filter(r => r.dueDate === earliest);
+  }
+
+  return [];
+}
+
 // ─── Variable catalog ───────────────────────────────────────────────────
 
 /** Pull a free-text value off `booking.extras` if it's stored there, else

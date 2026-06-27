@@ -28,6 +28,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { CT_RENTALS_PARTNER_ID } from '../pages/constants';
 import {
   buildBookingActions,
+  currentStepActions,
   resolveBookingChannel,
 } from '../lib/managementEmails';
 import type { Audience, BookingActionRow, BookingChannel } from '../lib/managementEmails';
@@ -190,11 +191,13 @@ export default function ActionsDueSection({ tab, onTabChange, onCounts }: Props)
         const channel = resolveBookingChannel(booking, enquiry);
         const marks = bulk.marksByBooking.get(booking.id) || {};
         const actions = buildBookingActions(booking, enquiry, marks, todayISO);
-        for (const row of actions) {
-          if (row.status !== 'pending') continue;
-          // Upcoming items aren't actionable yet — the queue is strictly
-          // overdue / today / this-week so it stays a real to-do list.
-          if (row.urgency !== 'overdue' && row.urgency !== 'today' && row.urgency !== 'this_week') continue;
+        // CURRENT STEP ONLY: surface just the email this booking is at right
+        // now (the most-advanced arrived step, else the soonest this-week one).
+        // currentStepActions returns rows that all share one due date, so a
+        // booking lands in exactly one bucket and counts once there — instead
+        // of dumping its whole overdue backlog onto the queue. This keeps the
+        // dashboard in lockstep with the booking's Communications "Due" view.
+        for (const row of currentStepActions(actions)) {
           items.push({ booking, property: propById.get(booking.property_id) ?? null, channel, row });
         }
       }
