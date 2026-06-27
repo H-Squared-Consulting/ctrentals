@@ -532,6 +532,9 @@ export function buildBookingVars(args: BuildVarsArgs): Record<string, string> {
     guest_first_name: firstNameOf(guestFullRaw),
     guest_email: lc(booking?.guest_email),
     guest_phone: booking?.guest_phone ?? '',
+    // Templates use {{adults}}/{{children}}; keep guests_* as aliases.
+    adults: adults != null ? String(adults) : '',
+    children: children != null ? String(children) : '',
     guests_adults: adults != null ? String(adults) : '',
     guests_children: children != null ? String(children) : '',
     guests_total: totalGuests != null ? String(totalGuests) : '',
@@ -599,8 +602,8 @@ export const VARIABLE_CATALOG: VariableInfo[] = [
   // Guest
   { key: 'guest_name', label: 'Guest name', audiences: ['guest', 'owner', 'agent'] },
   { key: 'guest_first_name', label: 'Guest first name', audiences: ['guest'] },
-  { key: 'guests_adults', label: 'Adults', audiences: ['guest', 'owner', 'agent'] },
-  { key: 'guests_children', label: 'Children', audiences: ['guest', 'owner', 'agent'] },
+  { key: 'adults', label: 'Adults', audiences: ['guest', 'owner', 'agent'] },
+  { key: 'children', label: 'Children', audiences: ['guest', 'owner', 'agent'] },
   { key: 'guests_total', label: 'Total guests', audiences: ['guest', 'owner', 'agent'] },
 
   // Stay
