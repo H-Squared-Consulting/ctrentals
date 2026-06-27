@@ -1125,7 +1125,7 @@ export default function PipelinePage() {
         .select('id')
         .eq('enquiry_id', deal.enquiry.id)
         .maybeSingle();
-      if (existing.data) return;
+      if (existing.data) return existing.data.id as string;
     }
     // Pick the most-recently-active proposal as the booking source. Falls
     // back to whatever's first so we always have a property + price.
@@ -1134,10 +1134,10 @@ export default function PipelinePage() {
         ['interested', 'sent', 'viewed', 'accepted', 'booked'].includes(p.status),
       ) ||
       deal.proposals[0];
-    if (!featured) return;
+    if (!featured) return null;
 
     const e = deal.enquiry;
-    await supabase.from('bookings').insert({
+    const { data: inserted } = await supabase.from('bookings').insert({
       partner_id: CT_RENTALS_PARTNER_ID,
       property_id: featured.property_id,
       enquiry_id: e?.id ?? null,
@@ -1155,7 +1155,8 @@ export default function PipelinePage() {
       currency: 'ZAR',
       status: 'confirmed',
       confirmed_at: new Date().toISOString(),
-    });
+    }).select('id').single();
+    return inserted?.id ?? null;
   }
 
   async function updateEnquiryStatus(enquiryId: string, status: string) {
@@ -1170,7 +1171,29 @@ export default function PipelinePage() {
       .eq('id', enquiryId);
     if (status === 'booked') {
       const deal = deals.find(d => d.enquiry?.id === enquiryId);
-      if (deal) await createBookingFromDeal(deal);
+      const bookingId = deal ? await createBookingFromDeal(deal) : null;
+      // Same confirmation-email prompt as the proposal-modal Accept path:
+      // open the booking on its Communications (Due) tab so staff send the
+      // owner confirmation + guest/agent first email straight away.
+      if (bookingId) {
+        try {
+          const [bkRes, propRes] = await Promise.all([
+            supabase.from('bookings').select('*').eq('id', bookingId).single(),
+            supabase
+              .from('partner_properties')
+              .select('id, slug, property_name, bedrooms, suburb, is_published')
+              .eq('partner_id', CT_RENTALS_PARTNER_ID)
+              .order('property_name'),
+          ]);
+          if (bkRes.data) {
+            setConfirmProperties(propRes.data || []);
+            setConfirmBooking(bkRes.data);
+            toast.success('Booking confirmed — send the confirmation email.');
+          }
+        } catch (err) {
+          console.error('Failed to open confirmation-email prompt', err);
+        }
+      }
     }
     // Mirror to the enquiry's sole proposal (1:1 case) so Mark Booked /
     // Cancelled flips the proposal's status the same direction.
