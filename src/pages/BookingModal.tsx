@@ -20,6 +20,7 @@ import DetailModal, { DetailModalSection } from '../components/DetailModal';
 import NightCount from '../components/NightCount';
 import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from './constants';
 import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
+import { resolveOwnerForProperty } from '../lib/bookingParticipants';
 import BookingManagementSection from '../components/BookingManagementSection';
 import { nightsBetween } from '../lib/nights';
 import { fmtRand } from '../lib/pricingEngine';
@@ -167,6 +168,30 @@ export default function BookingModal({
     })();
     return () => { cancelled = true; };
   }, [supabase, isNew, booking.enquiry_id]);
+
+  // Resolve the property's primary owner so the modal SHOWS who owner emails
+  // go to — the same source the email engine uses (resolveOwnerForProperty).
+  // Re-runs when the property changes. Read-only here; owners are managed on
+  // the property itself (Properties → owners).
+  const [bookingOwner, setBookingOwner] = useState<any | null>(null);
+  const [ownerLoading, setOwnerLoading] = useState(false);
+  useEffect(() => {
+    if (form.kind === 'block' || !form.property_id) { setBookingOwner(null); return; }
+    let cancelled = false;
+    setOwnerLoading(true);
+    (async () => {
+      try {
+        const o = await resolveOwnerForProperty(supabase, form.property_id);
+        if (!cancelled) setBookingOwner(o);
+      } catch {
+        if (!cancelled) setBookingOwner(null);
+      } finally {
+        if (!cancelled) setOwnerLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, form.property_id, form.kind]);
 
   // New bookings opened from a gap click come pre-filled with property +
   // dates, so form === initialForm at mount and Save would stay disabled
@@ -478,6 +503,32 @@ export default function BookingModal({
               ))}
             </select>
           </div>
+          {form.kind === 'booking' && form.property_id && (
+            <div className="form-group">
+              <label className="form-label">Owner · receives owner emails</label>
+              <div style={{
+                padding: '8px 10px', background: 'var(--bg)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+              }}>
+                {ownerLoading ? (
+                  <span style={{ color: 'var(--text-secondary)' }}>Resolving owner…</span>
+                ) : bookingOwner ? (
+                  <>
+                    <span style={{ fontWeight: 600 }}>{titleCase(bookingOwner.name) || '—'}</span>
+                    {bookingOwner.email && (
+                      <span style={{ color: 'var(--text-secondary)' }}> · {bookingOwner.email.toLowerCase()}</span>
+                    )}
+                    <span style={{ color: 'var(--text-light)' }}> · primary owner of this property</span>
+                  </>
+                ) : (
+                  <span style={{ color: 'var(--warning)', fontWeight: 600 }}>
+                    No owner linked to this property — owner emails will have no recipient. Add one in Properties → owners.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           <div className="form-grid-2">
             <div className="form-group">
               <label className="form-label">Check in *</label>
