@@ -30,6 +30,7 @@ import PriceListPage from './pages/PriceListPage';
 import HomePage from './pages/HomePage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import AgentPortalPage from './pages/AgentPortalPage';
+import BookingFormPage from './pages/BookingFormPage';
 import GuidebookPage from './pages/GuidebookPage';
 import GuidebookEmergencyPage from './pages/GuidebookEmergencyPage';
 import GuidebookListPage from './pages/GuidebookListPage';
@@ -167,7 +168,10 @@ export function App() {
   // of which domain hosts the app.
   const isGuidebookRoute = typeof window !== 'undefined'
     && window.location.pathname.startsWith('/g/');
-  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute) {
+  // Public self-serve booking detail forms (/f/:token) render on any host too.
+  const isBookingFormRoute = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/f/');
+  if (!isAdminHost() && !isAgentPortalRoute && !isGuidebookRoute && !isBookingFormRoute) {
     return <ComingSoon />;
   }
 
@@ -180,6 +184,10 @@ export function App() {
       {/* Public agent self-service portal. Token-gated, no admin
           chrome, renders on any host (e.g. southernescapes.co.za/q/...). */}
       <Route path="/q/:token" element={<AgentPortalPage />} />
+
+      {/* Public self-serve booking detail form. Token-gated, no admin
+          chrome, renders on any host. Writes back into booking_details. */}
+      <Route path="/f/:token" element={<BookingFormPage />} />
 
       {/* Public per-property guidebook. Slug-addressed (e.g. /g/montrose-terrace),
           no auth, no admin chrome. RLS limits anon reads to is_published rows.

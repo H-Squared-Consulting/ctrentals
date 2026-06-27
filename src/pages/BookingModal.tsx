@@ -22,6 +22,7 @@ import { BOOKING_STATUS_OPTIONS, PLATFORM_OPTIONS, CT_RENTALS_PARTNER_ID } from 
 import { findBookingConflict, describeConflict } from '../lib/bookingConflicts';
 import { resolveOwnerForProperty } from '../lib/bookingParticipants';
 import BookingManagementSection from '../components/BookingManagementSection';
+import BookingFormShareModal from '../components/BookingFormShareModal';
 import { nightsBetween } from '../lib/nights';
 import { fmtRand } from '../lib/pricingEngine';
 import { useNavigate } from 'react-router-dom';
@@ -129,6 +130,9 @@ export default function BookingModal({
   // the toggle/guards below fall back to details whenever comms isn't
   // available, so a stray defaultView='comms' can never strand the user.
   const [view, setView] = useState<'details' | 'comms'>(defaultView === 'comms' ? 'comms' : 'details');
+  // Self-serve form answers (booking_details) + which share modal is open.
+  const [bookingDetails, setBookingDetails] = useState<any | null>(null);
+  const [shareForm, setShareForm] = useState<'guest' | 'agent' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -168,6 +172,17 @@ export default function BookingModal({
     })();
     return () => { cancelled = true; };
   }, [supabase, isNew, booking.enquiry_id]);
+
+  // Self-serve form answers — surfaced read-only in "Self-serve forms".
+  useEffect(() => {
+    if (isNew || !booking.id) { setBookingDetails(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('booking_details').select('*').eq('booking_id', booking.id).maybeSingle();
+      if (!cancelled) setBookingDetails(data ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, isNew, booking.id, shareForm]);
 
   // Resolve the property's primary owner so the modal SHOWS who owner emails
   // go to — the same source the email engine uses (resolveOwnerForProperty).
@@ -830,6 +845,25 @@ export default function BookingModal({
           </div>
         </fieldset>
       </DetailModalSection>
+
+      {form.kind === 'booking' && (
+      <DetailModalSection heading="Self-serve forms">
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+          Send the guest or agent a link to fill in their own details — flight times, check-in/out, deposit, etc. It writes straight back here.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <button type="button" className="btn btn-outline" disabled={isNew}
+            onClick={() => setShareForm('guest')} title={isNew ? 'Save the booking first' : 'Share a guest details link'}>
+            🔗 Send guest details form
+          </button>
+          <button type="button" className="btn btn-outline" disabled={isNew}
+            onClick={() => setShareForm('agent')} title={isNew ? 'Save the booking first' : 'Share an agent details link'}>
+            🔗 Send agent details form
+          </button>
+        </div>
+        {renderSubmittedDetails(bookingDetails)}
+      </DetailModalSection>
+      )}
       </>)}
 
       {commsVisible && (
@@ -841,6 +875,77 @@ export default function BookingModal({
           initialFilter={commsFilter ?? 'due'}
         />
       )}
+
+      {shareForm && !isNew && (
+        <BookingFormShareModal
+          bookingId={booking.id}
+          formType={shareForm}
+          recipientFirstName={shareForm === 'guest' && form.guest_name ? form.guest_name.split(' ')[0] : null}
+          recipientEmail={shareForm === 'guest' ? (form.guest_email || null) : null}
+          recipientPhone={shareForm === 'guest' ? (form.guest_phone || null) : null}
+          supabase={supabase}
+          onClose={() => setShareForm(null)}
+        />
+      )}
     </DetailModal>
+  );
+}
+
+/** Render the read-only "Submitted details" block from a booking_details row.
+ *  Hidden rows for blank/null values keep it tight. */
+function SubmittedRow({ label, value }: { label: string; value: any }) {
+  if (value === null || value === undefined || value === '') return null;
+  const display = typeof value === 'boolean' ? (value ? 'Yes' : '—') : String(value);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0', fontSize: '0.8125rem' }}>
+      <span className="form-label" style={{ margin: 0 }}>{label}</span>
+      <span style={{ fontWeight: 500, textAlign: 'right' }}>{display}</span>
+    </div>
+  );
+}
+
+function fmtSubmittedAt(d: string | null): string {
+  if (!d) return '';
+  try { return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; }
+}
+
+function renderSubmittedDetails(d: any) {
+  if (!d || (!d.guest_submitted_at && !d.agent_submitted_at)) {
+    return <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>No form responses yet.</div>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {d.guest_submitted_at && (
+        <div>
+          <div className="detail-modal-section-heading">From guest · {fmtSubmittedAt(d.guest_submitted_at)}</div>
+          <SubmittedRow label="Flight details" value={d.guest_flight_details} />
+          <SubmittedRow label="Check-in time" value={d.guest_check_in_time} />
+          <SubmittedRow label="Check-out time" value={d.guest_check_out_time} />
+          <SubmittedRow label="Weekend housekeeping" value={d.guest_weekend_housekeeping} />
+          <SubmittedRow label="Staff requirements" value={d.guest_staff_requirements} />
+          <SubmittedRow label="Cot" value={d.guest_baby_cot} />
+          <SubmittedRow label="High-chair" value={d.guest_baby_high_chair} />
+        </div>
+      )}
+      {d.agent_submitted_at && (
+        <div>
+          <div className="detail-modal-section-heading">From agent · {fmtSubmittedAt(d.agent_submitted_at)}</div>
+          <SubmittedRow label="Guest name" value={d.agent_guest_name} />
+          <SubmittedRow label="No. of guests" value={d.agent_guests_count} />
+          <SubmittedRow label="Dates" value={d.agent_check_in && d.agent_check_out ? `${d.agent_check_in} → ${d.agent_check_out}` : null} />
+          <SubmittedRow label="House" value={d.agent_house} />
+          <SubmittedRow label="Contact number" value={d.agent_contact_number} />
+          <SubmittedRow label="Flight details" value={d.agent_flight_details} />
+          <SubmittedRow label="Check-in time" value={d.agent_check_in_time} />
+          <SubmittedRow label="Check-out time" value={d.agent_check_out_time} />
+          <SubmittedRow label="Staff requirements" value={d.agent_staff_requirements} />
+          <SubmittedRow label="Rates" value={d.agent_rates} />
+          <SubmittedRow label="Payment terms" value={d.agent_payment_terms} />
+          <SubmittedRow label="Other requests" value={d.agent_other_requests} />
+          <SubmittedRow label="Indemnity signed" value={d.agent_indemnity_signed} />
+          <SubmittedRow label="Breakages deposit" value={d.agent_breakages_deposit != null ? fmtRand(Number(d.agent_breakages_deposit)) : null} />
+        </div>
+      )}
+    </div>
   );
 }

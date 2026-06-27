@@ -44,6 +44,8 @@ import {
 } from '../lib/bookingParticipants';
 import EmailComposerModal from './EmailComposerModal';
 import { useToast } from './ToastProvider';
+import { resolveBookingFormLink } from '../lib/bookingFormLinks';
+import { fmtRand } from '../lib/pricingEngine';
 
 /** Local title-case (no shared export). Matches the helper used across the
  *  booking/proposal modals so names render consistently. */
@@ -157,6 +159,7 @@ export default function BookingManagementSection({
   const [guidebook, setGuidebook] = useState<any>(null);
   const [staff, setStaff] = useState<StaffSettings | null>(null);
   const [marks, setMarks] = useState<Record<string, MarkRow>>({});
+  const [bookingDetails, setBookingDetails] = useState<any | null>(null);
   const [templatesByKey, setTemplatesByKey] = useState<Record<string, EmailTemplateRow>>({});
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -194,7 +197,7 @@ export default function BookingManagementSection({
         }
 
         const initials = initialsForEmail(user?.email);
-        const [ownerRes, agentRes, guidebookRes, staffRes, marksRes, templatesRes] = await Promise.all([
+        const [ownerRes, agentRes, guidebookRes, staffRes, marksRes, templatesRes, detailsRes] = await Promise.all([
           booking.property_id ? resolveOwnerForProperty(supabase, booking.property_id) : Promise.resolve(null),
           resolveAgentForEnquiry(supabase, booking.enquiry_id ?? null),
           booking.property_id ? resolveGuidebookForProperty(supabase, booking.property_id) : Promise.resolve(null),
@@ -204,6 +207,7 @@ export default function BookingManagementSection({
             .from('email_templates')
             .select('key, subject, body, label, audience, channel_variant, is_active')
             .eq('partner_id', CT_RENTALS_PARTNER_ID),
+          supabase.from('booking_details').select('*').eq('booking_id', booking.id).maybeSingle(),
         ]);
         if (cancelled) return;
 
@@ -213,6 +217,7 @@ export default function BookingManagementSection({
         setGuidebook(guidebookRes);
         setStaff(staffRes);
         setMarks(marksRes || {});
+        setBookingDetails(detailsRes?.data ?? null);
 
         const map: Record<string, EmailTemplateRow> = {};
         for (const t of (templatesRes?.data || [])) map[t.key] = t;
@@ -256,7 +261,7 @@ export default function BookingManagementSection({
     };
   }
 
-  function openDraft(row: BookingActionRow) {
+  async function openDraft(row: BookingActionRow) {
     if (!staff) return;
     const spec = row.spec;
     const tpl = templatesByKey[spec.templateKey];
@@ -273,6 +278,25 @@ export default function BookingManagementSection({
       staff,
       channel,
     });
+    // Inject the self-serve form links at compose time — the engine is pure
+    // (no IO), so the token is minted here. ensureBookingFormToken is
+    // idempotent, so re-drafting the same email reuses the same /f/<token>.
+    try {
+      const tplBody = tpl.body || '';
+      if (booking?.id && tplBody.includes('{{guest_form_link}}')) {
+        vars.guest_form_link = await resolveBookingFormLink(supabase, booking.id, 'guest');
+      }
+      if (booking?.id && tplBody.includes('{{agent_form_link}}')) {
+        vars.agent_form_link = await resolveBookingFormLink(supabase, booking.id, 'agent');
+      }
+    } catch (err) {
+      console.error('form link resolve failed', err);
+    }
+    // Surface fields the recipient already submitted via the forms where the
+    // template references them (graceful blank when nothing submitted yet).
+    if (bookingDetails?.agent_breakages_deposit != null && !vars.deposit_amount) {
+      vars.deposit_amount = fmtRand(Number(bookingDetails.agent_breakages_deposit));
+    }
     const { subject, body } = renderEmail({ subject: tpl.subject || '', body: tpl.body || '' }, vars);
     setComposer({
       row,
