@@ -430,6 +430,9 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
   // tab is just names + dates, no commercial context.
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(false);
+  // Bookings tab — same load-on-tab pattern as proposals above.
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState(null);
   const [editPricingFor, setEditPricingFor] = useState(null);
   /** Proposal in the inline-send confirmation dialog. */
@@ -472,6 +475,26 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
     (async () => {
       await refetchProposals();
       if (!cancelled) setProposalsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, property.id, isNew, supabase]);
+
+  async function refetchBookings() {
+    const { data } = await supabase
+      .from('bookings')
+      .select('id, guest_name, check_in, check_out, status, kind, platform, total_amount, guests_total, enquiry_id')
+      .eq('property_id', property.id)
+      .order('check_in', { ascending: false });
+    setBookings(data || []);
+  }
+
+  useEffect(() => {
+    if (isNew || !property.id || activeTab !== 'bookings') return;
+    let cancelled = false;
+    setBookingsLoading(true);
+    (async () => {
+      await refetchBookings();
+      if (!cancelled) setBookingsLoading(false);
     })();
     return () => { cancelled = true; };
   }, [activeTab, property.id, isNew, supabase]);
@@ -1553,10 +1576,14 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           </div>
           {isNew ? (
             <div className="editor-tab-empty">Save this property first to start tracking bookings against it.</div>
-          ) : (
+          ) : bookingsLoading ? (
+            <div className="editor-tab-empty">Loading…</div>
+          ) : bookings.length === 0 ? (
             <div className="editor-tab-empty">
               No bookings yet for this property. Use <strong>+ New Booking</strong> above to start one.
             </div>
+          ) : (
+            <PropertyBookingsList bookings={bookings} onOpen={setEditingBooking} />
           )}
           </>)}
 
@@ -1632,7 +1659,7 @@ export default function PropertyEditModal({ property, partnerId, onClose, onSave
           user={user}
           partnerId={partnerId}
           onClose={() => setEditingBooking(null)}
-          onSave={() => setEditingBooking(null)}
+          onSave={() => { setEditingBooking(null); refetchBookings(); }}
         />
       )}
 
@@ -2210,6 +2237,56 @@ function PropertyProposalsList({ proposals, onOpen, onSend, onMarkBooked, onCanc
       ))}
     </div>
   );
+}
+
+/** Read-only list of a property's bookings (Bookings tab). Mirrors the
+ *  proposals-list row style; clicking a row opens the shared BookingModal. */
+function PropertyBookingsList({ bookings, onOpen }) {
+  return (
+    <div className="editor-list">
+      {bookings.map(b => (
+        <div
+          key={b.id}
+          className="editor-list-row"
+          onClick={() => onOpen(b)}
+          style={{ cursor: 'pointer' }}
+        >
+          <div className="editor-list-main">
+            <div className="editor-list-title">
+              {b.kind === 'block' ? (b.guest_name || 'Blocked dates') : (b.guest_name || 'Unnamed guest')}
+              <BookingStatusBadge status={b.status} kind={b.kind} />
+            </div>
+            <div className="editor-list-sub">
+              {b.check_in && b.check_out
+                ? <>{new Date(b.check_in).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })} → {new Date(b.check_out).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}<NightCount checkIn={b.check_in} checkOut={b.check_out} /></>
+                : <span style={{ color: 'var(--text-light)' }}>No dates set</span>}
+              {b.kind !== 'block' && b.total_amount != null && (
+                <span style={{ marginLeft: '10px', color: 'var(--text)' }}>· <strong>{fmtRand(b.total_amount)}</strong> / night</span>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Small coloured status badge for a booking row. */
+function BookingStatusBadge({ status, kind }) {
+  if (kind === 'block') {
+    return <span className="status-badge" style={{ background: '#F3F4F6', color: '#6B7280', marginLeft: '6px', fontSize: '0.5625rem' }}>Block</span>;
+  }
+  const map = {
+    tentative:   { bg: '#FEF3C7', fg: '#92400E', label: 'Tentative' },
+    confirmed:   { bg: '#DBEAFE', fg: '#1E40AF', label: 'Confirmed' },
+    in_stay:     { bg: '#D1FAE5', fg: '#065F46', label: 'In stay' },
+    checked_in:  { bg: '#D1FAE5', fg: '#065F46', label: 'In stay' },
+    completed:   { bg: '#E5E7EB', fg: '#374151', label: 'Completed' },
+    checked_out: { bg: '#E5E7EB', fg: '#374151', label: 'Completed' },
+    cancelled:   { bg: '#FEE2E2', fg: '#991B1B', label: 'Cancelled' },
+  };
+  const s = map[status] || { bg: '#F3F4F6', fg: '#6B7280', label: status || '—' };
+  return <span className="status-badge" style={{ background: s.bg, color: s.fg, marginLeft: '6px', fontSize: '0.5625rem' }}>{s.label}</span>;
 }
 
 function PropertyProposalRow({ proposal: pr, stage, onOpen, onSend, onMarkBooked, onCancel }) {
